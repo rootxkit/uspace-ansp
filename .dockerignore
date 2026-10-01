@@ -1,0 +1,9 @@
+.git
+.github
+web
+docs
+local
+**/node_modules
+coverage.out
+integration.log
+bench.txt
