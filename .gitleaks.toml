@@ -1,0 +1,14 @@
+# gitleaks configuration for uspace-ansp: the default rules, read by
+# gitleaks (make secrets) and gitleaks-action from the repository root.
+#
+# There is deliberately no allowlist. Test keys, tokens and NKey seeds
+# are generated at test time and never committed (CLAUDE.md rule 11),
+# so nothing here needs an exemption. If one is ever needed, scope it to
+# one rule, one file and one line pattern with condition = "AND" on a
+# [[rules.allowlists]] entry (as uspace-core does): gitleaks 8.24.3
+# ignores the condition on a global [allowlist], which would exempt a
+# whole path from every rule.
+title = "uspace-ansp"
+
+[extend]
+useDefault = true
