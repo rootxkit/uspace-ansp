@@ -8,7 +8,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 GO="${GO:-go}"
 
-n="$(grep -rl --include='*.go' '^//go:generate ' . 2>/dev/null | wc -l | tr -d ' ')"
+n="$( (grep -rl --include='*.go' '^//go:generate ' . 2>/dev/null || true) | wc -l | tr -d ' ')"
 echo "generate-check: ${n} file(s) with go:generate directives"
 "$GO" generate ./...
 if [ -f web/package.json ]; then
