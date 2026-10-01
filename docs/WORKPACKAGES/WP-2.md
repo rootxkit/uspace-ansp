@@ -25,35 +25,46 @@ interfaces in `docs/PLAN.md §5` and rebase). Consumers: every handler of
 ### Ecosystem tokens (machine clients)
 
 - `NewMachineVerifier(ctx, cfg)`: one `uspace-core/auth.Verifier` with
-  `Issuers = {cfg.TokenIssuer: {JWKSURL: cfg.TokenJWKSURL}}`,
-  `Audience = cfg.SystemID`. Start-up fails if the JWKS cannot be fetched
-  (core semantics); readiness reports `jwks: ok | stale (age)`.
+  `Issuers` = every entry of `ANSP_TOKEN_ISSUERS` (the authority's token
+  service and, in the lab, the lab issuer; nobody waits for authority
+  WP-2) and the audience list `ANSP_AUDIENCES` (hosts: this system's
+  public host plus a lab alias; `aud` must match one of them, M18).
+  `cfg.SystemID` is never an audience. Start-up fails if a JWKS cannot
+  be fetched (core semantics); readiness reports `jwks: ok | stale
+  (age)` per issuer.
 - Middleware `RequireScopes(v, scopes ...string)` for the generated
   strict server: bearer from `Authorization`, `Verify`, every listed
   scope present, else `401` (invalid token) or `403` (missing scope) as
   RFC 9457 problems that never echo the token; the `Claims` are put in
   the request context (`ClaimsFrom(ctx)`). Counters from the verifier are
   exported.
-- mTLS binding: when `ANSP_MTLS_REQUIRED` is true for a route group, the
-  middleware requires the header Caddy sets from the client certificate
-  (`X-Client-Cert-Subject`, configurable name) and refuses when the
-  subject does not match the binding recorded for `sub` in
-  `oauth_clients_seen` on first sight (trust on first use is **not**
-  acceptable: the binding comes from configuration
-  `ANSP_MTLS_BINDINGS_FILE` mapping `sub` → subject, and an unmapped
-  `sub` is refused). The header is stripped by Caddy from any client
-  request (document the Caddy line; WP-13 writes it).
+- mTLS binding: when `ANSP_MTLS_MODE=required` (M25; the only other
+  value is `off`), the middleware on the mTLS route groups
+  (`/v1/manned-traffic/*`, `/v1/coordination/*`) requires the header
+  Caddy sets from the client certificate (`X-Client-Cert-Subject`) and
+  refuses when the subject does not match the binding for `sub` (trust
+  on first use is **not** acceptable: the binding comes from
+  configuration `ANSP_MTLS_BINDINGS_FILE` mapping `sub` → subject, and
+  an unmapped `sub` is refused). Caddy terminates with `client_auth {
+  mode verify_if_given }` and strips the header on every other route
+  (the snippet is WP-13's; the deployment repo composes it). With `off`,
+  the middleware logs `mtls: off` at error level every status period so
+  a staging setting cannot reach production unnoticed.
 - `oauth_clients_seen` upsert on every accepted call (first and last
   seen, scopes seen), off the request path through a bounded channel.
 
 ### Outbound tokens
 
 `TokenSource(cfg)` for this system's calls to the CISP, DSS, USSPs and
-authority: client credentials at `ANSP_TOKEN_URL` with the secret from
-`ANSP_CLIENT_SECRET_FILE`, one token per `aud` and scope set, refreshed
-at 50 % TTL in the background (`06` T5), bounded retry, counters
-`token_fetch_ok`, `token_fetch_failed`; a cached token is used until
-`exp` during an issuer outage.
+authority: client credentials at `ANSP_TOKEN_URL` as `client_id =
+ansp-01` (M24) with the secret from `ANSP_CLIENT_SECRET_FILE`, the
+`audience` parameter set to **the host of the target's base URL**
+(`ANSP_CISP_URL`'s host, `ANSP_DSS_URL`'s host, a peer's `uss_base_url`
+host, the authority's host; M18), one token per (`aud`, scope set),
+refreshed at 50 % TTL in the background (`06` T5), bounded retry,
+counters `token_fetch_ok`, `token_fetch_failed`; a cached token is used
+until `exp` during an issuer outage. `AudienceOf(url) string` is the one
+place that derives a host, with a test for ports and trailing paths.
 
 ### Local accounts and sessions
 
@@ -65,20 +76,27 @@ at 50 % TTL in the background (`06` T5), bounded retry, counters
 - `POST /v1/auth/login` (password) → a short-lived `mfa_pending` token;
   `POST /v1/auth/mfa` (TOTP) → session JWT issued by a
   `uspace-core/auth.Issuer` with this system's key (`ANSP_SESSION_KEY_FILE`,
-  RS256, `kid`), `iss` = this system, `aud` = `cfg.SystemID`, `scope` =
-  the role, `jti` recorded in `user_sessions`; `POST /v1/auth/logout`
-  revokes the `jti`; `GET /v1/auth/me`. Login rate limit per username and
-  per IP (S-15) with `429` and `Retry-After`; every login, refusal and
-  logout is an audit event.
+  RS256, `kid`) in the ecosystem's one session shape (M20): `iss` = this
+  system's issuer URL, `aud` = this system's own host (the first entry
+  of `ANSP_AUDIENCES`), `sub` = account id, `scope = "session"`,
+  `roles: [<role>]` (one element here), `realm: "console"`, `jti` =
+  session id recorded in `user_sessions`, `exp` ≤ 12 h, idle 30 min;
+  `POST /v1/auth/logout` revokes the `jti`; `GET /v1/auth/me`. Login
+  rate limit per username and per IP (S-15) with `429` and
+  `Retry-After`; every login, refusal and logout is an audit event.
 - `SessionVerifier`: the same core `Verifier` with this system as issuer
-  (keys from the local JWKS, no network), plus a revocation check against
-  `user_sessions` through a short cache. `RequireRole(roles ...)`.
+  (keys from the local JWKS, no network) and the same audience list,
+  plus a revocation check against `user_sessions` through a short
+  cache. `RequireRole(roles ...)` reads `roles[]`, never `scope`.
 - WebSocket upgrades (`manned-feed`, `api` streams) accept the session
-  cookie `ansp_session` on same-origin requests (checked by `Origin`),
-  or a bearer; document the BFF contract: the Next.js BFF sets the
-  `HttpOnly`, `Secure`, `SameSite=Strict` cookie from the `mfa` response
-  and forwards it as a bearer on REST calls; CSRF double-submit token on
-  state-changing calls.
+  cookie **`uspace_session`** on same-origin requests (checked against
+  an `Origin` allow-list), or a bearer; no ticket route (M22). Document
+  the BFF contract: the Next.js BFF sets the `HttpOnly`, `Secure`,
+  `SameSite=Strict` `uspace_session` cookie from the `mfa` response and
+  forwards it as a bearer on REST calls; the `uspace_csrf` cookie and
+  the `X-CSRF-Token` header carry the double-submit token on
+  state-changing calls (M21); a `4401` close on a WebSocket means
+  "re-login".
 - `GET /.well-known/jwks.json`: the session key and the delivery-signing
   key (WP-8 adds the latter; expose the set from one place).
 
@@ -93,10 +111,16 @@ auth group in the same PR as WP-3, or in this PR if WP-3 has merged).
 - `TestVectorsJWTVerify`: `vectors.Load(t, "jwt_verify.json").RunOwned(t,
   "ansp", ...)` through `RequireScopes` with a generated key pair; every
   refusal maps to the right status and counter.
-- E-01 pairs: accepted token / each refusal; mTLS subject matches /
-  mismatches / header absent; MFA right / wrong / replayed code (the same
-  TOTP code twice is refused); role allowed / forbidden; revoked session
-  refused after logout, accepted before.
+- E-01 pairs: accepted token / each refusal (including `aud` = the lab
+  alias accepted, `aud` = `ansp` refused, `aud` = another system's host
+  refused); mTLS subject matches / mismatches / header absent, and
+  `ANSP_MTLS_MODE=off` accepts without the header while the error-level
+  line is logged; MFA right / wrong / replayed code (the same TOTP code
+  twice is refused); role allowed / forbidden read from `roles[]`;
+  revoked session refused after logout, accepted before; a session
+  token with `scope = "watch_supervisor"` (the old shape) refused.
+- Outbound: the token request for the CISP carries `audience` = the
+  CISP's host, for the DSS the DSS's host (stub asserts the parameter).
 - E-02: issuer JWKS unreachable after start → tokens still verified from
   the cache, readiness `jwks: stale`; token service down → outbound
   calls use the cached token and the counter moves.

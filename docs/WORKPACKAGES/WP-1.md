@@ -54,8 +54,12 @@ databases, and a test greps each tree for the other tree's table names
 - `OpenRelational(ctx, dsn) (*Relational, error)`,
   `OpenTimeseries(ctx, dsn) (*Timeseries, error)` on `pgxpool` with
   bounded pool sizes and statement timeouts from config; `Migrate(ctx,
-  tree)` with the embedded files (`embed.FS` per tree); `Ping` for
-  readiness.
+  tree)` with the embedded files (`embed.FS` per tree), reachable only
+  through the `migrate <relational|timeseries>` subcommand of each
+  binary (the one-shot compose service of WP-0); `RequireVersion(ctx,
+  tree, min)` that a long-running process calls at start and that
+  refuses to start on a lower version, printing the tree, the present
+  and the needed version (M36); `Ping` for readiness.
 - sqlc: `sqlc.yaml` with two packages (`store/relational`,
   `store/timeseries`), pgx v5 driver, queries in
   `internal/store/queries/{relational,timeseries}/*.sql`; generated

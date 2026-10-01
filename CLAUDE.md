@@ -38,10 +38,14 @@ package brief in `docs/WORKPACKAGES/`.
    in a judgement, never relaxed to make a test pass (INV-03). F3548
    limits come from `uspace-core/f3548` constants.
 6. **Two migration trees, never merged** (`migrations/relational`,
-   `migrations/timeseries`; separate version tables). `api` is the only
-   writer to the relational database; `manned-feed` the only writer to
-   the hypertable; `manned-adapter` and `manned-feed` never open
-   PostgreSQL (they read NATS KV projections).
+   `migrations/timeseries`; version tables `goose_db_version_relational`
+   and `goose_db_version_timeseries`). Migrations run only through the
+   `migrate` subcommand (a one-shot compose service); a long-running
+   process never migrates and refuses to start on a version lower than
+   it needs, saying which. `api` is the only writer to the relational
+   database; `manned-feed` the only writer to the hypertable;
+   `manned-adapter` and `manned-feed` never open PostgreSQL (they read
+   NATS KV projections).
 7. **An endpoint that is not in `api/openapi.yaml` does not exist.**
    Server, client and TypeScript types are generated from it and
    committed; CI fails on a stale generation. Additive changes only
@@ -67,6 +71,47 @@ package brief in `docs/WORKPACKAGES/`.
     private infra repo (`06 §4`).
 12. **English only** in code, comments, commits, logs and docs.
     User-facing strings go through i18n (`ka`, `en`) from day one.
+
+## Cross-system contracts (reconciled 2026-10-02; `docs/PLAN.md` D11)
+
+- **Audience is a host.** Every machine token's `aud` is the host of
+  the target's published base URL (the CISP's host, the DSS's host, a
+  peer's `uss_base_url` host); this system verifies `aud` against
+  `ANSP_AUDIENCES` (its public host plus a lab alias). The client id is
+  `ansp-01`. `ANSP_SYSTEM_ID` is never an audience.
+- **One error body.** RFC 9457 `application/problem+json` with `{type,
+  title, status, detail, instance, errors: [{field, reason}],
+  truncated?}`; `type` is `https://schemas.uspace.ge/problems/<slug>`.
+  Never `field`/`reason` at the top level, never `problems[]`.
+- **One WebSocket frame.** Every frame on every WS endpoint, browser- or
+  machine-facing, is the `04 §2` envelope (`schema`, `msg_id`,
+  `producer`, `ts`, `rx_ts`, `captured_at`, `time_source`, `backlog`)
+  plus a `body` named by `schema`; status is `console/status/v1`,
+  snapshots `console/snapshot/v1`, the client's subscription
+  `console/subscribe/v1` (schemas in `uspace-lab/schemas/common/`).
+  `feed/status/v1` does not exist.
+- **One session shape.** `scope = "session"`, `roles: [..]`, `realm`,
+  `aud` = this system's host, in the `uspace_session` cookie with
+  `uspace_csrf` / `X-CSRF-Token`; WebSocket upgrades take the cookie on
+  a same-origin request with an `Origin` allow-list, never a ticket.
+- **One receiver path and one heartbeat.** CIS change notifications
+  arrive at and are delivered to `POST /v1/cis/notifications` (ours, the
+  USSPs', the authority's); the publisher heartbeat is `POST
+  {cisp}/v1/publishers/heartbeat {sent_at, active_refs}` every 15 s.
+  Publications carry `ansp_version` and a detached JWS in
+  `X-JWS-Signature`; the idempotency key is `(ansp_ref, ansp_version)`
+  in the body.
+- **mTLS is `ANSP_MTLS_MODE = required | off`**, enforced on
+  `/v1/manned-traffic/*` and `/v1/coordination/*` only, with Caddy's
+  `X-Client-Cert-Subject`; `off` is logged at error level every status
+  period.
+- **Sibling APIs are pinned copies** under `api/clients/<system>.yaml`
+  with a `SOURCE` commit and a CI diff, bumped in a `build:` commit,
+  never inside a feature PR; the lab aggregate replaces them.
+- **Schema ownership**: this repo owns `track/manned/v1`,
+  `restriction/state/v1` and `coordination/annex_v/v1`; it consumes
+  `cis/*` from the CISP, `occurrence/v1` from the authority, and the
+  envelope, `source/status/v1` and the console frames from the lab.
 
 ## Testing rules (LESSONS E-01 to E-04, E-10, E-11, INV-02)
 
@@ -110,8 +155,9 @@ package brief in `docs/WORKPACKAGES/`.
 - Logs carry `process`, `instance` and where it applies `adapter_id`,
   `icao24`, `restriction_id`, `ack_id`, `client_id`, `policy_version`.
   A library package never logs; the process decides.
-- Errors: `*core.FieldError` inside; RFC 9457 problems with `field` and
-  `reason` on the wire; never a token or a secret in an error.
+- Errors: `*core.FieldError` inside; RFC 9457 problems with `errors:
+  [{field, reason}]` (capped, `truncated`) and a `type` slug URI on the
+  wire; never a token or a secret in an error.
 - Branch per work package: `feat/WP-<k>-<slug>`. Commits: Conventional
   Commits with the WP and milestone in brackets:
   `feat(restriction): validate the window against the F3548 limits [WP-5 N-M1]`.
@@ -134,8 +180,8 @@ make integration      # against ANSP_RELATIONAL_DSN, ANSP_TIMESERIES_DSN, ANSP_N
 make vectors          # this repo's RunOwned tests and uspace-core's own vectors from this module
 make generate         # oapi-codegen, sqlc, openapi-typescript; make generate-check in CI
 make fuzz-smoke bench # decoders fuzzed 10 s; budgets of docs/PLAN.md §9 reported
-make web-lint web-build
-make compose-up       # api, manned-adapter (replay), manned-feed, web, databases, NATS
+make web-lint web-build   # pnpm, --frozen-lockfile
+make compose-up       # migrate (one-shot), api, manned-adapter (replay), manned-feed, web, timescaledb-ha (both databases), NATS
 make ci               # what CI runs
 ```
 

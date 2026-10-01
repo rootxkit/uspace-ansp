@@ -45,7 +45,10 @@ when and until when (N4).
 
 ### State machine (`internal/restriction/state.go`)
 
-States `planned`, `active`, `ended`, `cancelled`; transitions
+The version column is `ansp_version` (the name the CISP's
+`cis/restriction/v1` carries and half of the idempotency key
+`(ansp_ref, ansp_version)`, M4). States `planned`, `active`, `ended`,
+`cancelled`; transitions
 `plan` (→ planned), `activate` (planned → active; immediately when
 `starts_at ≤ now`, else scheduled: the row stays `planned` with
 `activate_at` and a ticker in `api` activates it — on time, counted, and
@@ -59,8 +62,9 @@ after), and publishes `restr.v1.<state>.<id>`. An illegal transition is
 
 ### Validation (`validate.go`)
 
-A `*core.FieldError` list (RFC 9457 `field`/`reason`), all problems
-reported, none repaired:
+A `*core.FieldError` list, written to the wire as the problem body's
+`errors: [{field, reason}]` (capped, `truncated`; `type` slug per
+refusal, M28) by WP-3's `apierr`; all problems reported, none repaired:
 
 - Geometry: Polygon (one outer ring, `geodesy.ValidRing` with
   `CstrMaxVertices`, no holes in v1, not across the antimeridian) or
@@ -76,10 +80,12 @@ reported, none repaired:
   supervisor to confirm with `confirm_chain: true`); `starts_at ≤ now +
   CstrMaxPlanningHorizonDays`; an immediate activation sets `starts_at =
   now`.
-- U-space containment (gap 13): with `policy.require_uspace_airspace`,
-  the geometry must intersect a `USPACE` feature of `cis_cache`
-  (`uspace_airspace_id` chosen or inferred; refused when none intersects,
-  `503 cis_stale` when the projection is older than `cis_stale_bound_s`);
+- U-space containment (gap 13, decided M9: always required, no policy
+  switch): the geometry must intersect a current `USPACE` feature of
+  `cis_cache` (`uspace_airspace_id` chosen or inferred and stored, not
+  null; refused when none intersects, because the CISP refuses the same
+  and a free-standing restriction would be unpublishable; `503
+  cis_stale` when the projection is older than `cis_stale_bound_s`);
   the restriction's `upper_m` may not exceed the airspace's upper limit
   in the same reference (compare only when the references agree;
   otherwise refuse with `reference_mismatch` and ask for the other
@@ -97,14 +103,16 @@ reported, none repaired:
 EndDateTime}` (UTC with `Z`), `zoneAuthority` one entry from
 configuration (`ANSP_AUTHORITY_NAME`, `_SERVICE`, `_EMAIL`, `_PHONE`,
 `purpose: INFORMATION`), `extendedProperties` `{ "ansp": {ansp_ref,
-restriction_id, version, state, uspace_airspace_id, outside_uspace} }`,
-geometry with `layer {upper, upperReference, lower, lowerReference,
-uom: "m"}` using the member names of `uspace-core/ed318` exactly. Then
-`ed318.Export` and `ed318.Parse` round-trip in a test, and
-`ed318.ToZones` yields one zone whose containment agrees with the
-input. `FeatureCollection(rs []Restriction)` with `metadata
-{creationDateTime, updateDateTime, originator}` for the direct degraded
-delivery (WP-8).
+restriction_id, ansp_version, state, uspace_airspace_id} }` (no
+`outside_uspace`: it cannot happen, M9), geometry with `layer {upper,
+upperReference, lower, lowerReference, uom: "m"}` using the member
+names of `uspace-core/ed318` exactly. Then `ed318.Export` and
+`ed318.Parse` round-trip in a test, and `ed318.ToZones` yields one zone
+whose containment agrees with the input. `FeatureCollection(rs
+[]Restriction)` with core's `ed318.Metadata` members (`issued`,
+`provider`; M15, never the spec's `creationDateTime` / `originator`)
+for what `GET /v1/restrictions/{id}` serves to a receiver's `pull_url`
+in the degraded path (WP-8).
 
 ### The F3548 volumes (`constraint.go`)
 
@@ -128,7 +136,10 @@ operations (`PLAN §6`), `Idempotency-Key` honoured on `POST
 /v1/restrictions` (same key + same body → the same `201`; different body
 → `409`), roles enforced by WP-2's middleware, `restriction_requests`
 accept/decline, and `GET /v1/restrictions/stream` (WS, session) relaying
-`restr.v1` and, from WP-8, delivery outcomes.
+`restr.v1` and, from WP-8, delivery outcomes, in the console frame
+(M29: envelope + `restriction/state/v1` body, `console/status/v1` every
+2 s, `console/snapshot/v1` on connect; cookie on the same-origin
+upgrade, M22).
 
 ## Tests
 
@@ -142,7 +153,9 @@ accept/decline, and `GET /v1/restrictions/stream` (WS, session) relaying
 - Validation: accept / refuse for each rule, including the chain
   proposal for 30 h, the antimeridian ring, 1001 vertices (E-10),
   `AGL` refused with the D3 text, containment with a fixture U-space
-  airspace (inside, partly outside → refused, no projection → 503).
+  airspace (inside, partly outside → refused, no intersecting feature →
+  refused with the M9 reason, no projection → 503); every refusal read
+  back as `errors[]` with the right `field` and `type` slug.
 - Feature: round-trip through `ed318.Export` → `ed318.Parse`
   (equal by value), `ToZones` containment for a point inside and one
   outside; identifier length 7 and uniqueness over 10 000 mints.

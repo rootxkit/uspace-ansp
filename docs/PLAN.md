@@ -59,12 +59,13 @@ and ask.
 | D2 | No H3 in this system. Internal manned subjects are keyed by adapter instance and ICAO address, `man.v1.<adapter>.<icao24>`. | Spec `05 §3` partitions by H3 cell for fleets of thousands; this system carries tens of manned aircraft and no UAS. uspace-core left H3 out at v0.x because the Go binding is cgo (core PLAN §11 gap 3). The partition key never crosses an external interface, so the USSP and the authority are unaffected. §15 gap 2. |
 | D3 | Restrictions are authored with vertical limits in AMSL or WGS84 only in this release. AGL limits are refused with a reason (`lower_ref: AGL is not supported for a dynamic restriction in this release`). | An F3548 constraint needs W84 altitudes (`f3548.Altitude.HAEM`), derived from AMSL through `uspace-core/geoid`. AGL would need a DEM lookup over the whole polygon and a conservative envelope; nothing in the spec requires an ATC unit to limit UAS by height over ground rather than by level. §15 gap 3. |
 | D4 | The ED-318 feature of a restriction has `type` `PROHIBITED` by default (supervisor may choose `REQ_AUTHORIZATION`), `reason` `["DAR"]`, `variant` `COMMON`, `identifier` `DAR` + 4 base-36 characters (7 characters, the ED-318 limit), `country` from configuration (`GEO`). | Spec `02 F2` fixes reason `DAR`, `03 §6` fixes the `DAR-` prefix and the ED-318 identifier is at most 7 characters (`uspace-core/ed318` doc). `DAR-` with a hyphen leaves three characters; `DAR` plus four base-36 characters gives 1.6 million identifiers. §15 gap 4. |
-| D5 | Every outbound side effect (CISP publication, DSS write, USS subscriber notification, degraded direct delivery, occurrence report) goes through one JetStream work-queue outbox with the restriction's `ansp_ref` and version as the idempotency key, and a delivery row per attempt. | `02 F2` failure rules (retry, alarm after 10 s, degraded path, reconciliation) and CLAUDE.md of utm: no retry loops around side effects without idempotency keys. One outbox, one retry policy, one delivery log. |
+| D5 | Every outbound side effect (CISP publication, DSS write, USS subscriber notification, degraded direct delivery, occurrence report) goes through one JetStream work-queue outbox with the body pair `(ansp_ref, ansp_version)` as the idempotency key, and a delivery row per attempt. The CISP reads the pair from the body; an `Idempotency-Key` header may be sent but nothing depends on it (reconciliation M4). | `02 F2` failure rules (retry, alarm after 10 s, degraded path, reconciliation) and CLAUDE.md of utm: no retry loops around side effects without idempotency keys. One outbox, one retry policy, one delivery log. |
 | D6 | The outbox sends the restriction to the CISP and writes the DSS constraint in parallel; the CISP publication is the regulatory channel, the DSS constraint the F3548 channel; a failure on one does not block the other. | `02 F2`: "the CISP publication remains the regulatory channel"; `09 §1.4`: the ANSP is the constraint manager. |
 | D7 | Server and client types are generated from `api/openapi.yaml` with oapi-codegen v2 (strict server, `net/http` router), committed, and CI fails if regeneration changes anything. The F3548 USS endpoint the ANSP serves (`GET /uss/v1/constraints/{entityid}`) uses `uspace-core/f3548` types and is described in the same file by reference to the standard. | Owner's fixed stack. An endpoint not in the OpenAPI file does not exist (`00 §7`). |
 | D8 | Migrations with goose (embedded, two trees), not `golang-migrate` as `03` says. | Owner's fixed stack; recorded in §15 gap 5 for the spec. |
 | D9 | The console (`web/`) renders only; its API routes are the BFF cookie exchange and nothing else. Live data reaches it over WebSocket from `api` (restriction state, inbox) and `manned-feed` (manned picture) on the same origin, authenticated by the session cookie. | Spec `00 §6.2`. |
-| D10 | Thresholds and margins are rows of `ansp_policy` with a `policy_version`, projected to the hot path through NATS KV, never literals: feed relevance margin (5 km lateral, 1500 m vertical above the U-space ceiling), stale after 15 s, source liveness, CISP alarm after 10 s, heartbeat 30 s, unacknowledged-notice escalation 60 s, F3548 constraint limits as published constants. | LESSONS INV-03; `02 F2`, `F4`. |
+| D10 | Thresholds and margins are rows of `ansp_policy` with a `policy_version`, projected to the hot path through NATS KV, never literals: feed relevance margin (5 km lateral, 1500 m vertical above the U-space ceiling), stale after 15 s, source liveness, CISP alarm after 10 s, publisher heartbeat 15 s (three misses = the CISP's 60 s stale bound, M3), unacknowledged-notice escalation 60 s, F3548 constraint limits as published constants. | LESSONS INV-03; `02 F2`, `F4`. |
+| D11 | Cross-system contracts follow the reconciliation of 2026-10-02 (`uspace-lab` cross-plan decisions, M1–M38): every machine token's `aud` is the **host** of the target's published base URL and this system verifies against `ANSP_AUDIENCES` (its public host plus a lab alias); the error body is `{type, title, status, detail, instance, errors: [{field, reason}], truncated?}` with `type = https://schemas.uspace.ge/problems/<slug>`; every WebSocket frame, browser- or machine-facing, carries the `04 §2` envelope with `schema` and a `body`, with `console/status/v1`, `console/snapshot/v1` and `console/subscribe/v1` from `uspace-lab/schemas/common/`; sessions are `scope = "session"`, `roles[]`, `realm` in the `uspace_session` cookie; mTLS is `ANSP_MTLS_MODE = required \| off`; sibling APIs are consumed as a pinned copy under `api/clients/<system>.yaml` with a `SOURCE` commit and a CI diff until the lab aggregate exists. | One verifier, one error body, one stream frame and one client-copy mechanism across five repos; each is additive to what this plan already had. |
 
 ---
 
@@ -135,9 +136,14 @@ github.com/rootxkit/uspace-ansp
 ├── api/
 │   ├── openapi.yaml       the published national API of the ANSP (OpenAPI 3.1); the only source of handler and client types
 │   ├── oapi-codegen.yaml  generator config (strict server, net/http, types, client)
-│   └── gen/               generated (committed): server.gen.go, types.gen.go, client.gen.go
-├── schemas/               JSON Schema 2020-12 of the messages this repo produces (04 §1): track/manned/v1, restriction/state/v1,
-│                          source/status/v1; examples under schemas/examples/ (mirrored read-only into uspace-lab/schemas/)
+│   ├── gen/               generated (committed): server.gen.go, types.gen.go, client.gen.go
+│   └── clients/           pinned copies of sibling OpenAPI files (cisp.yaml, authority.yaml, ussp.yaml) each with a SOURCE
+│                          commit; CI diffs each against its repo at that commit (M11); replaced by the uspace-lab aggregate
+├── schemas/               JSON Schema 2020-12 of the messages this repo owns (04 §1, ownership rule M14): track/manned/v1,
+│                          restriction/state/v1, coordination/annex_v/v1 (this repo's API carries the request body, so this
+│                          repo owns it; the USSP consumes it); examples under schemas/examples/ (mirrored read-only into
+│                          uspace-lab/schemas/). source/status/v1, the envelope and the console frames (console/status/v1,
+│                          console/snapshot/v1, console/subscribe/v1) are consumed from uspace-lab/schemas/common/
 ├── migrations/
 │   ├── relational/        goose, PostgreSQL + PostGIS, version table goose_db_version_relational
 │   └── timeseries/        goose, TimescaleDB, version table goose_db_version_timeseries   (never merged: B-15)
@@ -166,13 +172,14 @@ github.com/rootxkit/uspace-ansp
 │   │   └── asterix/       CAT021 (deferred; stub refusing to start with a reason)
 │   ├── picture/           the live manned picture: last sample per icao24, ages, relevance filter, stale and source_disabled
 │   │                      ageing, bbox queries, 1 Hz framing with server-side throttle
-│   ├── feed/              F4 handlers: WS stream (NDJSON frames), snapshot, degraded markers, per-client limits
+│   ├── feed/              F4 handlers: WS stream (envelope-wrapped frames), snapshot, degraded markers, per-client limits
 │   └── bus/               NATS/JetStream connection (reconnect forever, B-08), subjects and KV bucket names, stream definitions
-├── web/                   Next.js App Router console on @rootxkit/uspace-ui; ka/en; types from api/openapi.yaml (openapi-typescript)
+├── web/                   Next.js App Router console on @rootxkit/uspace-ui (npmjs, exact pin, pnpm); ka/en; types from api/openapi.yaml
 ├── deploy/
 │   ├── Dockerfile         one image, three entrypoints (cmd/*); web built in CI into its own image
-│   ├── compose.yaml       api, manned-adapter (replay), manned-feed, web, postgres+postgis, timescaledb, nats; Caddy snippet
-│   └── caddy/             the ansp subdomain block: routes per process, mTLS client_auth for /v1/manned-traffic and /v1/coordination
+│   ├── compose.yaml       api, manned-adapter (replay), manned-feed, web, migrate (one-shot), timescaledb-ha (both databases), nats
+│   └── caddy/             the ansp Caddy *snippet*: routes per process, client_auth verify_if_given on the mTLS route groups;
+│                          composed into the shared Caddyfile by the deployment repo uspace-deploy (D1), never run alone
 ├── testdata/
 │   ├── replay/            synthetic manned tracks (generated; never real traffic) for the replay adapter and the scenarios
 │   └── fixtures/          a U-space airspace designation and a USSP list as the CISP would publish them (ED-318), test keys generated at run time
@@ -195,18 +202,18 @@ T12).
 
 | Module | Used by | Why it is allowed |
 |---|---|---|
-| `github.com/rootxkit/uspace-core` (pinned by tag; WP-0 pins the newest tag at that time, `v1.0.0` when tagged, else `v0.2.0`, and records it here) | everything | the shared judgement: `auth` (JWT, issuer), `ed318` (restriction feature, validation, `ToZones`), `ed269` (`Problems`), `f3548` (constraint types, `Cstr*` constants, `Altitude.HAEM`, `Volume4DToZonesEnvelope`), `geodesy` (rings, bbox, containment, area), `geoid` (AMSL → HAE for constraints), `zones` (U-space volume containment for the relevance filter and restriction placement), `timeplace` (`PlaceBatch`, `Times`), `sources` (`State`, `Follower`), `core` (types, counters, field errors), `vectors` (`RunOwned(t, "ansp", ...)`) |
+| `github.com/rootxkit/uspace-core` **`v1.0.0`** (released; WP-0 pins it. The additive `v1.1.0` (core WP-14) adds `auth.KeyRing`, `auth.SignDetached`, `auth.VerifyDetached`, `auth.SignCompact`, `auth.VerifyCompact`; WP-8 bumps to it in a `build:` commit before it signs anything, M27) | everything | the shared judgement: `auth` (JWT, issuer, and from `v1.1.0` the JWS helpers), `ed318` (restriction feature, validation, `ToZones`), `ed269` (`Problems`), `f3548` (constraint types, `Cstr*` constants, `Altitude.HAEM`, `Volume4DToZonesEnvelope`), `geodesy` (rings, bbox, containment, area), `geoid` (AMSL → HAE for constraints), `zones` (U-space volume containment for the relevance filter and restriction placement), `timeplace` (`PlaceBatch`, `Times`), `sources` (`State`, `Follower`), `core` (types, counters, field errors), `vectors` (`RunOwned(t, "ansp", ...)`) |
 | `github.com/jackc/pgx/v5` + `github.com/sqlc-dev/sqlc` (tool, `go run`, pinned) | `store` | owner's fixed stack |
 | `github.com/pressly/goose/v3` | `store` | owner's fixed stack; embedded migrations, two trees with distinct version tables |
 | `github.com/nats-io/nats.go` | `bus` | owner's fixed stack; JetStream, KV |
 | `github.com/oapi-codegen/oapi-codegen/v2` (tool, `go run`, same version as uspace-core, `v2.8.0`) + `github.com/oapi-codegen/runtime` | `api/gen` | owner's fixed stack; strict server on `net/http` |
 | `github.com/prometheus/client_golang` | `obs` | owner's fixed stack |
 | `go.opentelemetry.io/otel` (+ otlp http exporter) | `obs` | owner's fixed stack |
-| `github.com/lestrrat-go/jwx/v3` | `auth`, `cis`, `deliver` | already a transitive dependency through uspace-core/auth; used directly for the JWS of webhooks and degraded deliveries (sign, verify with the sender's JWKS) |
+| `github.com/lestrrat-go/jwx/v3` | (transitive only) | a transitive dependency through uspace-core/auth. **Not imported directly**: the JWS of publications, change notifications and degraded deliveries is signed and verified through core `v1.1.0`'s `auth.SignDetached` / `VerifyDetached` / `SignCompact` / `VerifyCompact` (M27); WP-7 and WP-8 wait for that release rather than carrying a second JOSE implementation |
 | `github.com/coder/websocket` | `feed`, `api` (console streams) | pure Go, context-aware, maintained; `net/http` has no WebSocket |
 | `github.com/pquerna/otp` | `auth` | TOTP for mandatory MFA (`01 §4`); small, pure Go |
 | `golang.org/x/crypto/argon2` | `auth` | local accounts (`06 §3`) |
-| web: `next`, `react`, `typescript`, `tailwindcss`, `shadcn/ui`, `maplibre-gl`, `@rootxkit/uspace-ui`, `openapi-typescript` (dev) | `web/` | owner's fixed stack |
+| web: `next`, `react`, `typescript`, `tailwindcss`, `shadcn/ui`, `maplibre-gl`, `@rootxkit/uspace-ui` (from npmjs, exact pin: ≥ 0.1 for WP-11, ≥ 0.3 for WP-12; never a `github:` tag install, M32/M33), `openapi-typescript` (dev, through the kit's `uspace-ui-gen-api`) | `web/` | owner's fixed stack; `pnpm` with `packageManager` pinned and `--frozen-lockfile` (M34) |
 
 Rejected: `uber/h3-go` (cgo; D2), any GeoJSON or geometry library (core
 `geodesy` and `ed318` carry what is needed; a second geometry
@@ -234,15 +241,15 @@ Owned (**O**) entities of `03 §4` plus what the obligations need:
 
 | Table | Key columns | Notes |
 |---|---|---|
-| `restrictions` O | `id` (ULID), `ansp_ref` (unique; the idempotency key towards the CISP and the DSS), `identifier` (ED-318, `DAR` + 4 base-36, unique), `uspace_airspace_id` (CIS identifier of the designated volume it modifies; nullable only when `policy.require_uspace_airspace = false`), `zone_type` (`PROHIBITED` / `REQ_AUTHORIZATION`), `geom` (Polygon or Point+radius: `geom`, `radius_m` nullable), `lower_m`, `lower_ref` (`AMSL` / `WGS84`), `upper_m`, `upper_ref`, `starts_at`, `ends_at`, `reason_text`, `state` (`planned` / `active` / `ended` / `cancelled`), `version` (monotonic per restriction, bumped on every change), `created_by`, `activated_by`, `ended_by`, `cancelled_by`, `created_at`, `activated_at`, `ended_at_actual`, `request_id` (nullable, F11), `published_version` (CISP-confirmed version, nullable), `dss_constraint_id` (UUID v4, minted here), `dss_ovn`, `dss_version`, `supersedes_id` (re-issue chain for restrictions longer than `CstrMaxDurationHours`) | Master of ATS.TR.237. State machine in `internal/restriction`. Limits: `ends_at - starts_at ≤ CstrMaxDurationHours`, `starts_at ≤ now + CstrMaxPlanningHorizonDays`, area ≤ `CstrMaxAreaKm2`, vertices ≤ `CstrMaxVertices` (constants from `uspace-core/f3548`); a longer restriction is a chain of re-issues. |
+| `restrictions` O | `id` (ULID), `ansp_ref` (unique; the idempotency key towards the CISP and the DSS), `identifier` (ED-318, `DAR` + 4 base-36, unique), `uspace_airspace_id` (CIS identifier of the designated volume it modifies; **not null**: the CISP refuses a restriction that names no current `USPACE` feature, so a free-standing restriction is unpublishable, M9), `zone_type` (`PROHIBITED` / `REQ_AUTHORIZATION`), `geom` (Polygon or Point+radius: `geom`, `radius_m` nullable), `lower_m`, `lower_ref` (`AMSL` / `WGS84`), `upper_m`, `upper_ref`, `starts_at`, `ends_at`, `reason_text`, `state` (`planned` / `active` / `ended` / `cancelled`), `ansp_version` (monotonic per restriction, bumped on every change; the name the CISP's `cis/restriction/v1` carries, M4), `created_by`, `activated_by`, `ended_by`, `cancelled_by`, `created_at`, `activated_at`, `ended_at_actual`, `request_id` (nullable, F11), `published_version` (CISP-confirmed version, nullable), `dss_constraint_id` (UUID v4, minted here), `dss_ovn`, `dss_version`, `supersedes_id` (re-issue chain for restrictions longer than `CstrMaxDurationHours`) | Master of ATS.TR.237. State machine in `internal/restriction`. Limits: `ends_at - starts_at ≤ CstrMaxDurationHours`, `starts_at ≤ now + CstrMaxPlanningHorizonDays`, area ≤ `CstrMaxAreaKm2`, vertices ≤ `CstrMaxVertices` (constants from `uspace-core/f3548`); a longer restriction is a chain of re-issues. |
 | `restriction_versions` O | `restriction_id`, `version`, `feature` (JSONB, the ED-318 feature as published for this version), `constraint` (JSONB, the F3548 `Constraint` as written), `changed_by`, `changed_at`, `change_reason` | Every version retrievable (`02 §3`: history by version); the N4 audit of who, why, when, until when. |
 | `restriction_requests` O | `id`, `requester` (client id or user), `source` (`authority` / `console`), `payload` (the request as received: area, limits, window, reason, case ref), `received_at`, `state` (`received` / `accepted` / `declined`), `decided_by`, `decided_at`, `decision_reason`, `restriction_id` (nullable) | F11 inbound; a supervisor turns a request into a restriction or declines it. |
 | `coordination_notices` O | `id` (the `ack_id`), `kind` (`intent_notice` / `nonconformance` / `contingent` / `ended`), `sender_client_id`, `ussp_id`, `payload` (JSONB, `coordination/annex_v/v1` as received), `intent_refs[]`, `authorisation_numbers[]`, `received_at`, `state` (`received` / `acknowledged`), `acknowledged_by`, `acknowledged_at`, `escalated_at`, `restriction_ids[]` (restrictions the notice's volumes intersect, computed at receipt) | `03 §4 coordination_inbox`. Receipt is immediate (the `ack_id` in the response); the human acknowledgement is the second state (§15 gap 6). |
 | `adapters` O | `id` (instance slug), `kind` (`replay` / `dump1090_sbs` / `dump1090_json` / `asterix_cat021` / `atm_api`), `display_name`, `source_class` (`ads_b` / `mode_s` / `ssr` / `atm_feed` / `ads_l`), `config` (JSONB, non-secret), `status` (`configured` / `running` / `silent` / `disabled`), `last_frame_at`, `last_status_at`, `counters` (JSONB snapshot from `src.v1`) | The registry of feeds; the running state comes from `src.v1.manned.<id>`. |
 | `source_controls` O | `(source_type, instance_id)`, `enabled`, `reason`, `actor`, `changed_at`, `version` (DB sequence), `epoch` (random per table creation) | Predecessor U-15 (`04 §3.6`, LESSONS B-09). Written in the same transaction as the KV put; refused with 503 when KV is unreachable. |
-| `ansp_policy` O | `policy_version` (PK, monotonic), `feed_margin_lateral_m` (5000), `feed_margin_vertical_m` (1500), `stale_after_s` (15), `source_liveness_s` (15), `cisp_alarm_after_s` (10), `cisp_heartbeat_s` (30), `cis_reconcile_s` (60), `cis_stale_bound_s` (300), `notice_escalation_s` (60), `require_uspace_airspace` (true), `default_zone_type` (`PROHIBITED`), `country` (`GEO`), `changed_by`, `changed_at` | INV-03. Projected to KV `policy`; `policy_version` travels on every status line and delivery. |
+| `ansp_policy` O | `policy_version` (PK, monotonic), `feed_margin_lateral_m` (5000), `feed_margin_vertical_m` (1500), `stale_after_s` (15), `source_liveness_s` (15), `cisp_alarm_after_s` (10), `cisp_heartbeat_s` (15), `cis_reconcile_s` (60), `cis_stale_bound_s` (300), `notice_escalation_s` (60), `default_zone_type` (`PROHIBITED`), `country` (`GEO`), `changed_by`, `changed_at` | INV-03. Projected to KV `policy`; `policy_version` travels on every status line and delivery. There is no `require_uspace_airspace` switch: containment in a current `USPACE` feature is always required (M9; the lab publishes a designation for every demo). |
 | `deliveries` O | `id`, `kind` (`cisp_publish` / `cisp_heartbeat` / `dss_put` / `dss_delete` / `uss_notify` / `direct_degraded` / `occurrence`), `subject_ref` (restriction id + version, or occurrence id), `target` (URL or client id), `attempt`, `queued_at`, `sent_at`, `status_code`, `response_excerpt`, `next_retry_at`, `state` (`queued` / `sent` / `failed` / `abandoned`), `idempotency_key` | The outbox log (D5). Abandoned after the retry window with an alarm, never silently. |
-| `occurrence_reports` O | `id`, `report_ref`, `channel` (`mandatory` / `voluntary`), `occurred_at`, `became_aware_at`, `category`, `aircraft[]`, `manned[]`, `intent_refs[]`, `narrative`, `reporter_person_ref` (encrypted; never exported), `created_by`, `delivery_id`, `deadline_at` (`became_aware_at + 72 h`) | 376/2014 Art. 4(8); the ANSP's outbox copy of `occurrence/v1`; delivered through `deliveries`. |
+| `occurrence_reports` O | `id`, `report_ref`, `channel` (`mandatory` / `voluntary`), `occurred_at`, `became_aware_at`, `category`, `aircraft[]`, `manned[]`, `intent_refs[]`, `narrative`, `reporter_person_ref` (an opaque reference; encrypted **at rest** under this system's secrets key, sent to the authority in clear text over TLS where the authority encrypts it under its own key, M13; never logged, streamed or exported), `created_by`, `delivery_id`, `deadline_at` (`became_aware_at + 72 h`) | 376/2014 Art. 4(8); the ANSP's outbox copy of `occurrence/v1` (schema owned by the authority, consumed from its pinned OpenAPI copy); delivered through `deliveries`. |
 | `users`, `user_sessions`, `user_mfa` O | `id`, `username`, `password_hash` (argon2id), `role` (`watch_supervisor` / `viewer` / `admin`), `status`, `mfa_secret_ref` (encrypted), `mfa_enrolled_at`, `last_login_at`; sessions: `jti`, `user_id`, `issued_at`, `expires_at`, `revoked_at` | `01 §4`: local accounts, MFA mandatory, OIDC-ready (an `oidc_subject` column reserved). |
 | `oauth_clients_seen` O | `client_id`, `system` (`ussp` / `cisp` / `authority` / `lab`), `mtls_subject`, `first_seen_at`, `last_seen_at`, `scopes_seen[]` | What machine clients the ANSP has served (for the console and the SLA record). Truth is the authority's token service; this is an observation log. |
 | `events` O | `id`, `ts`, `actor_type` (`user` / `client` / `system`), `actor_id`, `purpose`, `entity_type`, `entity_id`, `event_type`, `payload`, `prev_hash`, `hash` | Append-only, partitioned by month, hash-chained (06 T7); application role has no `UPDATE`/`DELETE`. Includes views of the inbox and exports. |
@@ -270,9 +277,16 @@ Projected (**P**, read-only locally, with `source_version` and `fetched_at`):
   work package (WP-1: 0001–0019 relational, 0001–0009 timeseries; WP-2:
   0020–0029; WP-5: 0030–0039; WP-7: 0040–0049; WP-8: 0050–0059; WP-9:
   0060–0069; WP-10: 0070–0079) so parallel PRs do not collide.
-- `api` runs the relational migrations at start when
-  `ANSP_MIGRATE_ON_START=true` (dev, staging); `manned-feed` runs the
-  timeseries tree the same way. Production runs `ansp migrate` explicitly.
+- Long-running processes **never migrate** (M36). Each tree is applied
+  by the `migrate` subcommand of the system binary (`api migrate
+  relational`, `manned-feed migrate timeseries`), run as a one-shot
+  `migrate` compose service that the long-running services depend on
+  (`condition: service_completed_successfully`), in development,
+  staging and production alike. `api` and `manned-feed` read the version
+  table at start and refuse to start on a version lower than the one
+  they were built for, printing which tree, which version is present and
+  which is needed. There is no `ANSP_MIGRATE_ON_START`. A tree run
+  against the wrong database fails on its version-table name.
 - Every migration has a `-- +goose Down`. The application role cannot
   `UPDATE` or `DELETE` on `events` and `manned_tracks`.
 
@@ -282,10 +296,31 @@ Projected (**P**, read-only locally, with `source_version` and `fetched_at`):
 
 One origin, `https://<ansp host>/`; Caddy routes each group to its process
 (`02 §3`). Every endpoint below is in `api/openapi.yaml`; an endpoint not
-there does not exist. Path version `/v1`. Errors are RFC 9457 problem
-details with a `field` extension for validation (`core.FieldError`
-semantics). Every response that carries airspace data carries
-`cis_version` and `cis_age_s`.
+there does not exist. Path version `/v1`. Errors are RFC 9457
+`application/problem+json` with the ecosystem's one body (M28):
+`{type, title, status, detail, instance, errors: [{field, reason}],
+truncated?: bool}`, where `field` is the JSON path as `core.FieldError`
+and `ed269.Problems` write it, `errors` is capped at 100 entries with
+`truncated: true`, and `type` is `https://schemas.uspace.ge/problems/<slug>`
+with `slug` the counter or refusal name (`unauthenticated`, `forbidden`,
+`signature`, `cis_stale`, `geoid_unavailable`, `reference_mismatch`,
+...). Every response that carries airspace data carries `cis_version`
+and `cis_age_s`.
+
+Every WebSocket endpoint below, browser- or machine-facing, sends frames
+in the ecosystem's one shape (M29, Appendix C of the reconciliation):
+the `04 §2` envelope (`schema`, `msg_id`, `producer`, `ts`, `rx_ts`,
+`captured_at`, `time_source`, `backlog`) plus a `body` named by
+`schema`. A `console/status/v1` frame goes out on connect and every 2 s
+(`connection_id`, `server_ts`, `policy_version`, `stale_after_s`,
+`live_max_age_s`, `dropped_frames`, `degraded[]`, `sources[]`, plus this
+system's extras `adapters[]`, `cis_version`, `cis_age_s`, `nats`), a
+`console/snapshot/v1` on connect and on re-subscribe, and the client
+sends `console/subscribe/v1 {bbox, layers[]}`. Consumers dispatch on
+`schema`; the former `feed/status/v1` is retired (M12). Browser clients
+authenticate with the `uspace_session` cookie on a same-origin upgrade
+checked against an `Origin` allow-list; machine clients with a bearer
+(M22).
 
 | Method and path | Process | Spec | Auth | Purpose |
 |---|---|---|---|---|
@@ -297,27 +332,27 @@ semantics). Every response that carries airspace data carries
 | `POST /v1/restrictions/{id}/extend` | api | ATS.TR.237(b) temporary limitation | `watch_supervisor` | new `ends_at` (within `CstrMaxDurationHours` of `starts_at`, else a re-issue is created and linked) |
 | `POST /v1/restrictions/{id}/end` | api | ATS.TR.237(b) deactivation | `watch_supervisor` | `active → ended` now |
 | `POST /v1/restrictions/{id}/cancel` | api | `02 F2` states | `watch_supervisor` | `planned → cancelled` |
-| `GET /v1/restrictions/stream` (WS) | api | console | session | restriction state changes and delivery outcomes for the console |
-| `POST /v1/restriction-requests` | api | `02 F11` | ecosystem token, scope `ansp.requests` (proposed, §15 gap 7), or session | a request from the authority (or a console user) for a restriction over an area and window |
+| `GET /v1/restrictions/stream` (WS) | api | console | session cookie (same origin) | restriction state changes (`restriction/state/v1` bodies) and delivery outcomes for the console, in the console frame |
+| `POST /v1/restriction-requests` | api | `02 F11` | ecosystem token, scope `ansp.requests` (in the catalogue, M23), or session | a request from the authority (or a console user) for a restriction over an area and window |
 | `GET /v1/restriction-requests/{id}` | api | `02 F11` | same | state of the request (`received` / `accepted` with `restriction_id` / `declined` with reason) |
 | `POST /v1/restriction-requests/{id}/accept`, `/decline` | api | `02 F11` | `watch_supervisor` | decision; `accept` creates the restriction |
-| `POST /v1/coordination/annex-v` | api | `02 F13`, `04 §3.5 coordination/annex_v/v1`, Art. 13(2) | ecosystem token, scope `ansp.coordination` (proposed, §15 gap 7); the sender's `sub` must be on the CIS USSP list | intake of intent notices, non-conformance, contingent and ended notices; `202` with `ack_id` and `state: received` |
-| `GET /v1/coordination/notices/{ack_id}` | api | `02 F13` | the sending client, or session | the notice's state, `acknowledged_by` (role only, never a name) and `acknowledged_at` when a person has acknowledged |
+| `POST /v1/coordination/notices` | api | `02 F13`, `04 §3.5 coordination/annex_v/v1` (schema owned here, M14), Art. 13(2) | ecosystem token, scope `ansp.coordination` (in the catalogue, M23); the sender's `sub` must be on the CIS USSP list; mTLS per `ANSP_MTLS_MODE` | intake of intent notices, non-conformance, contingent and ended notices; `202 {ack_id, state: received, received_at}` (M2) |
+| `GET /v1/coordination/notices/{ack_id}` | api | `02 F13` | the sending client, or session | the notice's state, `acknowledged_by` (role only, never a name) and `acknowledged_at` when a person has acknowledged; the USSP polls this (every 10 s for 5 min on its side), no push in v1 |
 | `GET /v1/coordination/inbox?state=&since=` | api | `01` N3 | session | the inbox for the console |
 | `POST /v1/coordination/inbox/{id}/acknowledge` | api | Art. 13(2) | `watch_supervisor` | the person's acknowledgement |
-| `GET /v1/coordination/stream` (WS) | api | console | session | new notices and escalations |
-| `GET /v1/manned-traffic/snapshot?bbox=` | manned-feed | `02 F4` | ecosystem token, scope `ansp.traffic`; mTLS when the deployment requires it (§15 gap 8); or session (console) | bootstrap: every relevant aircraft's last sample with age, plus `degraded[]`, `adapters[]` state |
-| `GET /v1/manned-traffic/stream?bbox=` (WS) | manned-feed | `02 F4`, `04 §3.1 track/manned/v1` | same | NDJSON frames, 1 Hz per aircraft; a `status` frame every 2 s with adapters, ages, `degraded[]`, `dropped_frames` |
+| `GET /v1/coordination/stream` (WS) | api | console | session cookie (same origin) | new notices and escalations, in the console frame |
+| `GET /v1/manned-traffic/snapshot?bbox=` | manned-feed | `02 F4` | ecosystem token, scope `ansp.traffic`; mTLS per `ANSP_MTLS_MODE` (`required` in production, `off` in staging and the lab, M25); or session (console) | bootstrap: every relevant aircraft's last sample with age, plus `degraded[]`, `adapters[]` state |
+| `GET /v1/manned-traffic/stream?bbox=` (WS) | manned-feed | `02 F4`, `04 §3.1 track/manned/v1` | same | envelope-wrapped frames: `console/snapshot/v1` on connect, `track/manned/v1` bodies at 1 Hz per aircraft (also with `state: stale \| source_disabled` when an aircraft ages), `console/status/v1` every 2 s with `adapters[]`, ages, `degraded[]`, `dropped_frames`; the client may send `console/subscribe/v1 {bbox, layers[]}` (M12, M29) |
 | `GET /v1/adapters`, `GET /v1/adapters/{id}` | api | `02 §3` | session | the surveillance adapters: configured, running, silent, disabled, last frame, counters |
 | `GET /v1/sources`, `PUT /v1/sources/{type}/{instance}` | api | `04 §3.6`, U-15 | `admin` (write), session (read) | enable / disable by type (`manned`) and instance (adapter id), with reason; audited; 503 when KV cannot take it |
 | `GET /v1/policy`, `PUT /v1/policy` | api | INV-03 | `admin` | the thresholds row; a new `policy_version` |
 | `POST /v1/occurrences` | api | `01` N4, 376 Art. 4(8), `02 F7` | `watch_supervisor` | an ANSP staff occurrence report, queued to the authority's `POST /v1/occurrences` |
 | `GET /v1/audit?entity=&since=` | api | `01` N4 | `admin` | the append-only events |
-| `POST /v1/auth/login`, `POST /v1/auth/mfa`, `POST /v1/auth/logout`, `GET /v1/auth/me` | api | `06 §3` | — / session | local accounts with mandatory TOTP; the BFF calls these and sets the cookie |
+| `POST /v1/auth/login`, `POST /v1/auth/mfa`, `POST /v1/auth/logout`, `GET /v1/auth/me` | api | `06 §3` | — / session | local accounts with mandatory TOTP; the BFF calls these and sets the `uspace_session` / `uspace_csrf` cookies (M21); the session JWT is `scope = "session"`, `roles: [role]`, `realm: "console"`, `aud` = this system's host (M20) |
 | `GET /v1/users`, `POST /v1/users`, `POST /v1/users/{id}/reset-mfa`, `POST /v1/users/{id}/disable` | api | `01 §4` users, `06 §3` | `admin` | console accounts and roles; every change audited |
-| `GET /.well-known/jwks.json` | api | `06 §2` T4 | public | the ANSP's signing keys: console session tokens and the JWS of degraded direct deliveries |
+| `GET /.well-known/jwks.json` | api | `06 §2` T4 | public | the ANSP's signing keys (`use: sig`, distinguished by `kid`): console session tokens, the detached JWS of CISP publications and the compact JWS of degraded direct deliveries (M26) |
 | `GET /uss/v1/constraints/{entityid}` | api | F3548-21 USS API; `02 F2`, `09 §1.4` | ecosystem token, scope `utm.constraint_processing` | the `ConstraintDetails` of a restriction, for USSPs that discovered the reference in the DSS; answered within `CstrMaxTimeSendDetailsSeconds` |
-| `POST /v1/cis/webhook` | api | `02 F3` | JWS signed by the CISP (its JWKS), `aud` = this system | the CISP's change notification; triggers a pull |
+| `POST /v1/cis/notifications` | api | `02 F3` | compact JWS (`application/jose`) signed by an issuer on `ANSP_CIS_NOTIFY_ISSUERS` (the CISP; JWKS URL from configuration), `aud` = the host of this system's registered `callback_url`, `sub` = the subscription id, `jti` = the delivery id (M1, M19) | the CISP's `cis/change/v1` notification; triggers a pull of the named dataset. Reasons `subscription_test`, `republished` and any unknown reason are acknowledged `204` without a pull (M16); `pull_url` is honoured only when its host equals the issuer's configured base host |
 | `GET /healthz`, `GET /readyz`, `GET /metrics` | each process | `05` | network-local | liveness, readiness (dependencies named, never hidden), Prometheus |
 
 Outbound calls this system makes (contracts owned elsewhere, consumed as
@@ -325,14 +360,14 @@ published OpenAPI or standard):
 
 | Call | Owner of the contract | Spec |
 |---|---|---|
-| `POST /v1/restrictions`, `PATCH /v1/restrictions/{id}` on the CISP, `Idempotency-Key` = `ansp_ref`; scope `cis.publish:restrictions`; mTLS client cert bound to the ANSP client id | `uspace-cisp` | `02 F2` |
-| CISP heartbeat (so the CISP can flag the ANSP `source stale` after 60 s) | `uspace-cisp` — not yet in its API list; proposed contract in §15 gap 9 | `02 F2` failure rule |
-| `GET /v1/uspace_airspace`, `GET /v1/ussp_list`, `GET /v1/restrictions` with `ETag`; `POST /v1/subscriptions`; scope `cis.read` | `uspace-cisp` | `02 F3` |
-| `PUT /dss/v1/constraint_references/{entityid}`, `DELETE .../{entityid}/{ovn}`, `GET .../{entityid}`; scope `utm.constraint_management` | InterUSS DSS (F3548-21) | `02 F2`, `02 F6` |
-| `POST {uss_base_url}/uss/v1/constraints` to each subscriber the DSS returns, within `CstrPublishedNotificationLatencySeconds` | each USSP (F3548-21 USS API) | `02 F6` |
-| Degraded direct delivery: `POST {ussp base url}/v1/cis/changes` (proposed path, §15 gap 10) with the `cis/change/v1` body and the ED-318 feature, JWS-signed by the ANSP | `uspace-ussp`, `uspace-authority` | `02 F2` failure rule |
-| `POST /v1/occurrences` on the authority; scope `occurrences.write` | `uspace-authority` | `02 F7`, `F11` |
-| `POST /oauth/token` (client credentials) and `GET /.well-known/jwks.json` on the authority | `uspace-authority` | `06 §3` |
+| `POST /v1/restrictions` with a `cis/restriction/v1` body `{ansp_ref, ansp_version, uspace_airspace_id, state, starts_at, ends_at, feature}` and `PATCH /v1/restrictions/{id}` `{op, ansp_version, ends_at?}` on the CISP; the idempotency key is the body pair `(ansp_ref, ansp_version)`, an `Idempotency-Key` header is optional and unread (M4); detached JWS over the body in `X-JWS-Signature` (`<protected>..<signature>`, RFC 7515 App. F, RFC 7797 `b64: false`, `crit: ["b64"]`, `alg RS256`, `kid`, `iat` ≤ 5 min; key from this system's JWKS, M26); scope `cis.publish:restrictions`; `aud` = the CISP's host; mTLS client cert bound to the client id `ansp-01` (M24) | `uspace-cisp` (`api/clients/cisp.yaml`) | `02 F2` |
+| `POST /v1/publishers/heartbeat {sent_at, active_refs: [<ansp_ref>...]}` every `cisp_heartbeat_s` (15 s); the CISP flags this publisher `source stale` after 60 s (three misses); `204` (M3) | `uspace-cisp` | `02 F2` failure rule |
+| `GET /v1/uspace_airspace`, `GET /v1/ussp_list`, `GET /v1/restrictions` with `ETag` (and `?applies_at=` for annotation, M17); `POST /v1/subscriptions {callback_url: <public base>/v1/cis/notifications, datasets}`; scope `cis.read` | `uspace-cisp` | `02 F3` |
+| `PUT /dss/v1/constraint_references/{entityid}`, `DELETE .../{entityid}/{ovn}`, `GET .../{entityid}`; scope `utm.constraint_management`; `aud` = the DSS's host (M18) | InterUSS DSS (F3548-21) | `02 F2`, `02 F6` |
+| `POST {uss_base_url}/uss/v1/constraints` to each subscriber the DSS returns, within `CstrPublishedNotificationLatencySeconds`; `aud` = the host of that `uss_base_url` (M18) | each USSP (F3548-21 USS API) | `02 F6` |
+| Degraded direct delivery: `POST {base_url}/v1/cis/notifications` on every USSP of the CIS USSP list and on the authority (the same path the CISP posts to; M1, M5) with a `cis/change/v1` payload as a compact JWS (`application/jose`) signed by the ANSP: `iss` = this system, `aud` = the host of the target base URL, `sub` = the restriction id, `jti` = the delivery id, `iat`; `pull_url` = this system's `GET /v1/restrictions/{id}` (the receiver pulls only when the host matches the ANSP's configured base host); the receiver allow-lists the ANSP issuer beside the CISP's | `uspace-ussp`, `uspace-authority` | `02 F2` failure rule |
+| `POST /v1/occurrences` on the authority (`occurrence/v1`, schema owned by the authority); scope `occurrences.write`; `aud` = the authority's host | `uspace-authority` (`api/clients/authority.yaml`) | `02 F7`, `F11` |
+| `POST /oauth/token` (client credentials, `client_id = ansp-01`, `audience` = the host of the target per call) and `GET /.well-known/jwks.json` on the authority | `uspace-authority` | `06 §3` |
 
 ---
 
@@ -345,7 +380,7 @@ credentials (`00 §6.2`). No cross-system NATS. Subjects (D2: no H3):
 |---|---|---|---|
 | `man.v1.<adapter>.<icao24>` | core (ephemeral) + JetStream mirror `MAN_MIRROR`, 1 h retention | `manned-adapter` → `manned-feed` | `track/manned/v1` (schema in `schemas/track/manned/v1.json`; `04 §3.1` fields plus the envelope of `04 §2`: `schema`, `msg_id`, `producer`, `ts`, `rx_ts`, `captured_at`, `time_source`, `backlog`, `trust: surveillance`, `source: ansp_feed`, `source_instance: <adapter>`) |
 | `src.v1.manned.<adapter>` | core | `manned-adapter` → `api`, `manned-feed`, console | `source/status/v1` every 2 s: instance, enabled, last seen, accepted, refused, dropped, stalled, `policy_version` |
-| `restr.v1.<state>.<restriction_id>` | JetStream `RESTR`, 30 d | `api` (restriction) → `api` (outbox), console stream | `restriction/state/v1` (`04 §3.4`): `restriction_id`, `ansp_ref`, `state`, `starts_at`, `ends_at`, `feature`, `version` |
+| `restr.v1.<state>.<restriction_id>` | JetStream `RESTR`, 30 d | `api` (restriction) → `api` (outbox), console stream | `restriction/state/v1` (`04 §3.4`): `restriction_id`, `ansp_ref`, `state`, `starts_at`, `ends_at`, `feature`, `ansp_version` |
 | `deliver.v1.<kind>` | JetStream work queue `DELIVER`, explicit ack, `max_deliver` by policy, 24 h | `api` (restriction, coord) → `api` outbox worker | a delivery job: kind, subject ref, idempotency key, attempt |
 | `cis.v1.<dataset>` + KV `cis_current` | JetStream 30 d + KV | `api` (cis client) → `manned-feed`, `api` | the projected dataset version and body (U-space volumes, USSP list, restrictions as the CISP shows them) |
 | `ctl.sources` + KV `source_control` | KV + push | `api` → `manned-feed`, adapters | `sources.State` (`04 §3.6`); followers apply by version within epoch (B-09) |
@@ -365,14 +400,14 @@ and says so in `/readyz` and its log (E-02, SC-08 step 8).
 
 | Boundary | Mechanism | Scopes / roles |
 |---|---|---|
-| USSPs and the authority → F4 stream and snapshot | ecosystem RS256 JWT verified by `uspace-core/auth` (issuer allow-list = the authority's token service from configuration; `aud` = this system's id; `exp` with 30 s skew; `jti`); mTLS client certificate terminated by Caddy and passed as a header the api binds to the `sub` when the deployment requires it (§15 gap 8) | `ansp.traffic` |
-| USSPs → coordination intake | ecosystem JWT; the `sub` must appear on the CIS USSP list projection, else `403` and an audit row | `ansp.coordination` (proposed) |
-| Authority → restriction requests | ecosystem JWT | `ansp.requests` (proposed) |
+| USSPs and the authority → F4 stream and snapshot | ecosystem RS256 JWT verified by `uspace-core/auth` (issuer allow-list = the authority's token service and, in the lab, the lab issuer, from configuration; `aud` ∈ `ANSP_AUDIENCES`, a list of hosts: this system's public host plus a lab alias such as the compose service name, M18; `exp` with 30 s skew; `jti`); mTLS per `ANSP_MTLS_MODE = required \| off` (M25): Caddy terminates with `client_auth { mode verify_if_given }` and forwards `X-Client-Cert-Subject` (stripped on every other route); the Go middleware requires the header and binds the subject to the `sub` on the mTLS route groups only (`/v1/manned-traffic/*`, `/v1/coordination/*`); `off` is logged at error level every status period | `ansp.traffic` |
+| USSPs → coordination intake | ecosystem JWT; the `sub` must appear on the CIS USSP list projection, else `403` and an audit row; mTLS per `ANSP_MTLS_MODE` | `ansp.coordination` (in the `06 §3` catalogue held by authority WP-2, M23) |
+| Authority → restriction requests | ecosystem JWT | `ansp.requests` (in the catalogue, M23) |
 | USSPs → constraint details | ecosystem JWT with the F3548 scope | `utm.constraint_processing` |
-| CISP → webhook | JWS over the body, verified with the CISP's JWKS (URL from configuration), `iss` and `aud` checked, replay window on `at` | — |
-| This system → CISP, DSS, authority, USSPs | client-credentials tokens from the authority's token service, fetched at 50 % TTL (`06` T5); mTLS client certificate for the CISP publication (`02 F2`); JWS-signed bodies for degraded direct deliveries (key in `/.well-known/jwks.json`) | `cis.publish:restrictions`, `cis.read`, `utm.constraint_management`, `occurrences.write` |
+| CISP → change notifications (`/v1/cis/notifications`) | compact JWS (`application/jose`) verified with core's `auth.VerifyCompact` against the JWKS of an issuer on `ANSP_CIS_NOTIFY_ISSUERS`; `iss`, `aud` (= the host of the registered `callback_url`), `jti` (replay window 5 min) checked; `pull_url` host must equal the issuer's configured base host | — |
+| This system → CISP, DSS, authority, USSPs | client-credentials tokens from the authority's token service as client `ansp-01`, one token per (`aud` = the target's host, scope set), fetched at 50 % TTL (`06` T5); mTLS client certificate for the CISP publication and heartbeat (`02 F2`); detached JWS (`X-JWS-Signature`) on CISP publications and compact JWS bodies for degraded direct deliveries, signed with core's `auth.SignDetached` / `SignCompact` (key in `/.well-known/jwks.json`, M26, M27) | `cis.publish:restrictions`, `cis.read`, `utm.constraint_management`, `utm.constraint_processing` (subscriber notifications), `occurrences.write` |
 | Surveillance feeds → adapters | network isolation per adapter (dedicated interface or mTLS where the feed supports it); an adapter refuses `trust: simulated` and `source: sitl` outside the lab build (`06` T11); the replay adapter is enabled only by explicit configuration and is shown as `replay` on the console | — |
-| Humans → console | local accounts (argon2id), TOTP MFA mandatory for every role (`01 §4`), roles `watch_supervisor`, `viewer`, `admin`; the Next.js BFF exchanges the login for an `HttpOnly`, `SameSite=Strict` cookie holding a session JWT issued by this system's `uspace-core/auth` Issuer and verified by `api` and `manned-feed`; CSRF token on every state-changing call; login rate limits (S-15) | roles |
+| Humans → console | local accounts (argon2id), TOTP MFA mandatory for every role (`01 §4`), roles `watch_supervisor`, `viewer`, `admin`; the Next.js BFF exchanges the login for the `uspace_session` cookie (`HttpOnly; Secure; SameSite=Strict`) holding a session JWT issued by this system's `uspace-core/auth` Issuer with `iss` = this system, `aud` = this system's host, `sub` = account id, `scope = "session"`, `roles: [role]`, `realm: "console"`, `jti` = session id, `exp` ≤ 12 h, `kid` (M20), verified by `api` and `manned-feed` with the same `core/auth.Verifier` as machine tokens; `uspace_csrf` cookie and `X-CSRF-Token` header on every state-changing call (M21); WebSocket upgrades take the cookie on a same-origin request checked against an `Origin` allow-list, no ticket (M22); login rate limits (S-15) | roles |
 | Internal NATS | per-process credentials, isolated network, no JWT | — |
 
 Threats of `06 §2` that land here: T4 (impersonation: scopes, `aud`,
@@ -427,7 +462,7 @@ never gated; the lab's L-M2 load test is the proof.
 | Vectors | `uspace-core/vectors` `RunOwned(t, "ansp", ...)` for the files that name this system (`ed318_roundtrip.json`, `jwt_verify.json`, `source_control.json`), run against this repo's adapters (the restriction feature builder, the token middleware, the switch follower), never a second judgement | every push |
 | Schema examples | every message in `schemas/examples/` validates against its schema and round-trips through the Go struct; the generated TypeScript types compile against them | every push |
 | Contract | `api/openapi.yaml` lints (`vacuum` or `redocly`, pinned); generated code is current (`scripts/generate-check.sh` diff); the OpenAPI examples pass the strict server's validation; the client in `api/gen` exercises every operation against the server in a test | every push |
-| Integration | real PostgreSQL + PostGIS, TimescaleDB and NATS as GitHub Actions `services:`; migrations up and down; the restriction state machine end to end through HTTP with the outbox delivering to an in-test CISP, DSS and USSP stub (every stub records what it got, so presence is asserted: the publish happened, the `PUT` happened, the subscriber `POST` happened, within budget); degraded path with the CISP stub down; `manned-feed` from replay frames to a WS client with the stall case of SC-15; source switch of SC-08; CIS webhook → pull → KV | every push, job `integration` with path filters |
+| Integration | real PostgreSQL + PostGIS, TimescaleDB and NATS as GitHub Actions `services:`; migrations up and down; the restriction state machine end to end through HTTP with the outbox delivering to an in-test CISP, DSS and USSP stub (every stub records what it got, so presence is asserted: the publish happened, the `PUT` happened, the subscriber `POST` happened, within budget); degraded path with the CISP stub down; `manned-feed` from replay frames to a WS client with the stall case of SC-15; source switch of SC-08; CIS change notification → pull → KV | every push, job `integration` with path filters |
 | Scenario (milestone proof) | N-M1 and N-M2 of `07` Phase 5 against the sibling images and the lab's SITL, DSS and simulated USSP, from `deploy/compose.yaml`; recorded in `docs/runbooks/` with timings (E-04) | WP-13; on demand |
 | Conformance hooks | the lab's suite (`uspace-lab/conformance/`, L-M4) runs InterUSS `uss_qualifier` constraint-management checks against the ANSP and the lab DSS, and the national OpenAPI contract tests from the aggregated `api/openapi.yaml`; this repo exposes `make conformance-target` (brings up the stack with lab-issued test keys) and a `testdata/conformance/` directory for the suite's configuration | lab CI, release |
 | Fuzz | `FuzzSBSLine`, `FuzzAircraftJSON`, `FuzzReplayFrame` (adapter inputs), `FuzzAnnexVNotice`, `FuzzRestrictionRequest` (inbound JSON), 10 s each | every push |
@@ -447,10 +482,12 @@ never gated; the lab's L-M2 load test is the proof.
   `README-json.md` at a pinned commit recorded in
   `internal/manned/dump1090/SOURCE`, with recorded sample lines in
   testdata; F3548 and ED-318 member names come from `uspace-core`'s
-  generated types; `coordination/annex_v/v1` and `cis/change/v1` fields
-  come from the owning repo's schema when published, until then from
-  `04 §3.4–3.5` with the fields listed in the OpenAPI file and marked as
-  pending the schema.
+  generated types; `coordination/annex_v/v1` is this repo's own schema
+  (`schemas/coordination/annex_v/v1.json`, M14); `cis/change/v1`,
+  `cis/restriction/v1` and `cis/ussp_list/v1` fields come from the
+  CISP's OpenAPI file pinned under `api/clients/cisp.yaml` with its
+  `SOURCE` commit (M11), `occurrence/v1` from the authority's copy; the
+  envelope and the console frames from `uspace-lab/schemas/common/`.
 - **E-04** a PR reports what was run and what it printed; a skipped
   integration job is reported as skipped.
 - **INV-02** the restriction and manned paths are not done until a SITL
@@ -472,19 +509,38 @@ never gated; the lab's L-M2 load test is the proof.
   image `ghcr.io/rootxkit/uspace-ansp-web` for the Next.js build. Next.js
   is never built on the server.
 - `deploy/compose.yaml`: `api`, `manned-feed`, `manned-adapter-replay`
-  (staging) or `manned-adapter-<feed>` (production), `web`, `postgres`
-  (PostGIS 3.4), `timescaledb`, `nats` (JetStream, file store, per-process
-  credentials), on an isolated network; Caddy is the only shared component
-  on the droplet (`05 §6`). Resource limits sized for the 2 vCPU / 3.8 GB
-  droplet (the ANSP stack ≤ 600 MB).
-- `deploy/caddy/ansp.caddy`: the `uspace-ansp.<domain>` block (domain from
-  the private infra repo, never in code): `/v1/manned-traffic/*` →
-  `manned-feed`, `/uss/*`, `/v1/*`, `/.well-known/*` → `api`, `/_bff/*`
-  and the rest → `web`; `client_auth` for the mTLS groups when enabled.
+  (staging) or `manned-adapter-<feed>` (production), `web`, a one-shot
+  `migrate` service (both trees; the long-running services depend on
+  its completion, M36), one `timescale/timescaledb-ha:pg16` container
+  holding **both** databases (it ships PostGIS; the relational database
+  and the timeseries database stay separate databases with separate
+  version tables, M37; two hosts only when the system outgrows it), and
+  `nats` (JetStream, file store, per-process credentials), on an
+  isolated network. Caddy is the only shared component on the droplet
+  (`05 §6`), and its Caddyfile is composed by the private deployment
+  repo `uspace-deploy` from each system's snippet (D1); it also serves
+  `/basemap/*` for every console from one shared read-only volume
+  (M38). Resource limits sized for the ANSP stack's share (≤ 600 MB,
+  ≤ 0.5 vCPU, measured in WP-13); the droplet's own sizing is an open
+  owner question (reconciliation §2.1).
+- `deploy/caddy/ansp.caddy`: the `uspace-ansp.<domain>` **snippet**
+  (domain from the private infra repo, never in code), consumed by
+  `uspace-deploy`: `/v1/manned-traffic/*` → `manned-feed`, `/uss/*`,
+  `/v1/*`, `/.well-known/*` → `api`, `/_bff/*` and the rest → `web`;
+  `client_auth { mode verify_if_given, trusted_ca_cert_file ... }` on
+  the host, `X-Client-Cert-Subject` forwarded on the mTLS route groups
+  and stripped everywhere else (M25); `/metrics` never routed.
+- `web/` uses `pnpm` (`packageManager` pinned, `--frozen-lockfile`),
+  fonts from the kit through `next/font/local`, the kit's CSP
+  (`connect-src 'self'`, `font-src 'self'`, `worker-src blob:`), and the
+  basemap at `/basemap/` served by the deployment's Caddy; no third-party
+  tile or font request, ever (M34, M38).
 - Configuration through environment variables only
   (`internal/config`), documented in `deploy/.env.example`; the configured
   addresses are exactly the DSS, the CISP of record, the authority's token
-  service and JWKS, and the feed endpoints (`00 §7`).
+  service and JWKS, and the feed endpoints (`00 §7`). `ANSP_MTLS_MODE` is
+  `required` in production and `off` on the staging droplet and in the
+  lab (M25).
 - Backups: nightly `pg_dump` of the relational database and
   TimescaleDB chunk backups to a second account (S-22 pattern); rollback
   by image tag (S-21).
@@ -520,16 +576,16 @@ CHANGELOG line; the PR body lists the commands run and their last lines
 | WP-0 | `scaffold` | `go.mod`, `cmd/*` stubs, `internal/config`, `internal/obs`, `internal/bus`, `Makefile`, `.golangci.yml`, `.github/workflows/`, `deploy/Dockerfile`, `deploy/compose.yaml` (dev), `CLAUDE.md`, `SECURITY.md`, `CHANGELOG.md`, `.gitleaks.toml`, `.gitattributes` | — | N-M0 |
 | WP-1 | `store-migrations` | `migrations/relational/0001–0019`, `migrations/timeseries/0001–0009`, `internal/store`, `internal/audit`, `internal/policy` | WP-0 | N-M0 |
 | WP-2 | `auth-accounts` | `internal/auth`, `migrations/relational/0020–0029` (users, sessions, mfa, oauth_clients_seen) | WP-0 (store helpers from WP-1 are used once merged; until then the WP writes against pgx directly behind its own interface) | N-M0 |
-| WP-3 | `openapi-contract` | `api/openapi.yaml`, `api/oapi-codegen.yaml`, `api/gen`, `schemas/`, `scripts/generate*.sh`, the contract tests | WP-0 | N-M0 |
+| WP-3 | `openapi-contract` | `api/openapi.yaml`, `api/oapi-codegen.yaml`, `api/gen`, `api/clients/` (pinned sibling copies + `SOURCE` + CI diff), `schemas/` (including `coordination/annex_v/v1`, owned here), `scripts/generate*.sh`, the contract tests | WP-0 | N-M0 |
 | WP-4 | `manned-adapter` | `internal/manned` (model, adapter, replay, dump1090, asterix stub), `cmd/manned-adapter`, `testdata/replay/` | WP-0 | N-M1 |
 | WP-5 | `restrictions` | `internal/restriction`, `migrations/relational/0030–0039`, restriction and restriction-request handlers in `cmd/api` | WP-1, WP-2, WP-3 | N-M1 |
 | WP-6 | `manned-feed` | `internal/picture`, `internal/feed`, `internal/sources`, `cmd/manned-feed`, `migrations/timeseries` additions in `0010–0019` | WP-1, WP-2, WP-4 | N-M1 |
 | WP-7 | `cis-projection` | `internal/cis`, `migrations/relational/0040–0049` (`cis_cache`), the webhook handler, `testdata/fixtures/` | WP-1, WP-2, WP-3 | N-M1 |
-| WP-8 | `outbox-cisp` | `internal/deliver`, `migrations/relational/0050–0059` (`deliveries`), the CISP publisher, heartbeat, degraded direct delivery, JWKS endpoint | WP-5, WP-7 | N-M1 |
+| WP-8 | `outbox-cisp` | `internal/deliver`, `migrations/relational/0050–0059` (`deliveries`), the CISP publisher, heartbeat, degraded direct delivery, JWKS endpoint | WP-5, WP-7; `uspace-core v1.1.0` for the JWS helpers (core WP-14, which runs in the cross-repo wave 0 while this WP is in wave 3, so it does not wait in practice) | N-M1 |
 | WP-9 | `dss-constraints` | `internal/dss`, `migrations/relational/0060–0069`, `GET /uss/v1/constraints/{entityid}` | WP-5, WP-8 (the outbox carries DSS jobs) | N-M1 |
 | WP-10 | `coordination-inbox` | `internal/coord`, `migrations/relational/0070–0079`, coordination, inbox and occurrence handlers | WP-1, WP-2, WP-3, WP-7 (USSP list) | N-M2 |
-| WP-11 | `console-restrictions` | `web/` (app shell, auth/BFF, i18n, restriction map editor and list, adapters page) | WP-3 (types), WP-5, WP-2 | N-M1 |
-| WP-12 | `console-picture-inbox` | `web/` manned picture layer, coordination inbox, audit view, source switches | WP-11, WP-6, WP-10 | N-M2 |
+| WP-11 | `console-restrictions` | `web/` (app shell, auth/BFF, i18n, restriction map editor and list, adapters page) | WP-3 (types), WP-5, WP-2; `@rootxkit/uspace-ui` ≥ 0.1 from npmjs (`RestrictionLayer` ships in 0.1.0, M33) | N-M1 |
+| WP-12 | `console-picture-inbox` | `web/` manned picture layer, coordination inbox, audit view, source switches | WP-11, WP-6, WP-10; `@rootxkit/uspace-ui` ≥ 0.3 (`MannedLayer`, M33) | N-M2 |
 | WP-13 | `deploy-proof` | `deploy/` (prod compose, Caddy, GHCR publish, cosign, SBOM), `docs/runbooks/n-m1.md`, `n-m2.md`, `make conformance-target`, `testdata/conformance/` | all | N-M1, N-M2, N-M3 |
 
 Waves (what can run in parallel):
@@ -608,28 +664,41 @@ short form.
 
 ## 15. Open questions and proposed answers
 
-Where the spec is silent or ambiguous. Each row states what this plan
-assumes until the owner (or the sibling planner named) answers.
+Where the spec is silent or ambiguous. The cross-plan reconciliation of
+2026-10-02 (`uspace-lab`, "Cross-plan reconciliation", §2) decided every
+row the coordinator could decide; those rows are marked **decided** with
+the answer this plan now follows and the mismatch id (`Mnn`) that
+carries it. Four rows (3, 11, 12, 17) are **owner-only**: they stay open,
+the plan builds the demo default stated in the row, and nobody invents
+the policy answer.
 
-| # | Gap | Proposed answer (assumed now) | Who decides |
+| # | Gap | Answer | Status |
 |---|---|---|---|
-| 1 | `00 §6.1` lists two ANSP processes and gives the F4 stream to `manned-adapter`; several adapter instances cannot each serve the union. | A third process `manned-feed` serves F4 and writes TimescaleDB (D1). Spec `00 §6.1` and `05 §2` ansp rows to be updated. | owner; lab (spec) |
-| 2 | `05 §3` partitions internal subjects by H3; core has no H3 (cgo). | No H3 here: `man.v1.<adapter>.<icao24>` (D2). If the owner accepts cgo in core later, this system keeps its key: tens of aircraft need no cell partitioning. | owner |
-| 3 | Vertical reference of a dynamic restriction: ED-318 allows AGL; F3548 constraints need W84. | AMSL or WGS84 only in this release (D3); AGL refused with a reason; conversion AMSL → HAE through `uspace-core/geoid` with the minimum undulation over the vertices for the lower limit and the maximum for the upper (conservative). | owner; Sakaeronavigatsia (how ATC states levels: flight levels and altitudes, never AGL, so the assumption should hold) |
-| 4 | ED-318 identifier of a restriction: `03 §6` says prefixed `DAR-`; the identifier is at most 7 characters. | `DAR` + 4 base-36 characters, no hyphen (D4). `03 §6` to be corrected. | lab (spec) |
-| 5 | `03` says `golang-migrate`; the fixed stack says goose. | goose (D8); the spec's conventions paragraph to say "two migration trees" without naming the tool. | owner |
-| 6 | Art. 13(2) acknowledgement: `02 F13` returns an `ack_id` synchronously; `03 §4` records `acknowledged_by` (a person). | Two states: `received` (the `ack_id` in the `202`, the receipt the USSP records) and `acknowledged` (a `watch_supervisor` on the console, within `notice_escalation_s`, else escalated on the console). The USSP may read the state at `GET /v1/coordination/notices/{ack_id}`; no callback to the USSP in v1. | owner; USSP planner (does the USSP want the human acknowledgement pushed?) |
-| 7 | `06 §3` lists `ansp.traffic` and nothing for the F11 and F13 inbound calls. | New scopes `ansp.coordination` (USSPs → `/v1/coordination/*`) and `ansp.requests` (authority → `/v1/restriction-requests`), to be registered at the authority's token service. | owner; authority planner |
-| 8 | mTLS for F4: `01 §4` says "available", `02 F4` says "mandatory". | Configurable per deployment (`ANSP_MTLS_REQUIRED`): required in production, optional on the staging droplet so the lab's simulated USSP needs no client certificate; the same flag covers `/v1/coordination/*`. | owner |
-| 9 | `02 F2` failure rule: the CISP flags the ANSP `source stale` after 60 s of missed heartbeat, but the CISP's API lists no heartbeat endpoint. | Proposed contract: `POST /v1/restrictions/heartbeat` on the CISP (scope `cis.publish:restrictions`, body `{ "publisher": "<client id>", "at": "<RFC 3339>", "active_restriction_refs": [...] }`), every `cisp_heartbeat_s` (30 s); the CISP answers `204`. Until the CISP planner confirms, the outbox job exists and targets a configurable path. | CISP planner |
-| 10 | Degraded direct delivery (`02 F2`): "sends the restriction directly to subscribed USSPs and the authority on the same contract (F3 payload)" names no endpoint on the USSP or authority. | Proposed: `POST /v1/cis/changes` on each USSP and on the authority, body = `cis/change/v1` with `pull_url` pointing at this system's `GET /v1/restrictions/{id}` (which serves the ED-318 feature), JWS-signed by the ANSP (`/.well-known/jwks.json`); the receiver treats it exactly like a CISP webhook with a different `iss`. | USSP and authority planners |
-| 11 | `02 F2`: "the ATS.OR.127 operational data items the ANSP agrees with the authority (Annex V SLA)" are undefined. | Out of scope until the SLA names them; the plan reserves no table. When defined, they become a dataset published through the same outbox. | owner; Sakaeronavigatsia; GCAA (Q3) |
-| 12 | Which surveillance formats the ANSP can hand over (Q3, Q14): ADS-B via dump1090-style outputs, ASTERIX CAT021/CAT062 from the ATM system, or an ATM API. | v1 implements the replay adapter and the dump1090 readers (SBS text and `aircraft.json`), with the reader's field names pinned to dump1090's documentation; ASTERIX is a stub that refuses to start with a reason; an ATM API adapter waits for the agreement. | Sakaeronavigatsia; owner |
-| 13 | Must a restriction lie inside a designated U-space airspace (Art. 4 says the ATC unit limits the area *inside* U-space airspace), when none is designated yet (Q2)? | `require_uspace_airspace` policy, default `true`: a restriction must intersect a `USPACE` feature in `cis_cache` and is clipped to nothing (refused if it does not intersect). For the demo the lab publishes a designation through the authority role. `false` allows a free-standing restriction and marks it `outside_uspace: true` in its feature's `extendedProperties`. | owner; GCAA (Q2) |
-| 14 | Field naming: `02 F4` says `pressure_alt_m`, `03 §4` and `04 §3.1` say `alt_pressure_m`; `02 F4` calls the message `manned_track.v1`, `04` calls it `track/manned/v1`. | `alt_pressure_m` and `track/manned/v1` (`$id` `https://schemas.uspace.ge/track/manned/v1.json`), E-13 order (quantity, datum, unit). `02 F4` to be aligned. | lab (spec) |
-| 15 | Who owns the schema of `coordination/annex_v/v1` (produced by the USSP, consumed here) and of `cis/change/v1` (CISP)? | The producer (`04 §1`). This repo's OpenAPI describes the request body with the `04 §3.5` fields and a `x-pending-schema` marker until the USSP publishes `schemas/coordination/annex_v/v1.json`; the lab's aggregation then replaces the inline definition by `$ref`. | USSP and CISP planners; lab |
-| 16 | The F3548 `ConstraintDetails.type` for a dynamic restriction: `04 §3.5` says `DAR`; InterUSS examples use reverse-DNS strings. | `type: "DAR"` as the spec says, and the ED-318 feature carried in `ConstraintDetails.geozone` where the F3548 `GeoZone` object can hold it (it is ED-269-shaped; the mapping uses `uspace-core/ed318.ToED269` and refuses what cannot map, with the restriction still valid without `geozone`). | owner; USSP planner |
-| 17 | Occurrence reporting by the ANSP (376 Art. 4(8)) and the 2017/373 record-keeping period (ATM/ANS.OR.B.030, unverified). | A console form that queues `occurrence/v1` to the authority (`occurrences.write`) with the 72 h deadline shown; records kept per `05 §4` defaults (restrictions and audit indefinitely, manned tracks 90 days online then archived) until Sakaeronavigatsia's safety office states the period. | Sakaeronavigatsia; owner |
-| 18 | `uspace-core` version to pin: `v1.0.0` is imminent; `v0.2.0` is the newest tag today. | WP-0 pins the newest tag at its start and records it in §4; moving to `v1.0.0` is a one-line `build:` commit. A `v0.x` pin is acceptable because the packages this system uses (`auth`, `ed318`, `f3548`, `sources`, `timeplace`, `geodesy`, `geoid`, `zones`) are complete at `v0.2.0`. | owner |
-| 19 | The console's manned picture reaches `web/` from `manned-feed` over WS authenticated by the session cookie; `00 §6.2` describes bearer forwarding by the BFF, which does not apply to WebSockets. | `manned-feed` and `api` accept the session cookie on same-origin WebSocket upgrades (verified with the same `uspace-core/auth` verifier) in addition to a bearer; `uspace-ui`'s session helpers are expected to support this. | UI planner; owner |
-| 20 | Staging has one droplet shared by five systems; the ANSP stack's share. | ≤ 600 MB and ≤ 0.5 vCPU at the demo's load (tens of manned aircraft); measured in WP-13 and recorded. | owner |
+| 1 | `00 §6.1` lists two ANSP processes and gives the F4 stream to `manned-adapter`; several adapter instances cannot each serve the union. | A third process `manned-feed` serves F4 and writes TimescaleDB (D1). Spec erratum for `00 §6.1` and `05 §2` (lab WP-L4). | **decided** (§2.2 ansp 1) |
+| 2 | `05 §3` partitions internal subjects by H3; core has no H3 (cgo). | No H3 and no cells here: `man.v1.<adapter>.<icao24>` (D2). Core ships a pure-Go grid (`geodesy/cell`) for the authority and the USSP; the ANSP does not partition. | **decided** (M30, M35) |
+| 3 | Vertical reference of a dynamic restriction: ED-318 allows AGL; F3548 constraints need W84. | Demo default: AMSL or WGS84 only (D3); AGL refused with a reason; AMSL → HAE through `uspace-core/geoid` with the minimum undulation over the vertices for the lower limit and the maximum for the upper (conservative). | **open, owner-only**: how Sakaeronavigatsia's ATC states levels (reconciliation §2.1) |
+| 4 | ED-318 identifier of a restriction: `03 §6` says prefixed `DAR-`; the identifier is at most 7 characters. | `DAR` + 4 base-36 characters, no hyphen (D4); the CISP enforces only `≤ 7` and uniqueness across datasets, never a prefix. Spec erratum for `03 §6`. | **decided** (M10) |
+| 5 | `03` says `golang-migrate`; the fixed stack says goose. | goose, two embedded trees, version tables `goose_db_version_relational` / `goose_db_version_timeseries`; a `migrate` subcommand plus a one-shot compose service; long-running processes never migrate (§5.3). Spec erratum for `03`. | **decided** (M36) |
+| 6 | Art. 13(2) acknowledgement: `02 F13` returns an `ack_id` synchronously; `03 §4` records `acknowledged_by` (a person). | Two states: `received` (the `ack_id` in the `202`) and `acknowledged` (a `watch_supervisor` on the console, within `notice_escalation_s`, else escalated). No push to the USSP in v1; the USSP polls `GET /v1/coordination/notices/{ack_id}` every 10 s for 5 min. | **decided** (M2; ussp Q10) |
+| 7 | `06 §3` lists `ansp.traffic` and nothing for the F11 and F13 inbound calls. | `ansp.coordination` (USSPs → `/v1/coordination/*`) and `ansp.requests` (authority → `/v1/restriction-requests`) are in the scope catalogue held by authority WP-2; a further scope opens a PR there first. | **decided** (M23) |
+| 8 | mTLS for F4: `01 §4` says "available", `02 F4` says "mandatory". | `ANSP_MTLS_MODE = required \| off`: `required` in production, `off` on the staging droplet and in the lab (the lab's simulated USSP has no certificate); covers `/v1/manned-traffic/*` and `/v1/coordination/*`; Caddy `client_auth verify_if_given` + `X-Client-Cert-Subject`, bound in Go on those routes only; `off` logged at error level every status period. | **decided** (M25) |
+| 9 | `02 F2` failure rule: the CISP flags the ANSP `source stale` after 60 s of missed heartbeat, but the CISP's API lists no heartbeat endpoint. | `POST {cisp}/v1/publishers/heartbeat {sent_at, active_refs: [<ansp_ref>...]}` every `cisp_heartbeat_s` = 15 s (three misses = 60 s stale); `204`. No configurable path. | **decided** (M3) |
+| 10 | Degraded direct delivery (`02 F2`): "sends the restriction directly to subscribed USSPs and the authority on the same contract (F3 payload)" names no endpoint on the USSP or authority. | `POST {base_url}/v1/cis/notifications` on every USSP of the CIS list and on the authority, the one receiver path the CISP also posts to; payload `cis/change/v1` as a compact JWS signed by the ANSP (`iss` = ANSP, `aud` = the target's host, `sub` = restriction id, `jti` = delivery id); receivers allow-list the ANSP issuer beside the CISP's and honour `pull_url` only on the ANSP's configured host. No per-target path configuration. | **decided** (M1, M5) |
+| 11 | `02 F2`: "the ATS.OR.127 operational data items the ANSP agrees with the authority (Annex V SLA)" are undefined. | Demo default: out of scope until the SLA names them; the plan reserves no table; when defined they become a dataset through the same outbox (the CISP reserves `ats_operational_data` and `cis.publish:ats_data`). | **open, owner-only**: Annex V SLA between GCAA and Sakaeronavigatsia (spec Q3) |
+| 12 | Which surveillance formats the ANSP can hand over (Q3, Q14): ADS-B via dump1090-style outputs, ASTERIX CAT021/CAT062 from the ATM system, or an ATM API. | Demo default: the replay adapter and the dump1090 readers (SBS text and `aircraft.json`) with field names pinned to dump1090's documentation; ASTERIX is a stub that refuses to start with a reason; an ATM API adapter waits for the agreement. | **open, owner-only**: Sakaeronavigatsia's data-release agreement (spec Q3, Q14) |
+| 13 | Must a restriction lie inside a designated U-space airspace (Art. 4 says the ATC unit limits the area *inside* U-space airspace), when none is designated yet (Q2)? | Always: a restriction must intersect a current `USPACE` feature in `cis_cache` and names its `uspace_airspace_id` (refused otherwise; `503 cis_stale` when the projection is stale). The CISP is strict too, so a free-standing restriction would be unpublishable; the `require_uspace_airspace = false` option is dropped. The lab publishes a designation for every demo (C-M2, N-M1). | **decided** (M9) |
+| 14 | Field naming: `02 F4` says `pressure_alt_m`, `03 §4` and `04 §3.1` say `alt_pressure_m`; `02 F4` calls the message `manned_track.v1`, `04` calls it `track/manned/v1`. | `alt_pressure_m` and `track/manned/v1` (`$id` `https://schemas.uspace.ge/track/manned/v1.json`), E-13 order. Spec erratum for `02 F4` (lab WP-L4). | **decided** (§2.2 ansp 14) |
+| 15 | Who owns the schema of `coordination/annex_v/v1` (produced by the USSP, consumed here) and of `cis/change/v1` (CISP)? | The repo whose `api/openapi.yaml` carries the body owns it: **this repo owns `coordination/annex_v/v1`** (`schemas/coordination/annex_v/v1.json` with examples, published by WP-3) and the USSP consumes it; the CISP owns `cis/change/v1`. No `x-pending-schema` wait. Sibling APIs are consumed as pinned copies under `api/clients/<system>.yaml` with a `SOURCE` commit and a CI diff until the lab aggregate (`uspace-lab/api/`, `schemas/`) replaces them. | **decided** (M11, M14) |
+| 16 | The F3548 `ConstraintDetails.type` for a dynamic restriction: `04 §3.5` says `DAR`; InterUSS examples use reverse-DNS strings. | `type: "DAR"`; the ED-318 feature in `ConstraintDetails.geozone` where `uspace-core/ed318.ToED269` can map it, else omitted with a counter, the restriction still valid. | **decided** (§2.2 ansp 16) |
+| 17 | Occurrence reporting by the ANSP (376 Art. 4(8)) and the 2017/373 record-keeping period (ATM/ANS.OR.B.030, unverified). | Demo default: a console form that queues `occurrence/v1` to the authority (`occurrences.write`) with the 72 h deadline shown; records kept per `05 §4` defaults (restrictions and audit indefinitely, manned tracks 90 days online then archived). | **open, owner-only**: Sakaeronavigatsia's safety office states the period |
+| 18 | `uspace-core` version to pin. | `v1.0.0` (released). The JWS helpers come with the additive `v1.1.0` (core WP-14); WP-8 bumps to it in a `build:` commit. | **decided** (§2.2 ansp 18, M27) |
+| 19 | The console's manned picture reaches `web/` from `manned-feed` over WS authenticated by the session cookie; `00 §6.2` describes bearer forwarding by the BFF, which does not apply to WebSockets. | `manned-feed` and `api` accept the `uspace_session` cookie on same-origin WebSocket upgrades checked against an `Origin` allow-list, verified with the shared `uspace-core/auth` verifier, in addition to a bearer; no ticket route (the BFF cannot proxy WebSockets and a ticket in a query string is logged); a `4401` close means "re-login". The kit drops `wsTicket`. | **decided** (M22) |
+| 20 | Staging has one droplet shared by five systems; the ANSP stack's share. | ≤ 600 MB and ≤ 0.5 vCPU at the demo's load (tens of manned aircraft); measured in WP-13 and recorded. Whether the droplet itself is resized (≥ 4 vCPU / 8 GB) or the DSS and lab move to a second droplet is an open owner question (reconciliation §2.1, money). | **decided for this repo** (§2.2 ansp 20); droplet sizing open, owner-only |
+
+Cross-cutting decisions this plan also follows without a row of its
+own: the JWT claim table (M18, M20, M24: `aud` = target host,
+`ANSP_AUDIENCES`, client id `ansp-01`, session claims), the error body
+(M28), the console frame on every WebSocket (M29), `pnpm` and npmjs-only
+kit installs (M32, M34), one `timescaledb-ha` container per system on
+the droplet (M37), the shared basemap volume and the kit's CSP (M38),
+and `occurrence/v1 reporter.person_ref` in clear over TLS (M13). See D11.

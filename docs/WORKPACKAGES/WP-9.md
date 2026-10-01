@@ -36,14 +36,15 @@ within 5 s or the miss must be visible.
 4. InterUSS DSS: how `PUT /dss/v1/constraint_references/{entityid}`
    and `PUT .../{entityid}/{ovn}` (update) and `DELETE
    .../{entityid}/{ovn}` behave; the `Manager` is derived from the
-   token's `sub`; the DSS audience from `ANSP_DSS_AUDIENCE`.
+   token's `sub`; the DSS audience is the host of `ANSP_DSS_URL`
+   (M18; InterUSS `accepted_jwt_audiences` are hostnames).
 5. LESSONS E-03 (paths and members from the pinned file), E-01, E-02,
    E-10; the lab's `uspace-lab` DSS compose when it exists.
 
 ## What to build
 
 - `Client` on WP-2's token source (`utm.constraint_management`, `aud`
-  = the DSS audience): `PutReference(ctx, id, extents, ussBaseURL,
+  = the DSS's host): `PutReference(ctx, id, extents, ussBaseURL,
   ovn *string) (ChangeConstraintReferenceResponse, error)`,
   `DeleteReference(ctx, id, ovn)`, `GetReference(ctx, id)`; responses
   decoded with a size bound and the `f3548` validators; errors typed
@@ -58,9 +59,10 @@ within 5 s or the miss must be visible.
   {uss_base_url}/uss/v1/constraints` with `PutConstraintDetailsParameters
   {ConstraintId, Constraint: {Reference, Details}, Subscriptions}` (on
   delete, `Constraint` omitted) within `CstrPublishedNotificationLatencySeconds`
-  of the DSS answer; scope `utm.constraint_processing` with `aud` = the
-  subscriber's id (from the DSS response's base URL mapped through the
-  CIS USSP list, else the host); every notification logged in
+  of the DSS answer; scope `utm.constraint_processing` with `aud` =
+  **the host of the subscriber's `uss_base_url`** as the DSS returned
+  it (M18; peers are discovered, not configured, so no mapping through
+  the USSP list); every notification logged in
   `deliveries` and in `dss_notifications` (constraint id, subscriber,
   `notification_index`, sent at, status).
 - Expiry: the ticker that ends a restriction at `ends_at` (WP-5) enqueues

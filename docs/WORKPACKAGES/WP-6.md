@@ -67,19 +67,30 @@ projection)` — an empty filter must never look like an empty sky
   `degraded[]` (`adapters_silent`, `cis_projection_stale`, `nats`),
   `adapters[]` from the last `src.v1` of each, `policy_version`,
   `cis_version`, `cis_age_s`, `generated_at`.
-- `GET /v1/manned-traffic/stream?bbox=` (WS): on connect the snapshot,
-  then NDJSON frames of `track/manned/v1` at ≤ 1 Hz per aircraft, plus
-  `feed/status/v1` every 2 s (adapters, ages, degraded, `dropped_frames`
-  for this client), plus a `track/manned/v1` frame with `state: stale`
-  or `source_disabled` when an aircraft ages (the consumer learns the
-  change; nothing disappears silently). Per-client send queue bounded
-  (slow consumer: drop oldest, count, tell the client in the next status
-  frame; never block the picture). Connection cap per client id and
-  total; `ansp.traffic` scope or session cookie (same origin) per WP-2;
-  mTLS per `ANSP_MTLS_REQUIRED`.
+- `GET /v1/manned-traffic/stream?bbox=` (WS): every frame is the
+  ecosystem's one shape (M12, M29): the `04 §2` envelope (`schema`,
+  `msg_id`, `producer: ansp/manned-feed`, `ts`, `rx_ts`, `captured_at`,
+  `time_source`, `backlog`) plus a `body` named by `schema`. On connect
+  a `console/status/v1` and a `console/snapshot/v1` (`manned[]`,
+  `zones_version`), then `track/manned/v1` bodies at ≤ 1 Hz per
+  aircraft, `console/status/v1` every 2 s (`connection_id`,
+  `server_ts`, `policy_version`, `stale_after_s`, `live_max_age_s`,
+  `dropped_frames` for this client, `degraded[]`, `sources[]`, plus
+  this system's `adapters[]`, `cis_version`, `cis_age_s`, `nats`), and
+  a `track/manned/v1` body with `state: stale` or `source_disabled`
+  when an aircraft ages (the consumer learns the change; nothing
+  disappears silently). The client may send `console/subscribe/v1
+  {bbox, layers[]}` to change its viewport; a re-subscribe answers with
+  a fresh `console/snapshot/v1`. The schemas of the common frames come
+  from `uspace-lab/schemas/common/` (WP-3's pinned copy); there is no
+  `feed/status/v1`. Per-client send queue bounded (slow consumer: drop
+  oldest, count, tell the client in the next status frame; never block
+  the picture). Connection cap per client id and total; `ansp.traffic`
+  scope or the `uspace_session` cookie (same origin, `Origin`
+  allow-list) per WP-2; mTLS per `ANSP_MTLS_MODE` (M25).
 - The console stream is the same endpoint with the session cookie; the
   console gets every aircraft (relevant or not, flagged) when it asks
-  `?all=true` and the role allows.
+  for the `all` layer in `console/subscribe/v1` and the role allows.
 - `feed_products` sampling at 0.1 Hz per client (WP-1 table).
 
 ### `cmd/manned-feed`
@@ -112,7 +123,16 @@ explicit ack, deduplicated by `msg_id`); serves the feed; readiness lists
   with the replay's feed clock → no sample is shown live with a
   `captured_at` newer than its own time; the stall counter moves.
 - Auth: a token without `ansp.traffic` gets `403`; with it `101`; the
-  session cookie on a cross-origin request is refused.
+  session cookie on a cross-origin request is refused; with
+  `ANSP_MTLS_MODE=required` a request without the subject header is
+  refused and the twin with it is accepted; with `off` it is accepted
+  and the error-level line is logged.
+- Frames: every frame read by the test client validates against the
+  envelope schema and dispatches on `schema`; a `console/status/v1`
+  arrives within 2 s of connect and every 2 s after; a
+  `console/subscribe/v1` with a new bbox yields a new
+  `console/snapshot/v1` and stops frames outside it (and the twin: an
+  aircraft entering the bbox appears).
 - E-10: `max_aircraft + 1` → eviction counted; connection cap + 1 →
   refused with `503` and `Retry-After`.
 - `BenchmarkPictureObserve`, `BenchmarkRelevance`, `BenchmarkSnapshot100`.
