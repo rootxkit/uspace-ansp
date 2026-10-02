@@ -91,6 +91,16 @@ type Publisher interface {
 	Publish(ctx context.Context, subject, dedupeID string, data []byte) error
 }
 
+// VersionHook is told every version a change writes, inside its
+// transaction (Versioned, with the op that made it; an error rolls the
+// change back), and the versions committed, after the commit
+// (Committed). WP-8's outbox queues the CISP publication of a version
+// with the version itself (B-05) and publishes it after the commit.
+type VersionHook interface {
+	Versioned(ctx context.Context, tx Tx, v Version, op Op) error
+	Committed(ctx context.Context, vs []Version)
+}
+
 // Counters of the service (E-09).
 const (
 	CounterPlanned              = "restriction_planned"
@@ -132,6 +142,9 @@ type Service struct {
 	// Local is told every version committed by this process, as the
 	// published message (the console stream); may be nil.
 	Local func(v Version, msg []byte)
+	// Outbox is told every version in its transaction and after its
+	// commit (WP-8); nil queues no delivery.
+	Outbox VersionHook
 	// Feature is the zone authority; the country is the policy's.
 	Feature FeatureConfig
 	// ClientID prefixes ansp_ref ("ansp-01:<id>").
@@ -252,6 +265,9 @@ func (s *Service) plan(ctx context.Context, tx Tx, actor Actor, in Input, opt Pl
 			return "", nil, err
 		}
 		if err := tx.InsertVersion(ctx, v); err != nil {
+			return "", nil, err
+		}
+		if err := s.versioned(ctx, tx, v, OpPlan); err != nil {
 			return "", nil, err
 		}
 		reason := "planned: " + in.ReasonText
@@ -430,6 +446,9 @@ func (s *Service) apply(ctx context.Context, tx Tx, actor Actor, id string, op O
 	if err := tx.InsertVersion(ctx, v); err != nil {
 		return "", nil, err
 	}
+	if err := s.versioned(ctx, tx, v, op); err != nil {
+		return "", nil, err
+	}
 	if err := s.audit(ctx, tx, actor, r.ID, op, reason, &r, &next); err != nil {
 		return "", nil, err
 	}
@@ -481,6 +500,9 @@ func (s *Service) reissue(ctx context.Context, tx Tx, actor Actor, r Restriction
 		return "", nil, err
 	}
 	if err := tx.InsertVersion(ctx, v); err != nil {
+		return "", nil, err
+	}
+	if err := s.versioned(ctx, tx, v, OpPlan); err != nil {
 		return "", nil, err
 	}
 	if err := s.audit(ctx, tx, actor, n.ID, OpPlan, "re-issue of "+r.ID+" to extend it: "+reason, nil, &n); err != nil {
@@ -545,10 +567,22 @@ func (s *Service) auditEvent(ctx context.Context, tx Tx, actor Actor, id, event,
 	})
 }
 
+// versioned tells the outbox of v, in tx.
+func (s *Service) versioned(ctx context.Context, tx Tx, v Version, op Op) error {
+	if s.Outbox == nil {
+		return nil
+	}
+	return s.Outbox.Versioned(ctx, tx, v, op)
+}
+
 // publish puts each version on the bus and tells Local. A failure is
 // counted and left for Tick to republish: the row says the version is
-// not on the bus yet (bus_version), so nothing is lost.
+// not on the bus yet (bus_version), so nothing is lost. A fresh commit
+// (not a backlog republish) is told to the outbox first.
 func (s *Service) publish(ctx context.Context, vs []Version, backlog bool) {
+	if !backlog && s.Outbox != nil && len(vs) > 0 {
+		s.Outbox.Committed(ctx, vs)
+	}
 	for i := range vs {
 		v := vs[i]
 		msg, err := StateMessage(v, s.Producer, backlog)
