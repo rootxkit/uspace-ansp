@@ -3,6 +3,6 @@
 # each at its commit and fails on any difference. A bump is a `build:`
 # commit of its own that changes the copy and its line together.
 # <copy, relative to api/clients/> <owner/repo> <commit> <path in that repo>
-cisp.yaml rootxkit/uspace-cisp 6c29028c0439eb30972ffffcf2217adc534e721e api/openapi.yaml
+cisp.yaml rootxkit/uspace-cisp d4f3572b44e53a0a83e0948daf0ef4aeef3b7ee4 api/openapi.yaml
 authority.yaml rootxkit/uspace-authority b52212efb10d98843eb3edc0ef12e460da0e3acc api/openapi.yaml
 ussp.yaml rootxkit/uspace-ussp 199518bc5bd2d4bb29e7c09f468bd5eabfa94063 api/openapi.yaml
