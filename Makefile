@@ -26,7 +26,7 @@ IMAGE   ?= ghcr.io/rootxkit/uspace-ansp
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 
 .PHONY: all build vet fmt fmt-check tools staticcheck lint tidy test race cover \
-        integration vectors generate generate-check fuzz-smoke bench lint-docs vulncheck \
+        integration vectors generate generate-check lint-api check-contracts fuzz-smoke bench lint-docs vulncheck \
         secrets web-install web-lint web-build web-types image compose-up \
         compose-down ci clean
 
@@ -101,13 +101,22 @@ vectors:
 	$(GO) test -count=1 -run 'Vectors' $(PKGS)
 	$(GO) test -count=1 -run 'Vectors' github.com/rootxkit/uspace-core/...
 
-# go generate (oapi-codegen and sqlc from WP-3) and the web types.
+# oapi-codegen, opsgen and sqlc (go generate), the api/gen source hash
+# and the web types (scripts/generate.sh).
 generate:
-	$(GO) generate $(PKGS)
-	@if [ -f web/package.json ]; then cd web && pnpm run types; fi
+	GO=$(GO) scripts/generate.sh
 
 generate-check:
 	GO=$(GO) scripts/generate-check.sh
+
+# api/openapi.yaml lints with the pinned @redocly/cli (needs npx).
+lint-api:
+	scripts/lint-api.sh
+
+# The pinned sibling OpenAPI copies and lab schemas equal their sources
+# at the pinned commits (needs the network).
+check-contracts:
+	scripts/check-contracts.sh
 
 fuzz-smoke:
 	GO=$(GO) FUZZTIME=$(FUZZTIME) scripts/fuzz-smoke.sh
@@ -172,7 +181,7 @@ compose-down:
 	if [ -n "$$left" ]; then echo "compose-down: $(PROJECT) left containers or volumes behind"; exit 1; fi; \
 	echo "compose-down: no container or volume of $(PROJECT) left"
 
-ci: lint-docs build lint tidy race generate-check vectors fuzz-smoke bench vulncheck secrets integration web-lint web-build
+ci: lint-docs build lint tidy race generate-check lint-api check-contracts vectors fuzz-smoke bench vulncheck secrets integration web-lint web-build
 
 clean:
 	rm -f coverage.out integration.log bench.txt
