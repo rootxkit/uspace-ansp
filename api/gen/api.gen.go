@@ -2046,6 +2046,8 @@ type MannedStreamFrame struct {
 // stale_after_s) or source_disabled (its adapter was switched off)
 // as the aircraft ages out, never dropped silently.
 type MannedTrack struct {
+	// AgeS Seconds since captured_at when manned-feed wrote the frame (B-13); absent on the adapter's internal subject.
+	AgeS         *float32 `json:"age_s,omitempty"`
 	AltPressureM *float32 `json:"alt_pressure_m"`
 	AltWgs84M    *float32 `json:"alt_wgs84_m"`
 	Callsign     *string  `json:"callsign,omitempty"`

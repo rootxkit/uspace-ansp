@@ -100,6 +100,11 @@
         "policy_version": {
           "type": "string",
           "minLength": 1
+        },
+        "age_s": {
+          "description": "Seconds since captured_at when manned-feed wrote the frame (LESSONS B-13: an age is shown, never hidden); absent on the adapter's internal subject.",
+          "type": "number",
+          "minimum": 0
         }
       }
     }

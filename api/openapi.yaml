@@ -2225,6 +2225,10 @@ components:
           description: Inside a U-space volume plus the policy margin at capture.
         policy_version:
           type: string
+        age_s:
+          type: number
+          minimum: 0
+          description: Seconds since captured_at when manned-feed wrote the frame (B-13); absent on the adapter's internal subject.
     MannedTrackMessage:
       description: A track/manned/v1 frame or NATS message (04 §2 envelope with a MannedTrack body).
       allOf:
