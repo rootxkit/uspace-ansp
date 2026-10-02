@@ -1,0 +1,50 @@
+{
+  "type": "FeatureCollection",
+  "name": "SYNTHETIC U-space airspace designation for tests (not real)",
+  "metadata": {
+    "issued": "2026-10-01T08:00:00.000Z",
+    "provider": [{"text": "Synthetic test authority", "lang": "en-GB"}],
+    "description": [{"text": "SYNTHETIC: an invented U-space airspace over a test area; no legal force", "lang": "en-GB"}]
+  },
+  "features": [
+    {
+      "type": "Feature",
+      "id": "TSTU01",
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[[44.6, 41.6], [45.0, 41.6], [45.0, 41.9], [44.6, 41.9], [44.6, 41.6]]],
+        "layer": {"upper": 1500, "upperReference": "AMSL", "lower": 0, "lowerReference": "AGL", "uom": "m"}
+      },
+      "properties": {
+        "identifier": "TSTU01",
+        "country": "GEO",
+        "name": [{"text": "Synthetic U-space airspace (test)", "lang": "en-GB"}],
+        "type": "USPACE",
+        "variant": "COMMON",
+        "reason": ["AIR_TRAFFIC"],
+        "message": [{"text": "SYNTHETIC test designation", "lang": "en-GB"}],
+        "zoneAuthority": [
+          {
+            "name": [{"text": "Synthetic test authority", "lang": "en-GB"}],
+            "service": [{"text": "U-space designation", "lang": "en-GB"}],
+            "email": "uspace@example.invalid",
+            "purpose": "AUTHORIZATION"
+          }
+        ],
+        "extendedProperties": {
+          "uspace_requirements": {
+            "uas_requirements": {"network_identification": true, "geo_awareness": true},
+            "service_performance": {"nid_update_hz": 1, "ti_update_hz": 1, "cis_latency_s": 5},
+            "operational_conditions": {"min_ussp_count": 1},
+            "airspace_constraints": {"max_height_agl_m": 120},
+            "services_required": ["NID", "GEO", "FA", "TI"],
+            "adjacent": []
+          }
+        }
+      }
+    }
+  ],
+  "cis_dataset": "uspace_airspace",
+  "cis_version": 3,
+  "cis_updated_at": "2026-10-01T08:00:01.000Z"
+}

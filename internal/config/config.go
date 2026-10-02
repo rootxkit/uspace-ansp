@@ -85,6 +85,16 @@ type Config struct {
 	// CISNotifyIssuers are the issuers accepted on /v1/cis/notifications
 	// (the CISP), as iss=jwks_url.
 	CISNotifyIssuers []Issuer `env:"ANSP_CIS_NOTIFY_ISSUERS"`
+	// CISPublisherKeys are the JWKS of the CIS publishers as
+	// publisher=jwks_url (authority, ansp): a dataset version is used
+	// only when its X-Publisher-Signature verifies with its publisher's
+	// key (the authority for uspace_airspace and ussp_list, this system
+	// for restrictions); otherwise it is held (WP-7).
+	CISPublisherKeys []string `env:"ANSP_CIS_PUBLISHER_KEYS"`
+	// CISPublisherSigMaxAgeS is how old the iat of a publisher signature
+	// may be when this system first reads its version: the CISP forwards
+	// the signature made at publication, so it is as old as the version.
+	CISPublisherSigMaxAgeS int `env:"ANSP_CIS_PUBLISHER_SIG_MAX_AGE_S" default:"31622400" min:"300" max:"315360000"`
 	// DSSURL is the DSS base URL; its host is the DSS audience.
 	DSSURL       string `env:"ANSP_DSS_URL" kind:"url"`
 	AuthorityURL string `env:"ANSP_AUTHORITY_URL" kind:"url"`

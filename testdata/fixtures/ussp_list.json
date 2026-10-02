@@ -1,0 +1,35 @@
+{
+  "schema": "cis/ussp_list/v1",
+  "issued": "2026-10-01T08:00:00.000Z",
+  "ussps": [
+    {
+      "ussp_id": "GEO-TEST-U1",
+      "name": "SYNTHETIC test USSP one",
+      "contact": {"email": "ops1@example.invalid", "url": "https://localhost:8441/contact"},
+      "certificate_id": "GEO-TEST-C1",
+      "base_url": "https://localhost:8441",
+      "services": ["network_identification", "geo_awareness", "flight_authorisation", "traffic_information"],
+      "certification_limitations": [],
+      "valid_from": "2026-01-01T00:00:00.000Z",
+      "valid_until": "2027-01-01T00:00:00.000Z",
+      "terms_url": "https://localhost:8441/terms",
+      "status": "operating"
+    },
+    {
+      "ussp_id": "GEO-TEST-U2",
+      "name": "SYNTHETIC test USSP two",
+      "contact": {"email": "ops2@example.invalid"},
+      "certificate_id": "GEO-TEST-C2",
+      "base_url": "https://localhost:8442",
+      "services": ["network_identification", "geo_awareness", "flight_authorisation", "traffic_information", "weather"],
+      "certification_limitations": ["SYNTHETIC: daylight only"],
+      "valid_from": "2026-01-01T00:00:00.000Z",
+      "valid_until": "2027-01-01T00:00:00.000Z",
+      "terms_url": "https://localhost:8442/terms",
+      "status": "limited"
+    }
+  ],
+  "cis_dataset": "ussp_list",
+  "cis_version": 2,
+  "cis_updated_at": "2026-10-01T08:00:01.000Z"
+}

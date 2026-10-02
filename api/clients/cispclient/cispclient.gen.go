@@ -1292,6 +1292,30 @@ func (e HeadDatasetParamsDataset) Valid() bool {
 	}
 }
 
+// Defines values for GetDatasetVersionParamsDataset.
+const (
+	GetDatasetVersionParamsDatasetRestrictions   GetDatasetVersionParamsDataset = "restrictions"
+	GetDatasetVersionParamsDatasetUspaceAirspace GetDatasetVersionParamsDataset = "uspace_airspace"
+	GetDatasetVersionParamsDatasetUsspList       GetDatasetVersionParamsDataset = "ussp_list"
+	GetDatasetVersionParamsDatasetZones          GetDatasetVersionParamsDataset = "zones"
+)
+
+// Valid indicates whether the value is a known member of the GetDatasetVersionParamsDataset enum.
+func (e GetDatasetVersionParamsDataset) Valid() bool {
+	switch e {
+	case GetDatasetVersionParamsDatasetRestrictions:
+		return true
+	case GetDatasetVersionParamsDatasetUspaceAirspace:
+		return true
+	case GetDatasetVersionParamsDatasetUsspList:
+		return true
+	case GetDatasetVersionParamsDatasetZones:
+		return true
+	default:
+		return false
+	}
+}
+
 // AirspaceConstraints Art. 3(4)(d) airspace constraints; max_height_agl_m is optional, others pass.
 type AirspaceConstraints struct {
 	MaxHeightAglM *float64 `json:"max_height_agl_m,omitempty"`
@@ -2580,6 +2604,14 @@ type HeadDatasetParams struct {
 // HeadDatasetParamsDataset defines parameters for HeadDataset.
 type HeadDatasetParamsDataset string
 
+// GetDatasetVersionParams defines parameters for GetDatasetVersion.
+type GetDatasetVersionParams struct {
+	IfNoneMatch *IfNoneMatch `json:"If-None-Match,omitempty"`
+}
+
+// GetDatasetVersionParamsDataset defines parameters for GetDatasetVersion.
+type GetDatasetVersionParamsDataset string
+
 // PostPublisherHeartbeatJSONRequestBody defines body for PostPublisherHeartbeat for application/json ContentType.
 type PostPublisherHeartbeatJSONRequestBody = PublisherHeartbeat
 
@@ -2591,6 +2623,9 @@ type PatchRestrictionJSONRequestBody = RestrictionPatch
 
 // CreateSubscriptionJSONRequestBody defines body for CreateSubscription for application/json ContentType.
 type CreateSubscriptionJSONRequestBody = SubscriptionCreate
+
+// PatchSubscriptionJSONRequestBody defines body for PatchSubscription for application/json ContentType.
+type PatchSubscriptionJSONRequestBody = SubscriptionPatch
 
 // AsUsspList returns the union data inside the DatasetDocument as a UsspList
 func (t DatasetDocument) AsUsspList() (UsspList, error) {
@@ -3058,6 +3093,15 @@ type ClientInterface interface {
 	// Corresponds with PATCH /v1/restrictions/{id} (the `PatchRestriction` operationId).
 	PatchRestriction(ctx context.Context, id RestrictionID, params *PatchRestrictionParams, body PatchRestrictionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// ListSubscriptions The caller's subscriptions
+	//
+	// The caller's subscriptions that are not deleted, oldest first.
+	// Token scope cis.read; a client sees its own only (the console
+	// sees every client's, WP-8).
+	//
+	// Corresponds with GET /v1/subscriptions (the `ListSubscriptions` operationId).
+	ListSubscriptions(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// CreateSubscriptionWithBody Register a webhook for changes (F3 push)
 	//
 	// Any client with cis.read registers a callback for some datasets,
@@ -3158,6 +3202,34 @@ type ClientInterface interface {
 	// Corresponds with GET /v1/subscriptions/{id} (the `GetSubscription` operationId).
 	GetSubscription(ctx context.Context, id SubscriptionID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// PatchSubscriptionWithBody Change a subscription's callback, datasets or box
+	//
+	// The members given replace the stored ones; bbox [] removes the
+	// box. A changed callback_url is held to the rules of POST and
+	// verified again: the subscription returns to pending_verification
+	// and is pinged (subscription_test). A suspended subscription is
+	// re-activated by any PATCH the same way: it is pinged and becomes
+	// active on the first 2xx. A deleted subscription is 404.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with PATCH /v1/subscriptions/{id} (the `PatchSubscription` operationId).
+	PatchSubscriptionWithBody(ctx context.Context, id SubscriptionID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// PatchSubscription Change a subscription's callback, datasets or box
+	//
+	// The members given replace the stored ones; bbox [] removes the
+	// box. A changed callback_url is held to the rules of POST and
+	// verified again: the subscription returns to pending_verification
+	// and is pinged (subscription_test). A suspended subscription is
+	// re-activated by any PATCH the same way: it is pinged and becomes
+	// active on the first 2xx. A deleted subscription is 404.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with PATCH /v1/subscriptions/{id} (the `PatchSubscription` operationId).
+	PatchSubscription(ctx context.Context, id SubscriptionID, body PatchSubscriptionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// GetDataset Read a dataset (F3 pull)
 	//
 	// The current version of a dataset. Token scope cis.read.
@@ -3214,6 +3286,20 @@ type ClientInterface interface {
 	//
 	// Corresponds with HEAD /v1/{dataset} (the `HeadDataset` operationId).
 	HeadDataset(ctx context.Context, dataset HeadDatasetParamsDataset, params *HeadDatasetParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetDatasetVersion One version as published (spec 06 T4)
+	//
+	// The verbatim bytes the publisher sent, with the Content-Type it
+	// sent them as. X-Publisher-Signature and X-Publisher-Kid carry
+	// the publisher's detached JWS when the version came from a
+	// publisher; X-CIS-Signature always carries the CISP's compact
+	// detached JWS over the same bytes, made when first served and
+	// kept per version. The stored body_sha256 is checked before
+	// serving: a mismatch is 500 integrity and an error log line,
+	// never the bytes. Token scope cis.read.
+	//
+	// Corresponds with GET /v1/{dataset}/versions/{version} (the `GetDatasetVersion` operationId).
+	GetDatasetVersion(ctx context.Context, dataset GetDatasetVersionParamsDataset, version int64, params *GetDatasetVersionParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 }
 
 // ListChanges The change cursor feed
@@ -3564,6 +3650,25 @@ func (c *Client) PatchRestriction(ctx context.Context, id RestrictionID, params 
 	return c.Client.Do(req)
 }
 
+// ListSubscriptions The caller's subscriptions
+//
+// The caller's subscriptions that are not deleted, oldest first.
+// Token scope cis.read; a client sees its own only (the console
+// sees every client's, WP-8).
+//
+// Corresponds with GET /v1/subscriptions (the `ListSubscriptions` operationId).
+func (c *Client) ListSubscriptions(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListSubscriptionsRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // CreateSubscriptionWithBody Register a webhook for changes (F3 push)
 //
 // Any client with cis.read registers a callback for some datasets,
@@ -3694,6 +3799,54 @@ func (c *Client) GetSubscription(ctx context.Context, id SubscriptionID, reqEdit
 	return c.Client.Do(req)
 }
 
+// PatchSubscriptionWithBody Change a subscription's callback, datasets or box
+//
+// The members given replace the stored ones; bbox [] removes the
+// box. A changed callback_url is held to the rules of POST and
+// verified again: the subscription returns to pending_verification
+// and is pinged (subscription_test). A suspended subscription is
+// re-activated by any PATCH the same way: it is pinged and becomes
+// active on the first 2xx. A deleted subscription is 404.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with PATCH /v1/subscriptions/{id} (the `PatchSubscription` operationId).
+func (c *Client) PatchSubscriptionWithBody(ctx context.Context, id SubscriptionID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPatchSubscriptionRequestWithBody(c.Server, id, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// PatchSubscription Change a subscription's callback, datasets or box
+//
+// The members given replace the stored ones; bbox [] removes the
+// box. A changed callback_url is held to the rules of POST and
+// verified again: the subscription returns to pending_verification
+// and is pinged (subscription_test). A suspended subscription is
+// re-activated by any PATCH the same way: it is pinged and becomes
+// active on the first 2xx. A deleted subscription is 404.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with PATCH /v1/subscriptions/{id} (the `PatchSubscription` operationId).
+func (c *Client) PatchSubscription(ctx context.Context, id SubscriptionID, body PatchSubscriptionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPatchSubscriptionRequest(c.Server, id, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // GetDataset Read a dataset (F3 pull)
 //
 // The current version of a dataset. Token scope cis.read.
@@ -3762,6 +3915,30 @@ func (c *Client) GetDataset(ctx context.Context, dataset GetDatasetParamsDataset
 // Corresponds with HEAD /v1/{dataset} (the `HeadDataset` operationId).
 func (c *Client) HeadDataset(ctx context.Context, dataset HeadDatasetParamsDataset, params *HeadDatasetParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewHeadDatasetRequest(c.Server, dataset, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetDatasetVersion One version as published (spec 06 T4)
+//
+// The verbatim bytes the publisher sent, with the Content-Type it
+// sent them as. X-Publisher-Signature and X-Publisher-Kid carry
+// the publisher's detached JWS when the version came from a
+// publisher; X-CIS-Signature always carries the CISP's compact
+// detached JWS over the same bytes, made when first served and
+// kept per version. The stored body_sha256 is checked before
+// serving: a mismatch is 500 integrity and an error log line,
+// never the bytes. Token scope cis.read.
+//
+// Corresponds with GET /v1/{dataset}/versions/{version} (the `GetDatasetVersion` operationId).
+func (c *Client) GetDatasetVersion(ctx context.Context, dataset GetDatasetVersionParamsDataset, version int64, params *GetDatasetVersionParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetDatasetVersionRequest(c.Server, dataset, version, params)
 	if err != nil {
 		return nil, err
 	}
@@ -4117,6 +4294,33 @@ func NewPatchRestrictionRequestWithBody(server string, id RestrictionID, params 
 	return req, nil
 }
 
+// NewListSubscriptionsRequest constructs an http.Request for the ListSubscriptions method
+func NewListSubscriptionsRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/subscriptions")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewCreateSubscriptionRequest calls the generic CreateSubscription builder with application/json body
 func NewCreateSubscriptionRequest(server string, body CreateSubscriptionJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -4187,6 +4391,53 @@ func NewGetSubscriptionRequest(server string, id SubscriptionID) (*http.Request,
 	if err != nil {
 		return nil, err
 	}
+
+	return req, nil
+}
+
+// NewPatchSubscriptionRequest calls the generic PatchSubscription builder with application/json body
+func NewPatchSubscriptionRequest(server string, id SubscriptionID, body PatchSubscriptionJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewPatchSubscriptionRequestWithBody(server, id, "application/json", bodyReader)
+}
+
+// NewPatchSubscriptionRequestWithBody constructs an http.Request for the PatchSubscription method, with any body, and a specified content type
+func NewPatchSubscriptionRequestWithBody(server string, id SubscriptionID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/subscriptions/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPatch, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
 
 	return req, nil
 }
@@ -4341,6 +4592,62 @@ func NewHeadDatasetRequest(server string, dataset HeadDatasetParamsDataset, para
 	}
 
 	req, err := http.NewRequest(http.MethodHead, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+
+		if params.IfNoneMatch != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithOptions("simple", false, "If-None-Match", *params.IfNoneMatch, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("If-None-Match", headerParam0)
+		}
+
+	}
+
+	return req, nil
+}
+
+// NewGetDatasetVersionRequest constructs an http.Request for the GetDatasetVersion method
+func NewGetDatasetVersionRequest(server string, dataset GetDatasetVersionParamsDataset, version int64, params *GetDatasetVersionParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "dataset", dataset, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "version", version, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "integer", Format: "int64"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/%s/versions/%s", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -4679,6 +4986,17 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with PATCH /v1/restrictions/{id} (the `PatchRestriction` operationId).
 	PatchRestrictionWithResponse(ctx context.Context, id RestrictionID, params *PatchRestrictionParams, body PatchRestrictionJSONRequestBody, reqEditors ...RequestEditorFn) (*PatchRestrictionResponse, error)
 
+	// ListSubscriptionsWithResponse The caller's subscriptions
+	//
+	// The caller's subscriptions that are not deleted, oldest first.
+	// Token scope cis.read; a client sees its own only (the console
+	// sees every client's, WP-8).
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/subscriptions (the `ListSubscriptions` operationId).
+	ListSubscriptionsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListSubscriptionsResponse, error)
+
 	// CreateSubscriptionWithBodyWithResponse Register a webhook for changes (F3 push)
 	//
 	// Any client with cis.read registers a callback for some datasets,
@@ -4781,6 +5099,34 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /v1/subscriptions/{id} (the `GetSubscription` operationId).
 	GetSubscriptionWithResponse(ctx context.Context, id SubscriptionID, reqEditors ...RequestEditorFn) (*GetSubscriptionResponse, error)
 
+	// PatchSubscriptionWithBodyWithResponse Change a subscription's callback, datasets or box
+	//
+	// The members given replace the stored ones; bbox [] removes the
+	// box. A changed callback_url is held to the rules of POST and
+	// verified again: the subscription returns to pending_verification
+	// and is pinged (subscription_test). A suspended subscription is
+	// re-activated by any PATCH the same way: it is pinged and becomes
+	// active on the first 2xx. A deleted subscription is 404.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PATCH /v1/subscriptions/{id} (the `PatchSubscription` operationId).
+	PatchSubscriptionWithBodyWithResponse(ctx context.Context, id SubscriptionID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PatchSubscriptionResponse, error)
+
+	// PatchSubscriptionWithResponse Change a subscription's callback, datasets or box
+	//
+	// The members given replace the stored ones; bbox [] removes the
+	// box. A changed callback_url is held to the rules of POST and
+	// verified again: the subscription returns to pending_verification
+	// and is pinged (subscription_test). A suspended subscription is
+	// re-activated by any PATCH the same way: it is pinged and becomes
+	// active on the first 2xx. A deleted subscription is 404.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PATCH /v1/subscriptions/{id} (the `PatchSubscription` operationId).
+	PatchSubscriptionWithResponse(ctx context.Context, id SubscriptionID, body PatchSubscriptionJSONRequestBody, reqEditors ...RequestEditorFn) (*PatchSubscriptionResponse, error)
+
 	// GetDatasetWithResponse Read a dataset (F3 pull)
 	//
 	// The current version of a dataset. Token scope cis.read.
@@ -4841,6 +5187,22 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with HEAD /v1/{dataset} (the `HeadDataset` operationId).
 	HeadDatasetWithResponse(ctx context.Context, dataset HeadDatasetParamsDataset, params *HeadDatasetParams, reqEditors ...RequestEditorFn) (*HeadDatasetResponse, error)
+
+	// GetDatasetVersionWithResponse One version as published (spec 06 T4)
+	//
+	// The verbatim bytes the publisher sent, with the Content-Type it
+	// sent them as. X-Publisher-Signature and X-Publisher-Kid carry
+	// the publisher's detached JWS when the version came from a
+	// publisher; X-CIS-Signature always carries the CISP's compact
+	// detached JWS over the same bytes, made when first served and
+	// kept per version. The stored body_sha256 is checked before
+	// serving: a mismatch is 500 integrity and an error log line,
+	// never the bytes. Token scope cis.read.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/{dataset}/versions/{version} (the `GetDatasetVersion` operationId).
+	GetDatasetVersionWithResponse(ctx context.Context, dataset GetDatasetVersionParamsDataset, version int64, params *GetDatasetVersionParams, reqEditors ...RequestEditorFn) (*GetDatasetVersionResponse, error)
 }
 
 // ListChangesResponse503Headers the declared response headers of an HTTP 503 response for ListChanges
@@ -5300,6 +5662,75 @@ func (r PatchRestrictionResponse) ContentType() string {
 	return ""
 }
 
+type ListSubscriptionsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *SubscriptionList
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *Problem
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *Problem
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *Problem
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListSubscriptionsResponse) GetJSON200() *SubscriptionList {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r ListSubscriptionsResponse) GetApplicationproblemJSON401() *Problem {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r ListSubscriptionsResponse) GetApplicationproblemJSON403() *Problem {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r ListSubscriptionsResponse) GetApplicationproblemJSON503() *Problem {
+	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ListSubscriptionsResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r ListSubscriptionsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListSubscriptionsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListSubscriptionsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListSubscriptionsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 // CreateSubscriptionResponse201Headers the declared response headers of an HTTP 201 response for CreateSubscription
 type CreateSubscriptionResponse201Headers struct {
 	Location *string
@@ -5474,6 +5905,103 @@ func (r GetSubscriptionResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r GetSubscriptionResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type PatchSubscriptionResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *Subscription
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *Problem
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *Problem
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *Problem
+	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationproblemJSON404 *Problem
+	// ApplicationproblemJSON413 the response for an HTTP 413 `application/problem+json` response
+	ApplicationproblemJSON413 *Problem
+	// ApplicationproblemJSON415 the response for an HTTP 415 `application/problem+json` response
+	ApplicationproblemJSON415 *Problem
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *Problem
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r PatchSubscriptionResponse) GetJSON200() *Subscription {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r PatchSubscriptionResponse) GetApplicationproblemJSON400() *Problem {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r PatchSubscriptionResponse) GetApplicationproblemJSON401() *Problem {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r PatchSubscriptionResponse) GetApplicationproblemJSON403() *Problem {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r PatchSubscriptionResponse) GetApplicationproblemJSON404() *Problem {
+	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSON413 returns the response for an HTTP 413 `application/problem+json` response
+func (r PatchSubscriptionResponse) GetApplicationproblemJSON413() *Problem {
+	return r.ApplicationproblemJSON413
+}
+
+// GetApplicationproblemJSON415 returns the response for an HTTP 415 `application/problem+json` response
+func (r PatchSubscriptionResponse) GetApplicationproblemJSON415() *Problem {
+	return r.ApplicationproblemJSON415
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r PatchSubscriptionResponse) GetApplicationproblemJSON503() *Problem {
+	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r PatchSubscriptionResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r PatchSubscriptionResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r PatchSubscriptionResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r PatchSubscriptionResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r PatchSubscriptionResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -5675,6 +6203,133 @@ func (r HeadDatasetResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r HeadDatasetResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// GetDatasetVersionResponse200Headers the declared response headers of an HTTP 200 response for GetDatasetVersion
+type GetDatasetVersionResponse200Headers struct {
+	CacheControl        *string
+	ETag                *string
+	LastModified        *string
+	XCISSignature       string
+	XCISVersion         *int64
+	XPublisherKid       *string
+	XPublisherSignature *string
+}
+
+// GetDatasetVersionResponse304Headers the declared response headers of an HTTP 304 response for GetDatasetVersion
+type GetDatasetVersionResponse304Headers struct {
+	CacheControl *string
+	ETag         *string
+	XCISStale    *string
+	XCISVersion  *int64
+}
+
+// GetDatasetVersionResponse503Headers the declared response headers of an HTTP 503 response for GetDatasetVersion
+type GetDatasetVersionResponse503Headers struct {
+	RetryAfter *string
+}
+
+type GetDatasetVersionResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// ApplicationgeoJSON200 the response for an HTTP 200 `application/geo+json` response
+	ApplicationgeoJSON200 *PublicationBody
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *PublicationBody
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *Problem
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *Problem
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *Problem
+	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationproblemJSON404 *Problem
+	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationproblemJSON500 *Problem
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *Unavailable
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+	// Headers200 the parsed response headers for an HTTP 200 response
+	Headers200 *GetDatasetVersionResponse200Headers
+	// Headers304 the parsed response headers for an HTTP 304 response
+	Headers304 *GetDatasetVersionResponse304Headers
+	// Headers503 the parsed response headers for an HTTP 503 response
+	Headers503 *GetDatasetVersionResponse503Headers
+}
+
+// GetApplicationgeoJSON200 returns the response for an HTTP 200 `application/geo+json` response
+func (r GetDatasetVersionResponse) GetApplicationgeoJSON200() *PublicationBody {
+	return r.ApplicationgeoJSON200
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetDatasetVersionResponse) GetJSON200() *PublicationBody {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r GetDatasetVersionResponse) GetApplicationproblemJSON400() *Problem {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r GetDatasetVersionResponse) GetApplicationproblemJSON401() *Problem {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r GetDatasetVersionResponse) GetApplicationproblemJSON403() *Problem {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r GetDatasetVersionResponse) GetApplicationproblemJSON404() *Problem {
+	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r GetDatasetVersionResponse) GetApplicationproblemJSON500() *Problem {
+	return r.ApplicationproblemJSON500
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r GetDatasetVersionResponse) GetApplicationproblemJSON503() *Unavailable {
+	return r.ApplicationproblemJSON503
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r GetDatasetVersionResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r GetDatasetVersionResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetDatasetVersionResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetDatasetVersionResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetDatasetVersionResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -6001,6 +6656,23 @@ func (c *ClientWithResponses) PatchRestrictionWithResponse(ctx context.Context, 
 	return ParsePatchRestrictionResponse(rsp)
 }
 
+// ListSubscriptionsWithResponse The caller's subscriptions
+//
+// The caller's subscriptions that are not deleted, oldest first.
+// Token scope cis.read; a client sees its own only (the console
+// sees every client's, WP-8).
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/subscriptions (the `ListSubscriptions` operationId).
+func (c *ClientWithResponses) ListSubscriptionsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListSubscriptionsResponse, error) {
+	rsp, err := c.ListSubscriptions(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListSubscriptionsResponse(rsp)
+}
+
 // CreateSubscriptionWithBodyWithResponse Register a webhook for changes (F3 push)
 //
 // Any client with cis.read registers a callback for some datasets,
@@ -6121,6 +6793,46 @@ func (c *ClientWithResponses) GetSubscriptionWithResponse(ctx context.Context, i
 	return ParseGetSubscriptionResponse(rsp)
 }
 
+// PatchSubscriptionWithBodyWithResponse Change a subscription's callback, datasets or box
+//
+// The members given replace the stored ones; bbox [] removes the
+// box. A changed callback_url is held to the rules of POST and
+// verified again: the subscription returns to pending_verification
+// and is pinged (subscription_test). A suspended subscription is
+// re-activated by any PATCH the same way: it is pinged and becomes
+// active on the first 2xx. A deleted subscription is 404.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PATCH /v1/subscriptions/{id} (the `PatchSubscription` operationId).
+func (c *ClientWithResponses) PatchSubscriptionWithBodyWithResponse(ctx context.Context, id SubscriptionID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PatchSubscriptionResponse, error) {
+	rsp, err := c.PatchSubscriptionWithBody(ctx, id, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePatchSubscriptionResponse(rsp)
+}
+
+// PatchSubscriptionWithResponse Change a subscription's callback, datasets or box
+//
+// The members given replace the stored ones; bbox [] removes the
+// box. A changed callback_url is held to the rules of POST and
+// verified again: the subscription returns to pending_verification
+// and is pinged (subscription_test). A suspended subscription is
+// re-activated by any PATCH the same way: it is pinged and becomes
+// active on the first 2xx. A deleted subscription is 404.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PATCH /v1/subscriptions/{id} (the `PatchSubscription` operationId).
+func (c *ClientWithResponses) PatchSubscriptionWithResponse(ctx context.Context, id SubscriptionID, body PatchSubscriptionJSONRequestBody, reqEditors ...RequestEditorFn) (*PatchSubscriptionResponse, error) {
+	rsp, err := c.PatchSubscription(ctx, id, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePatchSubscriptionResponse(rsp)
+}
+
 // GetDatasetWithResponse Read a dataset (F3 pull)
 //
 // The current version of a dataset. Token scope cis.read.
@@ -6193,6 +6905,28 @@ func (c *ClientWithResponses) HeadDatasetWithResponse(ctx context.Context, datas
 		return nil, err
 	}
 	return ParseHeadDatasetResponse(rsp)
+}
+
+// GetDatasetVersionWithResponse One version as published (spec 06 T4)
+//
+// The verbatim bytes the publisher sent, with the Content-Type it
+// sent them as. X-Publisher-Signature and X-Publisher-Kid carry
+// the publisher's detached JWS when the version came from a
+// publisher; X-CIS-Signature always carries the CISP's compact
+// detached JWS over the same bytes, made when first served and
+// kept per version. The stored body_sha256 is checked before
+// serving: a mismatch is 500 integrity and an error log line,
+// never the bytes. Token scope cis.read.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/{dataset}/versions/{version} (the `GetDatasetVersion` operationId).
+func (c *ClientWithResponses) GetDatasetVersionWithResponse(ctx context.Context, dataset GetDatasetVersionParamsDataset, version int64, params *GetDatasetVersionParams, reqEditors ...RequestEditorFn) (*GetDatasetVersionResponse, error) {
+	rsp, err := c.GetDatasetVersion(ctx, dataset, version, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetDatasetVersionResponse(rsp)
 }
 
 // ParseListChangesResponse parses an HTTP response from a ListChangesWithResponse call
@@ -6601,6 +7335,60 @@ func ParsePatchRestrictionResponse(rsp *http.Response) (*PatchRestrictionRespons
 	return response, nil
 }
 
+// ParseListSubscriptionsResponse parses an HTTP response from a ListSubscriptionsWithResponse call
+func ParseListSubscriptionsResponse(rsp *http.Response) (*ListSubscriptionsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListSubscriptionsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest SubscriptionList
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseCreateSubscriptionResponse parses an HTTP response from a CreateSubscriptionWithResponse call
 func ParseCreateSubscriptionResponse(rsp *http.Response) (*CreateSubscriptionResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -6737,6 +7525,88 @@ func ParseGetSubscriptionResponse(rsp *http.Response) (*GetSubscriptionResponse,
 			return nil, err
 		}
 		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParsePatchSubscriptionResponse parses an HTTP response from a PatchSubscriptionWithResponse call
+func ParsePatchSubscriptionResponse(rsp *http.Response) (*PatchSubscriptionResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &PatchSubscriptionResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest Subscription
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 413:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON413 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 415:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON415 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
 		var dest Problem
@@ -7065,6 +7935,187 @@ func ParseHeadDatasetResponse(rsp *http.Response) (*HeadDatasetResponse, error) 
 		response.Headers304 = &headers
 	case rsp.StatusCode == 503:
 		var headers HeadDatasetResponse503Headers
+		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.RetryAfter = &value
+		}
+		response.Headers503 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseGetDatasetVersionResponse parses an HTTP response from a GetDatasetVersionWithResponse call
+func ParseGetDatasetVersionResponse(rsp *http.Response) (*GetDatasetVersionResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetDatasetVersionResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.Header.Get("Content-Type") == "application/geo+json" && rsp.StatusCode == 200:
+		var dest PublicationBody
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationgeoJSON200 = &dest
+
+	case rsp.Header.Get("Content-Type") == "application/json" && rsp.StatusCode == 200:
+		var dest PublicationBody
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case rsp.StatusCode == 304:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 200:
+		var headers GetDatasetVersionResponse200Headers
+		if values := rsp.Header.Values("Cache-Control"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Cache-Control", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.CacheControl = &value
+		}
+		if values := rsp.Header.Values("ETag"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "ETag", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ETag = &value
+		}
+		if values := rsp.Header.Values("Last-Modified"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Last-Modified", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.LastModified = &value
+		}
+		if values := rsp.Header.Values("X-CIS-Signature"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-CIS-Signature", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XCISSignature = value
+		}
+		if values := rsp.Header.Values("X-CIS-Version"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-CIS-Version", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XCISVersion = &value
+		}
+		if values := rsp.Header.Values("X-Publisher-Kid"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Publisher-Kid", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XPublisherKid = &value
+		}
+		if values := rsp.Header.Values("X-Publisher-Signature"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Publisher-Signature", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XPublisherSignature = &value
+		}
+		response.Headers200 = &headers
+	case rsp.StatusCode == 304:
+		var headers GetDatasetVersionResponse304Headers
+		if values := rsp.Header.Values("Cache-Control"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Cache-Control", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.CacheControl = &value
+		}
+		if values := rsp.Header.Values("ETag"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "ETag", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ETag = &value
+		}
+		if values := rsp.Header.Values("X-CIS-Stale"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-CIS-Stale", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XCISStale = &value
+		}
+		if values := rsp.Header.Values("X-CIS-Version"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-CIS-Version", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XCISVersion = &value
+		}
+		response.Headers304 = &headers
+	case rsp.StatusCode == 503:
+		var headers GetDatasetVersionResponse503Headers
 		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
 			var value string
 			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {

@@ -1,6 +1,10 @@
 package config
 
 import (
+	"slices"
+	"strings"
+	"time"
+
 	"github.com/rootxkit/uspace-core/auth"
 	"github.com/rootxkit/uspace-core/core"
 )
@@ -32,4 +36,36 @@ func (c Config) VerifierConfig() (auth.Config, error) {
 		Audiences:           append([]string(nil), c.Audiences...),
 		StrictSessionClaims: true,
 	}, nil
+}
+
+// The publishers ANSP_CIS_PUBLISHER_KEYS may name (internal/cis
+// PublisherAuthority, PublisherANSP).
+var cisPublishers = []string{"authority", "ansp"}
+
+// PublisherConfig is the uspace-core auth.DetachedConfig that verifies
+// the publishers' signatures of CIS dataset versions:
+// ANSP_CIS_PUBLISHER_KEYS (publisher=jwks_url, the publisher one of
+// authority and ansp) and MaxAge ANSP_CIS_PUBLISHER_SIG_MAX_AGE_S.
+func (c Config) PublisherConfig() (auth.DetachedConfig, error) {
+	if len(c.CISPublisherKeys) == 0 {
+		return auth.DetachedConfig{}, core.Fieldf("ANSP_CIS_PUBLISHER_KEYS", "required to verify CIS dataset versions")
+	}
+	pubs := make(map[string]auth.IssuerConfig, len(c.CISPublisherKeys))
+	for _, e := range c.CISPublisherKeys {
+		name, jwks, ok := strings.Cut(e, "=")
+		name, jwks = strings.TrimSpace(name), strings.TrimSpace(jwks)
+		switch {
+		case !ok || name == "" || jwks == "":
+			return auth.DetachedConfig{}, core.Fieldf("ANSP_CIS_PUBLISHER_KEYS", "each entry must be publisher=jwks_url")
+		case !slices.Contains(cisPublishers, name):
+			return auth.DetachedConfig{}, core.Fieldf("ANSP_CIS_PUBLISHER_KEYS", "%q is not a publisher (%s)", name, strings.Join(cisPublishers, ", "))
+		case checkURL(jwks) != nil:
+			return auth.DetachedConfig{}, core.Fieldf("ANSP_CIS_PUBLISHER_KEYS", "the JWKS URL of %s is not an absolute URL", name)
+		}
+		if _, dup := pubs[name]; dup {
+			return auth.DetachedConfig{}, core.Fieldf("ANSP_CIS_PUBLISHER_KEYS", "%s is listed twice", name)
+		}
+		pubs[name] = auth.IssuerConfig{JWKSURL: jwks}
+	}
+	return auth.DetachedConfig{Publishers: pubs, MaxAge: time.Duration(c.CISPublisherSigMaxAgeS) * time.Second}, nil
 }

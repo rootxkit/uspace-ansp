@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -131,5 +132,27 @@ func TestVerifierConfigRefusesMalformedSessionClaims(t *testing.T) {
 				t.Fatalf("got %v, want rejected_claims on %s", err, tc.claim)
 			}
 		})
+	}
+}
+
+// PublisherConfig takes authority and ansp with their JWKS and the
+// signature max age; anything else names ANSP_CIS_PUBLISHER_KEYS.
+func TestPublisherConfig(t *testing.T) {
+	c := Config{CISPublisherKeys: []string{"authority=https://authority.test/jwks", " ansp = https://ansp.test/jwks"}, CISPublisherSigMaxAgeS: 600}
+	dc, err := c.PublisherConfig()
+	if err != nil || dc.Publishers["authority"].JWKSURL != "https://authority.test/jwks" || dc.Publishers["ansp"].JWKSURL != "https://ansp.test/jwks" ||
+		dc.MaxAge != 10*time.Minute {
+		t.Fatalf("%+v %v", dc, err)
+	}
+	for _, keys := range [][]string{
+		nil,
+		{"authority"},
+		{"cisp=https://cisp.test/jwks"},
+		{"authority=not a url"},
+		{"authority=https://a.test/jwks", "authority=https://b.test/jwks"},
+	} {
+		if _, err := (Config{CISPublisherKeys: keys}).PublisherConfig(); err == nil || !strings.Contains(err.Error(), "ANSP_CIS_PUBLISHER_KEYS") {
+			t.Fatalf("%v: %v", keys, err)
+		}
 	}
 }

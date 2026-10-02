@@ -20,6 +20,9 @@ output-options:
     - createSubscription
     - getSubscription
     - getDataset
+    - getDatasetVersion
+    - listSubscriptions
+    - patchSubscription
     - headDataset
     - listChanges
 compatibility:
