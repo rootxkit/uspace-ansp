@@ -15,7 +15,10 @@
 // the restriction requests and their console stream, and runs the
 // ticker that activates scheduled restrictions, expires ended ones and
 // republishes restr.v1 (WP-5, cmd/api/wire_restrictions.go); without it
-// they answer 503.
+// they answer 503. It runs the CIS projection (WP-7,
+// cmd/api/wire_cis.go): the pulls of the CISP's datasets with their
+// reconciliation, the subscription, cis_cache, KV cis_current and the
+// readiness line cisp.
 package main
 
 import (
@@ -103,7 +106,12 @@ func run(ctx context.Context, args, environ []string, stdout io.Writer) int {
 		logger.Error("auth refused", slog.String("error", err.Error()))
 		return 2
 	}
-	rw, err := wireRestrictions(cfg, db, b, aw.guard.Sessions, nil, reg, logger)
+	cw, err := wireCIS(cfg, db, b, reg, logger)
+	if err != nil {
+		logger.Error("CIS projection refused", slog.String("error", err.Error()))
+		return 2
+	}
+	rw, err := wireRestrictions(cfg, db, b, aw.guard.Sessions, cw.airspaces, reg, logger)
 	if err != nil {
 		logger.Error("restrictions refused", slog.String("error", err.Error()))
 		return 2
@@ -122,8 +130,8 @@ func run(ctx context.Context, args, environ []string, stdout io.Writer) int {
 		logger.Error("routes refused", slog.String("error", err.Error()))
 		return 2
 	}
-	checks = append(checks, aw.checks...)
-	for _, fn := range append(append(aw.run, rw.run...), sw.run...) {
+	checks = append(append(checks, aw.checks...), cw.checks...)
+	for _, fn := range append(append(append(aw.run, rw.run...), sw.run...), cw.run...) {
 		go fn(ctx)
 	}
 

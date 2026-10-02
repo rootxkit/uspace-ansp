@@ -24,3 +24,12 @@ func FuzzParseVersion(f *testing.F) {
 		}
 	})
 }
+
+// No panic on a KV value or push the follower reads.
+func FuzzFollowerApply(f *testing.F) {
+	f.Add([]byte(`{"dataset":"restrictions","version":1,"etag":"e","fetched_at":"2026-10-02T00:00:00Z"}`))
+	f.Add([]byte(`{"dataset":"uspace_airspace","version":1,"etag":"e","fetched_at":"2026-10-02T00:00:00Z","body":{}}`))
+	f.Fuzz(func(_ *testing.T, raw []byte) {
+		cis.NewFollower(nil).ApplyJSON(raw)
+	})
+}
