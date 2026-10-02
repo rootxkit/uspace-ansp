@@ -1,36 +1,29 @@
 package main
 
 import (
+	"context"
 	"log/slog"
-	"slices"
 
 	"github.com/rootxkit/uspace-core/core"
-)
 
-// The two migration trees (CLAUDE.md rule 6), never merged.
-var trees = []string{"relational", "timeseries"}
+	"github.com/rootxkit/uspace-ansp/internal/config"
+)
 
 func errWrongProcess(got string) error {
 	return core.Fieldf("ANSP_PROCESS", "%q, but this binary is %s", got, process)
 }
 
-// subcommand runs `migrate <relational|timeseries>...`, the only
-// subcommand. No long-running process migrates at start (M36): the
-// compose `migrate` service runs this once and the services wait for it.
-func subcommand(logger *slog.Logger, args []string) int {
+// subcommand answers `migrate ...` with a refusal: manned-adapter never
+// opens PostgreSQL (CLAUDE.md rule 6), so it migrates nothing; the trees
+// are migrated by `api migrate relational timeseries` (or `manned-feed
+// migrate timeseries`). Exit 2 either way, so a misconfigured one-shot
+// service fails visibly instead of reporting success.
+func subcommand(_ context.Context, logger *slog.Logger, _ config.Config, args []string) int {
 	if args[0] != "migrate" || len(args) < 2 {
-		logger.Error("usage: " + process + " [migrate <relational|timeseries>...]")
+		logger.Error("usage: " + process + " has no subcommand")
 		return 2
 	}
-	for _, tree := range args[1:] {
-		if !slices.Contains(trees, tree) {
-			logger.Error("migrate: unknown tree; the trees are relational and timeseries", slog.String("tree", tree))
-			return 2
-		}
-	}
-	for _, tree := range args[1:] {
-		// WP-1 embeds the goose trees and applies them here.
-		logger.Warn("migrate: no migrations are embedded until WP-1; nothing applied", slog.String("tree", tree))
-	}
-	return 0
+	logger.Error("migrate: manned-adapter never opens PostgreSQL; run `api migrate relational timeseries`",
+		slog.Any("trees", args[1:]))
+	return 2
 }

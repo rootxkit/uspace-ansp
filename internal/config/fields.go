@@ -5,6 +5,7 @@ import (
 	"reflect"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/rootxkit/uspace-core/core"
@@ -70,6 +71,17 @@ func (f field) load(vals map[string]string) error {
 			}
 		}
 		*p = raw
+	case *int:
+		n, err := strconv.Atoi(raw)
+		if err != nil {
+			return core.Fieldf(f.name, "%q is not a whole number", raw)
+		}
+		lo, _ := strconv.Atoi(f.tag("min"))
+		hi, _ := strconv.Atoi(f.tag("max"))
+		if n < lo || n > hi {
+			return core.Fieldf(f.name, "%d is outside %d to %d", n, lo, hi)
+		}
+		*p = n
 	case *[]string:
 		*p = splitList(raw)
 	case *[]Issuer:
@@ -105,6 +117,8 @@ func (c Config) Redacted() map[string]string {
 		switch v := f.v.Interface().(type) {
 		case string:
 			val = v
+		case int:
+			val = strconv.Itoa(v)
 		case []string:
 			val = strings.Join(v, ",")
 		case []Issuer:

@@ -1,0 +1,58 @@
+# sqlc (WP-1): typed queries for the two databases, generated into
+# internal/store/relational and internal/store/timeseries and committed;
+# `make generate-check` proves they are current. Run through
+# `go generate ./internal/store` (sqlc pinned there); never edit the
+# generated files by hand.
+#
+# Two query sets, two databases, never mixed (CLAUDE.md rule 6). Each
+# schema is its goose tree (sqlc reads the Up sections) plus the goose
+# version table, which goose creates outside the tree. Geometry crosses
+# as GeoJSON text (ST_AsGeoJSON, ST_GeomFromGeoJSON): no geometry type
+# reaches Go.
+version: "2"
+sql:
+  - engine: postgresql
+    schema: [internal/store/schema/relational, migrations/relational]
+    queries: internal/store/queries/relational
+    gen:
+      go:
+        package: relational
+        out: internal/store/relational
+        sql_package: pgx/v5
+        emit_pointers_for_null_types: true
+        emit_empty_slices: true
+        emit_enum_valid_method: true
+        emit_all_enum_values: true
+        overrides: &overrides
+          - db_type: timestamptz
+            go_type: time.Time
+          - db_type: timestamptz
+            nullable: true
+            go_type:
+              import: time
+              type: Time
+              pointer: true
+          - db_type: uuid
+            go_type: github.com/google/uuid.UUID
+          - db_type: uuid
+            nullable: true
+            go_type:
+              import: github.com/google/uuid
+              type: UUID
+              pointer: true
+          - db_type: jsonb
+            go_type: encoding/json.RawMessage
+          - db_type: jsonb
+            nullable: true
+            go_type: encoding/json.RawMessage
+  - engine: postgresql
+    schema: [internal/store/schema/timeseries, migrations/timeseries]
+    queries: internal/store/queries/timeseries
+    gen:
+      go:
+        package: timeseries
+        out: internal/store/timeseries
+        sql_package: pgx/v5
+        emit_pointers_for_null_types: true
+        emit_empty_slices: true
+        overrides: *overrides

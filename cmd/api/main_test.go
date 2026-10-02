@@ -133,20 +133,38 @@ func TestRunListenFailure(t *testing.T) {
 }
 
 func TestMigrateSubcommand(t *testing.T) {
-	env := []string{"ANSP_PROCESS=" + process}
+	unreachable := "postgres://u:p@127.0.0.1:1/ansp?sslmode=disable&connect_timeout=1"
 	for _, tc := range []struct {
+		env  []string
 		args []string
 		code int
 		want string
 	}{
-		{[]string{"migrate", "relational", "timeseries"}, 0, "nothing applied"},
-		{[]string{"migrate"}, 2, "usage"},
-		{[]string{"serve"}, 2, "usage"},
-		{[]string{"migrate", "events"}, 2, "unknown tree"},
+		{nil, []string{"migrate", "relational", "timeseries"}, 2, `"variable":"ANSP_RELATIONAL_DSN"`},
+		{[]string{"ANSP_RELATIONAL_DSN=" + unreachable}, []string{"migrate", "relational", "timeseries"}, 2, `"variable":"ANSP_TIMESERIES_DSN"`},
+		{[]string{"ANSP_RELATIONAL_DSN=" + unreachable}, []string{"migrate", "relational"}, 1, `"msg":"migrate: failed","process":"api","instance":"local","tree":"relational"`},
+		{nil, []string{"migrate"}, 2, "usage"},
+		{nil, []string{"serve"}, 2, "usage"},
+		{nil, []string{"migrate", "events"}, 2, "unknown tree"},
 	} {
 		out := &syncBuffer{}
+		env := append([]string{"ANSP_PROCESS=" + process}, tc.env...)
 		if code := run(context.Background(), tc.args, env, out); code != tc.code || !strings.Contains(out.String(), tc.want) {
 			t.Fatalf("%v: exit %d; log:\n%s", tc.args, code, out.String())
 		}
+		if strings.Contains(out.String(), ":p@") {
+			t.Fatalf("the log repeats a password:\n%s", out.String())
+		}
+	}
+}
+
+// A relational database that cannot be reached is a refusal at start,
+// not a process that serves without it.
+func TestRunRefusesUnreachableDatabase(t *testing.T) {
+	out := &syncBuffer{}
+	env := []string{"ANSP_PROCESS=" + process, "ANSP_HTTP_ADDR=" + freeAddr(t), "ANSP_DB_ACQUIRE_TIMEOUT_S=1",
+		"ANSP_RELATIONAL_DSN=postgres://u:p@127.0.0.1:1/ansp?sslmode=disable"}
+	if code := run(context.Background(), nil, env, out); code != 1 || !strings.Contains(out.String(), "relational database refused") {
+		t.Fatalf("exit %d; log:\n%s", code, out.String())
 	}
 }
