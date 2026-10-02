@@ -171,6 +171,13 @@ func (p *PublicKeys) Add(name string, ring *coreauth.KeyRing) error {
 // Counters are the endpoint's counters.
 func (p *PublicKeys) Counters() *core.Counters { return &p.counters }
 
+// Names is the rings published, in the order they were added.
+func (p *PublicKeys) Names() []string {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return slices.Clone(p.names)
+}
+
 // JSON is the JWKS {"keys": [...]}: every key of every ring, public
 // parts only, as core renders them, in the order the rings were added.
 func (p *PublicKeys) JSON() ([]byte, error) {

@@ -147,6 +147,14 @@ components:
       schema:
         $ref: "#/components/schemas/ULID"
       example: 01K6P3Q8Y2D6W4Z1V7R5T9X3MB
+    AlarmID:
+      name: id
+      in: path
+      required: true
+      description: The id of the delivery alarm.
+      schema:
+        $ref: "#/components/schemas/ULID"
+      example: 01K6P0A9QZ3V1H8M2T6R4W5X7C
     NoticeID:
       name: id
       in: path
@@ -397,6 +405,35 @@ components:
                 reason: 412 s is older than 300 s
 
   examples:
+    DeliveryAlarmOpen:
+      summary: A restriction not yet published to the CISP (synthetic example)
+      value: &DeliveryAlarmOpen
+        id: 01K6P0A9QZ3V1H8M2T6R4W5X7C
+        kind: cisp_not_published
+        state: open
+        restriction_id: 01K6P0A1B2C3D4E5F6G7H8J9KM
+        ansp_version: 2
+        since: "2026-10-02T12:00:00.000Z"
+        raised_at: "2026-10-02T12:00:10.120Z"
+        detail: restriction DAR7K2Q (version 2) is active and not yet published to the CISP since 2026-10-02T12:00:00.000Z; delivering it directly to the USSPs and the authority
+    DeliveryAlarmAcknowledged:
+      summary: A failed CISP publication, acknowledged (synthetic example)
+      value: &DeliveryAlarmAcknowledged
+        id: 01K6P0B4M8N2Q6R0S4T8V2W6X0
+        kind: delivery_failed
+        state: cleared
+        restriction_id: 01K6P0A1B2C3D4E5F6G7H8J9KM
+        ansp_version: 2
+        delivery_id: 01K6P0A2C4E6G8J0K2M4N6P8Q0
+        since: "2026-10-02T12:00:00.020Z"
+        raised_at: "2026-10-02T12:00:00.210Z"
+        detail: "cisp_publish to cisp (activate of version 2) failed: HTTP 400 restriction_refused"
+        cleared_at: "2026-10-02T12:03:00.000Z"
+        clear_reason: acknowledged
+        duration_s: 179.98
+        acknowledged_by: watch_supervisor
+        acknowledged_at: "2026-10-02T12:03:00.000Z"
+        ack_reason: The CISP operator confirmed the 400; the restriction is planned again
     Ed318Feature:
       summary: The ED-318 feature of a restriction (D4)
       value: &Ed318Feature
@@ -2267,6 +2304,78 @@ components:
           $ref: "#/components/schemas/Ed318Feature"
         deliveries:
           $ref: "#/components/schemas/DeliveriesSummary"
+        published:
+          type: boolean
+          description: On a delivery outcome, whether the CISP holds the current version (WP-8).
+        alarm:
+          $ref: "#/components/schemas/DeliveryAlarm"
+    DeliveryAlarm:
+      type: object
+      description: |
+        An alarm of the outbox (WP-8, 02 F2 failure rule): the alarm member
+        of a restriction/state/v1 body and an item of GET
+        /v1/delivery-alarms. state is open, acknowledged (an open
+        cisp_not_published a person has seen) or cleared; duration_s is
+        cleared_at minus since. The text never says "lost" (C-12).
+      required: [id, kind, state, since, raised_at, detail]
+      properties:
+        id:
+          $ref: "#/components/schemas/ULID"
+        kind:
+          type: string
+          enum: [cisp_not_published, delivery_failed, delivery_abandoned]
+        state:
+          type: string
+          enum: [open, acknowledged, cleared]
+        restriction_id:
+          $ref: "#/components/schemas/ULID"
+        ansp_version:
+          type: integer
+          format: int64
+          minimum: 1
+        delivery_id:
+          $ref: "#/components/schemas/ULID"
+        since:
+          $ref: "#/components/schemas/Timestamp"
+        raised_at:
+          $ref: "#/components/schemas/Timestamp"
+        detail:
+          type: string
+          maxLength: 1024
+        cleared_at:
+          $ref: "#/components/schemas/Timestamp"
+        clear_reason:
+          type: string
+          description: published, restriction_not_active or acknowledged.
+        duration_s:
+          type: number
+          minimum: 0
+        acknowledged_by:
+          $ref: "#/components/schemas/Role"
+        acknowledged_at:
+          $ref: "#/components/schemas/Timestamp"
+        ack_reason:
+          type: string
+          maxLength: 1000
+    DeliveryAlarmList:
+      type: object
+      required: [alarms]
+      properties:
+        alarms:
+          type: array
+          items:
+            $ref: "#/components/schemas/DeliveryAlarm"
+        truncated:
+          type: boolean
+    AlarmAcknowledgeRequest:
+      type: object
+      additionalProperties: false
+      required: [reason]
+      properties:
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 1000
     RestrictionStateMessage:
       description: A restriction/state/v1 frame or NATS message.
       allOf:
@@ -2984,6 +3093,101 @@ paths:
           $ref: "#/components/responses/NotFound"
         "409":
           $ref: "#/components/responses/Conflict"
+
+  /v1/delivery-alarms:
+    get:
+      operationId: listDeliveryAlarms
+      tags: [restrictions]
+      summary: The delivery alarms
+      x-process: api
+      x-spec: 02 F2 failure rule
+      x-auth: session
+      description: |
+        The alarms of the outbox (WP-8), newest first: cisp_not_published
+        (a restriction active here and not yet published to the CISP for
+        its current version after cisp_alarm_after_s; cleared with its
+        duration when the publication succeeds or the restriction is no
+        longer active), delivery_failed (a 4xx answer, not retried) and
+        delivery_abandoned (retried for the whole window). A failed or
+        abandoned delivery's alarm stays open until a watch supervisor
+        acknowledges it with a reason. Without all, the open alarms only.
+      security:
+        - consoleSession: []
+      parameters:
+        - name: all
+          in: query
+          required: false
+          description: Also the cleared alarms.
+          schema:
+            type: boolean
+            default: false
+          example: false
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: The alarms.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeliveryAlarmList"
+              example:
+                alarms:
+                  - *DeliveryAlarmOpen
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+
+  /v1/delivery-alarms/{id}/acknowledge:
+    post:
+      operationId: acknowledgeDeliveryAlarm
+      tags: [restrictions]
+      summary: Acknowledge a delivery alarm
+      x-process: api
+      x-spec: 02 F2 failure rule
+      x-auth: session:watch_supervisor
+      description: |
+        A person's acknowledgement of an alarm, with a reason (audited).
+        It closes a delivery_failed or delivery_abandoned alarm; a
+        cisp_not_published alarm is marked acknowledged and stays open
+        until the publication or the end of the restriction clears it.
+        An alarm already acknowledged or cleared is 409.
+      security:
+        - consoleSession: []
+      parameters:
+        - $ref: "#/components/parameters/AlarmID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AlarmAcknowledgeRequest"
+            example:
+              reason: The CISP operator confirmed the 400; the restriction is planned again
+      responses:
+        "200":
+          description: Acknowledged.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeliveryAlarm"
+              example: *DeliveryAlarmAcknowledged
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "503":
+          $ref: "#/components/responses/Unavailable"
 
   /v1/restriction-requests:
     post:

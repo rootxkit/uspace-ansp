@@ -14,6 +14,146 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+type DeliveryKind string
+
+const (
+	DeliveryKindCispPublish    DeliveryKind = "cisp_publish"
+	DeliveryKindCispHeartbeat  DeliveryKind = "cisp_heartbeat"
+	DeliveryKindDssPut         DeliveryKind = "dss_put"
+	DeliveryKindDssDelete      DeliveryKind = "dss_delete"
+	DeliveryKindUssNotify      DeliveryKind = "uss_notify"
+	DeliveryKindDirectDegraded DeliveryKind = "direct_degraded"
+	DeliveryKindOccurrence     DeliveryKind = "occurrence"
+)
+
+func (e *DeliveryKind) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = DeliveryKind(s)
+	case string:
+		*e = DeliveryKind(s)
+	default:
+		return fmt.Errorf("unsupported scan type for DeliveryKind: %T", src)
+	}
+	return nil
+}
+
+type NullDeliveryKind struct {
+	DeliveryKind DeliveryKind
+	Valid        bool // Valid is true if DeliveryKind is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullDeliveryKind) Scan(value interface{}) error {
+	if value == nil {
+		ns.DeliveryKind, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.DeliveryKind.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullDeliveryKind) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.DeliveryKind), nil
+}
+
+func (e DeliveryKind) Valid() bool {
+	switch e {
+	case DeliveryKindCispPublish,
+		DeliveryKindCispHeartbeat,
+		DeliveryKindDssPut,
+		DeliveryKindDssDelete,
+		DeliveryKindUssNotify,
+		DeliveryKindDirectDegraded,
+		DeliveryKindOccurrence:
+		return true
+	}
+	return false
+}
+
+func AllDeliveryKindValues() []DeliveryKind {
+	return []DeliveryKind{
+		DeliveryKindCispPublish,
+		DeliveryKindCispHeartbeat,
+		DeliveryKindDssPut,
+		DeliveryKindDssDelete,
+		DeliveryKindUssNotify,
+		DeliveryKindDirectDegraded,
+		DeliveryKindOccurrence,
+	}
+}
+
+type DeliveryState string
+
+const (
+	DeliveryStateQueued    DeliveryState = "queued"
+	DeliveryStateSent      DeliveryState = "sent"
+	DeliveryStateFailed    DeliveryState = "failed"
+	DeliveryStateAbandoned DeliveryState = "abandoned"
+	DeliveryStateCancelled DeliveryState = "cancelled"
+)
+
+func (e *DeliveryState) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = DeliveryState(s)
+	case string:
+		*e = DeliveryState(s)
+	default:
+		return fmt.Errorf("unsupported scan type for DeliveryState: %T", src)
+	}
+	return nil
+}
+
+type NullDeliveryState struct {
+	DeliveryState DeliveryState
+	Valid         bool // Valid is true if DeliveryState is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullDeliveryState) Scan(value interface{}) error {
+	if value == nil {
+		ns.DeliveryState, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.DeliveryState.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullDeliveryState) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.DeliveryState), nil
+}
+
+func (e DeliveryState) Valid() bool {
+	switch e {
+	case DeliveryStateQueued,
+		DeliveryStateSent,
+		DeliveryStateFailed,
+		DeliveryStateAbandoned,
+		DeliveryStateCancelled:
+		return true
+	}
+	return false
+}
+
+func AllDeliveryStateValues() []DeliveryState {
+	return []DeliveryState{
+		DeliveryStateQueued,
+		DeliveryStateSent,
+		DeliveryStateFailed,
+		DeliveryStateAbandoned,
+		DeliveryStateCancelled,
+	}
+}
+
 type RestrictionState string
 
 const (
@@ -122,6 +262,64 @@ type CisNotificationsSeen struct {
 	Jti       string
 	SeenAt    time.Time
 	ExpiresAt time.Time
+}
+
+type Delivery struct {
+	ID              string
+	Kind            DeliveryKind
+	SubjectRef      string
+	RestrictionID   *string
+	AnspVersion     *int64
+	Op              string
+	Target          string
+	IdempotencyKey  string
+	State           DeliveryState
+	Attempt         int32
+	MaxAttempts     int32
+	QueuedAt        time.Time
+	WindowEndsAt    time.Time
+	NextRetryAt     time.Time
+	LeaseToken      *string
+	LeaseUntil      *time.Time
+	BusSeq          int32
+	BusPublishedAt  *time.Time
+	LastAttemptAt   *time.Time
+	SentAt          *time.Time
+	StatusCode      *int32
+	ResponseExcerpt *string
+	LastError       *string
+	Method          *string
+	Url             *string
+	Body            []byte
+	CancelReason    *string
+	PolicyVersion   *int64
+}
+
+type DeliveryAlarm struct {
+	ID             string
+	Kind           string
+	RestrictionID  *string
+	AnspVersion    *int64
+	DeliveryID     *string
+	RaisedAt       time.Time
+	Since          time.Time
+	Detail         string
+	ClearedAt      *time.Time
+	ClearReason    *string
+	AcknowledgedBy *string
+	AcknowledgedAt *time.Time
+	AckReason      *string
+}
+
+type DeliveryAttempt struct {
+	DeliveryID      string
+	Attempt         int32
+	At              time.Time
+	DurationMs      int32
+	StatusCode      *int32
+	Outcome         string
+	Error           *string
+	ResponseExcerpt *string
 }
 
 type Event struct {

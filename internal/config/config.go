@@ -114,6 +114,17 @@ type Config struct {
 	// WebSocket upgrade with the session cookie may come from (M22).
 	WSAllowedOrigins []string `env:"ANSP_WS_ALLOWED_ORIGINS"`
 
+	// DeliveryKeyFile is the PEM RSA key that signs what this system
+	// delivers (WP-8, M26, M27): the detached JWS of every CISP
+	// publication and the compact JWS of every degraded direct
+	// delivery; its public part is served in /.well-known/jwks.json.
+	DeliveryKeyFile string `env:"ANSP_DELIVERY_KEY_FILE"`
+	// CISPClientCertFile and CISPClientKeyFile are the PEM client
+	// certificate and key presented to the CISP on the publication and
+	// the heartbeat (02 F2, M24); both or neither.
+	CISPClientCertFile string `env:"ANSP_CISP_CLIENT_CERT_FILE"`
+	CISPClientKeyFile  string `env:"ANSP_CISP_CLIENT_KEY_FILE"`
+
 	// SessionKeyFile is the PEM RSA key that signs console sessions;
 	// SecretsKeyFile the 32-byte key that seals TOTP secrets at rest.
 	SessionKeyFile string `env:"ANSP_SESSION_KEY_FILE"`
@@ -311,6 +322,9 @@ func (c *Config) validate() []error {
 		if !validOrigin(o) {
 			errs = append(errs, core.Fieldf("ANSP_WS_ALLOWED_ORIGINS", "%q is not an origin (scheme://host[:port], no path)", o))
 		}
+	}
+	if (c.CISPClientCertFile == "") != (c.CISPClientKeyFile == "") {
+		errs = append(errs, core.Fieldf("ANSP_CISP_CLIENT_CERT_FILE", "set together with ANSP_CISP_CLIENT_KEY_FILE, or neither"))
 	}
 	if (c.BootstrapAdminUsername == "") != (c.BootstrapAdminPasswordFile == "") {
 		errs = append(errs, core.Fieldf("ANSP_BOOTSTRAP_ADMIN_USERNAME", "set together with ANSP_BOOTSTRAP_ADMIN_PASSWORD_FILE, or neither"))

@@ -133,3 +133,25 @@ additively within `/v1`. One line per work package.
   projection, the fixtures under `testdata/fixtures/`, and the layout
   tests for a direct `jwx` import and the hot-path import rule (PLAN
   section 15 rows 30, 34, 38).
+- WP-8 outbox-cisp: `internal/deliver` (the outbox: a `deliveries` row
+  written in the transaction of each restriction version, `deliver.v1`
+  published after the commit and by a 5 s scan when that publish was
+  lost; the DELIVER pull consumer leasing each row on the database
+  clock, versions of one restriction in order, at most 8 attempts in
+  flight, retries with backoff 1 s to 60 s for 24 h and 1445 attempts,
+  a `4xx` failed at once with the excerpt, failed and abandoned jobs
+  alarmed until a person acknowledges them; the CISP publication from
+  the generated `cis/restriction/v1` types with the pair `(ansp_ref,
+  ansp_version)`, core's detached JWS in `X-JWS-Signature` and the
+  client certificate; the heartbeat with `active_refs` every
+  `cisp_heartbeat_s` and the readiness line `cisp_publisher`;
+  `cisp_not_published` after `cisp_alarm_after_s` with the degraded
+  direct delivery to the USSPs and the authority as core's compact JWS,
+  superseded when the CISP publishes; the reconciliation when the CISP
+  returns), relational migration `0050` (`deliveries`,
+  `delivery_attempts`, `delivery_alarms`), `ANSP_DELIVERY_KEY_FILE`
+  (in `/.well-known/jwks.json`), `ANSP_CISP_CLIENT_CERT_FILE` and
+  `ANSP_CISP_CLIENT_KEY_FILE`, `GET /v1/delivery-alarms` and `POST
+  /v1/delivery-alarms/{id}/acknowledge`, `published` and `alarm` on
+  `restriction/state/v1`, the deliveries summary on every restriction,
+  and `api/outbound.md` (PLAN section 15 rows 39, 40).

@@ -117,8 +117,19 @@ func (s apiServer) DisableUser(w http.ResponseWriter, r *http.Request, _ gen.Use
 }
 
 // GetJwks serves GET /.well-known/jwks.json (WP-2).
+// With console sign-in it is the sign-in handlers' set, which holds the
+// delivery ring too when ANSP_DELIVERY_KEY_FILE is set (WP-8); without
+// sign-in the delivery ring alone, or 503 when no key is configured.
 func (s apiServer) GetJwks(w http.ResponseWriter, r *http.Request) {
-	s.signIn(w, r, func(h *auth.Handlers, w http.ResponseWriter, r *http.Request) { h.Keys.ServeHTTP(w, r) })
+	switch {
+	case s.auth != nil:
+		s.auth.Keys.ServeHTTP(w, r)
+	case s.rs != nil && s.rs.dl != nil && s.rs.dl.keys != nil && len(s.rs.dl.keys.Names()) > 0:
+		s.rs.dl.keys.ServeHTTP(w, r)
+	default:
+		apierr.WriteError(w, r, apierr.Unavailable(signInUnavailableRetry,
+			"no signing key is configured on this instance (ANSP_SESSION_KEY_FILE, ANSP_DELIVERY_KEY_FILE)"))
+	}
 }
 
 // cisUnavailableRetry is the Retry-After of the notification receiver

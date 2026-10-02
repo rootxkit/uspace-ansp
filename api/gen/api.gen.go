@@ -487,6 +487,48 @@ func (e CoordinationNoticeMessageTimeSource) Valid() bool {
 	}
 }
 
+// Defines values for DeliveryAlarmKind.
+const (
+	DeliveryAlarmKindCispNotPublished  DeliveryAlarmKind = "cisp_not_published"
+	DeliveryAlarmKindDeliveryAbandoned DeliveryAlarmKind = "delivery_abandoned"
+	DeliveryAlarmKindDeliveryFailed    DeliveryAlarmKind = "delivery_failed"
+)
+
+// Valid indicates whether the value is a known member of the DeliveryAlarmKind enum.
+func (e DeliveryAlarmKind) Valid() bool {
+	switch e {
+	case DeliveryAlarmKindCispNotPublished:
+		return true
+	case DeliveryAlarmKindDeliveryAbandoned:
+		return true
+	case DeliveryAlarmKindDeliveryFailed:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for DeliveryAlarmState.
+const (
+	DeliveryAlarmStateAcknowledged DeliveryAlarmState = "acknowledged"
+	DeliveryAlarmStateCleared      DeliveryAlarmState = "cleared"
+	DeliveryAlarmStateOpen         DeliveryAlarmState = "open"
+)
+
+// Valid indicates whether the value is a known member of the DeliveryAlarmState enum.
+func (e DeliveryAlarmState) Valid() bool {
+	switch e {
+	case DeliveryAlarmStateAcknowledged:
+		return true
+	case DeliveryAlarmStateCleared:
+		return true
+	case DeliveryAlarmStateOpen:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for DeliveryChannelState.
 const (
 	DeliveryChannelStateAbandoned DeliveryChannelState = "abandoned"
@@ -1431,6 +1473,11 @@ type AdapterState struct {
 // AdapterStateState defines model for AdapterState.State.
 type AdapterStateState string
 
+// AlarmAcknowledgeRequest defines model for AlarmAcknowledgeRequest.
+type AlarmAcknowledgeRequest struct {
+	Reason string `json:"reason"`
+}
+
 // AnnexVNotice An Annex V notice from a USSP to the ANSP (spec 02 F13, 04 §3.5; Reg. (EU) 2021/664 Art. 13(2), Annex V): intents touching controlled U-space airspace, non-conformance notices, contingent and ended notices, each with the intents' F3548 references, authorisation numbers, times and volumes. The request body of POST /v1/coordination/notices; uspace-ansp owns this schema because its API carries the body (decision record M14) and the USSP consumes it. This is an HTTP body, not an envelope message; it carries `schema` as every 04 message does. Volumes are F3548 Volume4D as uspace-core/f3548 generates them from the standard (W84 altitudes in metres, RFC3339 times). The schema is written without $defs so that api/openapi.yaml references it as a whole. Unknown members are ignored within the major (04 §4). A notice of kind nonconformance carries `nonconformance`.
 type AnnexVNotice struct {
 	// Intents The intents the notice is about.
@@ -1797,6 +1844,59 @@ type DeliveriesSummary struct {
 
 	// UssNotify The outbox state of one channel (D5).
 	UssNotify DeliveryChannel `json:"uss_notify"`
+}
+
+// DeliveryAlarm An alarm of the outbox (WP-8, 02 F2 failure rule): the alarm member
+// of a restriction/state/v1 body and an item of GET
+// /v1/delivery-alarms. state is open, acknowledged (an open
+// cisp_not_published a person has seen) or cleared; duration_s is
+// cleared_at minus since. The text never says "lost" (C-12).
+type DeliveryAlarm struct {
+	AckReason *string `json:"ack_reason,omitempty"`
+
+	// AcknowledgedAt RFC 3339 UTC with Z, millisecond precision (02 §1).
+	AcknowledgedAt *Timestamp `json:"acknowledged_at,omitempty"`
+
+	// AcknowledgedBy A console role (01 §4).
+	AcknowledgedBy *Role  `json:"acknowledged_by,omitempty"`
+	AnspVersion    *int64 `json:"ansp_version,omitempty"`
+
+	// ClearReason published, restriction_not_active or acknowledged.
+	ClearReason *string `json:"clear_reason,omitempty"`
+
+	// ClearedAt RFC 3339 UTC with Z, millisecond precision (02 §1).
+	ClearedAt *Timestamp `json:"cleared_at,omitempty"`
+
+	// DeliveryId Crockford base32, 26 characters (04 §2).
+	DeliveryId *ULID    `json:"delivery_id,omitempty"`
+	Detail     string   `json:"detail"`
+	DurationS  *float32 `json:"duration_s,omitempty"`
+
+	// Id Crockford base32, 26 characters (04 §2).
+	Id   ULID              `json:"id"`
+	Kind DeliveryAlarmKind `json:"kind"`
+
+	// RaisedAt RFC 3339 UTC with Z, millisecond precision (02 §1).
+	RaisedAt Timestamp `json:"raised_at"`
+
+	// RestrictionId Crockford base32, 26 characters (04 §2).
+	RestrictionId *ULID `json:"restriction_id,omitempty"`
+
+	// Since RFC 3339 UTC with Z, millisecond precision (02 §1).
+	Since Timestamp          `json:"since"`
+	State DeliveryAlarmState `json:"state"`
+}
+
+// DeliveryAlarmKind defines model for DeliveryAlarm.Kind.
+type DeliveryAlarmKind string
+
+// DeliveryAlarmState defines model for DeliveryAlarm.State.
+type DeliveryAlarmState string
+
+// DeliveryAlarmList defines model for DeliveryAlarmList.
+type DeliveryAlarmList struct {
+	Alarms    []DeliveryAlarm `json:"alarms"`
+	Truncated *bool           `json:"truncated,omitempty"`
 }
 
 // DeliveryChannel The outbox state of one channel (D5).
@@ -2623,8 +2723,14 @@ type RestrictionState string
 // owned here): a restriction's state change, with the deliveries of
 // its current version when the change is a delivery outcome.
 type RestrictionStateBody struct {
-	AnspRef     string `json:"ansp_ref"`
-	AnspVersion int64  `json:"ansp_version"`
+	// Alarm An alarm of the outbox (WP-8, 02 F2 failure rule): the alarm member
+	// of a restriction/state/v1 body and an item of GET
+	// /v1/delivery-alarms. state is open, acknowledged (an open
+	// cisp_not_published a person has seen) or cleared; duration_s is
+	// cleared_at minus since. The text never says "lost" (C-12).
+	Alarm       *DeliveryAlarm `json:"alarm,omitempty"`
+	AnspRef     string         `json:"ansp_ref"`
+	AnspVersion int64          `json:"ansp_version"`
 
 	// Deliveries The deliveries of the current version: the CISP publication (the
 	// regulatory channel), the DSS write, the subscriber notifications
@@ -2649,6 +2755,9 @@ type RestrictionStateBody struct {
 	// The EUROCAE ED-318 text is not available to the project (spec 09
 	// §3).
 	Feature Ed318Feature `json:"feature"`
+
+	// Published On a delivery outcome, whether the CISP holds the current version (WP-8).
+	Published *bool `json:"published,omitempty"`
 
 	// RestrictionId Crockford base32, 26 characters (04 §2).
 	RestrictionId ULID `json:"restriction_id"`
@@ -2875,6 +2984,9 @@ type AckID = ULID
 // AdapterID An adapter instance slug.
 type AdapterID = AdapterSlug
 
+// AlarmID Crockford base32, 26 characters (04 §2).
+type AlarmID = ULID
+
 // BBox defines model for BBox.
 type BBox = string
 
@@ -2995,6 +3107,15 @@ type ListCoordinationInboxParams struct {
 	Limit *Limit `form:"limit,omitempty" json:"limit,omitempty"`
 }
 
+// ListDeliveryAlarmsParams defines parameters for ListDeliveryAlarms.
+type ListDeliveryAlarmsParams struct {
+	// All Also the cleared alarms.
+	All *bool `form:"all,omitempty" json:"all,omitempty"`
+
+	// Limit At most this many items (default 100); truncated says when more existed.
+	Limit *Limit `form:"limit,omitempty" json:"limit,omitempty"`
+}
+
 // GetMannedTrafficSnapshotParams defines parameters for GetMannedTrafficSnapshot.
 type GetMannedTrafficSnapshotParams struct {
 	// Bbox A bounding box west,south,east,north in WGS84 degrees (RFC 7946
@@ -3045,6 +3166,9 @@ type AcknowledgeCoordinationNoticeJSONRequestBody = AcknowledgeRequest
 
 // SubmitCoordinationNoticeJSONRequestBody defines body for SubmitCoordinationNotice for application/json ContentType.
 type SubmitCoordinationNoticeJSONRequestBody = AnnexVNotice
+
+// AcknowledgeDeliveryAlarmJSONRequestBody defines body for AcknowledgeDeliveryAlarm for application/json ContentType.
+type AcknowledgeDeliveryAlarmJSONRequestBody = AlarmAcknowledgeRequest
 
 // CreateOccurrenceJSONRequestBody defines body for CreateOccurrence for application/json ContentType.
 type CreateOccurrenceJSONRequestBody = OccurrenceCreate
@@ -3975,6 +4099,46 @@ type ClientInterface interface {
 	// Corresponds with GET /v1/coordination/stream (the `StreamCoordination` operationId).
 	StreamCoordination(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// ListDeliveryAlarms The delivery alarms
+	//
+	// The alarms of the outbox (WP-8), newest first: cisp_not_published
+	// (a restriction active here and not yet published to the CISP for
+	// its current version after cisp_alarm_after_s; cleared with its
+	// duration when the publication succeeds or the restriction is no
+	// longer active), delivery_failed (a 4xx answer, not retried) and
+	// delivery_abandoned (retried for the whole window). A failed or
+	// abandoned delivery's alarm stays open until a watch supervisor
+	// acknowledges it with a reason. Without all, the open alarms only.
+	//
+	// Corresponds with GET /v1/delivery-alarms (the `ListDeliveryAlarms` operationId).
+	ListDeliveryAlarms(ctx context.Context, params *ListDeliveryAlarmsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// AcknowledgeDeliveryAlarmWithBody Acknowledge a delivery alarm
+	//
+	// A person's acknowledgement of an alarm, with a reason (audited).
+	// It closes a delivery_failed or delivery_abandoned alarm; a
+	// cisp_not_published alarm is marked acknowledged and stays open
+	// until the publication or the end of the restriction clears it.
+	// An alarm already acknowledged or cleared is 409.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/delivery-alarms/{id}/acknowledge (the `AcknowledgeDeliveryAlarm` operationId).
+	AcknowledgeDeliveryAlarmWithBody(ctx context.Context, id AlarmID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// AcknowledgeDeliveryAlarm Acknowledge a delivery alarm
+	//
+	// A person's acknowledgement of an alarm, with a reason (audited).
+	// It closes a delivery_failed or delivery_abandoned alarm; a
+	// cisp_not_published alarm is marked acknowledged and stays open
+	// until the publication or the end of the restriction clears it.
+	// An alarm already acknowledged or cleared is 409.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/delivery-alarms/{id}/acknowledge (the `AcknowledgeDeliveryAlarm` operationId).
+	AcknowledgeDeliveryAlarm(ctx context.Context, id AlarmID, body AcknowledgeDeliveryAlarmJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// GetMannedTrafficSnapshot Bootstrap of the manned traffic picture
 	//
 	// Every relevant aircraft's last sample with its age, plus what is
@@ -4878,6 +5042,76 @@ func (c *Client) GetCoordinationNotice(ctx context.Context, ackId AckID, reqEdit
 // Corresponds with GET /v1/coordination/stream (the `StreamCoordination` operationId).
 func (c *Client) StreamCoordination(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewStreamCoordinationRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ListDeliveryAlarms The delivery alarms
+//
+// The alarms of the outbox (WP-8), newest first: cisp_not_published
+// (a restriction active here and not yet published to the CISP for
+// its current version after cisp_alarm_after_s; cleared with its
+// duration when the publication succeeds or the restriction is no
+// longer active), delivery_failed (a 4xx answer, not retried) and
+// delivery_abandoned (retried for the whole window). A failed or
+// abandoned delivery's alarm stays open until a watch supervisor
+// acknowledges it with a reason. Without all, the open alarms only.
+//
+// Corresponds with GET /v1/delivery-alarms (the `ListDeliveryAlarms` operationId).
+func (c *Client) ListDeliveryAlarms(ctx context.Context, params *ListDeliveryAlarmsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListDeliveryAlarmsRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// AcknowledgeDeliveryAlarmWithBody Acknowledge a delivery alarm
+//
+// A person's acknowledgement of an alarm, with a reason (audited).
+// It closes a delivery_failed or delivery_abandoned alarm; a
+// cisp_not_published alarm is marked acknowledged and stays open
+// until the publication or the end of the restriction clears it.
+// An alarm already acknowledged or cleared is 409.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/delivery-alarms/{id}/acknowledge (the `AcknowledgeDeliveryAlarm` operationId).
+func (c *Client) AcknowledgeDeliveryAlarmWithBody(ctx context.Context, id AlarmID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAcknowledgeDeliveryAlarmRequestWithBody(c.Server, id, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// AcknowledgeDeliveryAlarm Acknowledge a delivery alarm
+//
+// A person's acknowledgement of an alarm, with a reason (audited).
+// It closes a delivery_failed or delivery_abandoned alarm; a
+// cisp_not_published alarm is marked acknowledged and stays open
+// until the publication or the end of the restriction clears it.
+// An alarm already acknowledged or cleared is 409.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/delivery-alarms/{id}/acknowledge (the `AcknowledgeDeliveryAlarm` operationId).
+func (c *Client) AcknowledgeDeliveryAlarm(ctx context.Context, id AlarmID, body AcknowledgeDeliveryAlarmJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAcknowledgeDeliveryAlarmRequest(c.Server, id, body)
 	if err != nil {
 		return nil, err
 	}
@@ -6353,6 +6587,119 @@ func NewStreamCoordinationRequest(server string) (*http.Request, error) {
 	return req, nil
 }
 
+// NewListDeliveryAlarmsRequest constructs an http.Request for the ListDeliveryAlarms method
+func NewListDeliveryAlarmsRequest(server string, params *ListDeliveryAlarmsParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/delivery-alarms")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.All != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "all", *params.All, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "boolean", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Limit != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "limit", *params.Limit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewAcknowledgeDeliveryAlarmRequest calls the generic AcknowledgeDeliveryAlarm builder with application/json body
+func NewAcknowledgeDeliveryAlarmRequest(server string, id AlarmID, body AcknowledgeDeliveryAlarmJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewAcknowledgeDeliveryAlarmRequestWithBody(server, id, "application/json", bodyReader)
+}
+
+// NewAcknowledgeDeliveryAlarmRequestWithBody constructs an http.Request for the AcknowledgeDeliveryAlarm method, with any body, and a specified content type
+func NewAcknowledgeDeliveryAlarmRequestWithBody(server string, id AlarmID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/delivery-alarms/%s/acknowledge", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewGetMannedTrafficSnapshotRequest constructs an http.Request for the GetMannedTrafficSnapshot method
 func NewGetMannedTrafficSnapshotRequest(server string, params *GetMannedTrafficSnapshotParams) (*http.Request, error) {
 	var err error
@@ -7755,6 +8102,48 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with GET /v1/coordination/stream (the `StreamCoordination` operationId).
 	StreamCoordinationWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*StreamCoordinationResponse, error)
+
+	// ListDeliveryAlarmsWithResponse The delivery alarms
+	//
+	// The alarms of the outbox (WP-8), newest first: cisp_not_published
+	// (a restriction active here and not yet published to the CISP for
+	// its current version after cisp_alarm_after_s; cleared with its
+	// duration when the publication succeeds or the restriction is no
+	// longer active), delivery_failed (a 4xx answer, not retried) and
+	// delivery_abandoned (retried for the whole window). A failed or
+	// abandoned delivery's alarm stays open until a watch supervisor
+	// acknowledges it with a reason. Without all, the open alarms only.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/delivery-alarms (the `ListDeliveryAlarms` operationId).
+	ListDeliveryAlarmsWithResponse(ctx context.Context, params *ListDeliveryAlarmsParams, reqEditors ...RequestEditorFn) (*ListDeliveryAlarmsResponse, error)
+
+	// AcknowledgeDeliveryAlarmWithBodyWithResponse Acknowledge a delivery alarm
+	//
+	// A person's acknowledgement of an alarm, with a reason (audited).
+	// It closes a delivery_failed or delivery_abandoned alarm; a
+	// cisp_not_published alarm is marked acknowledged and stays open
+	// until the publication or the end of the restriction clears it.
+	// An alarm already acknowledged or cleared is 409.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/delivery-alarms/{id}/acknowledge (the `AcknowledgeDeliveryAlarm` operationId).
+	AcknowledgeDeliveryAlarmWithBodyWithResponse(ctx context.Context, id AlarmID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AcknowledgeDeliveryAlarmResponse, error)
+
+	// AcknowledgeDeliveryAlarmWithResponse Acknowledge a delivery alarm
+	//
+	// A person's acknowledgement of an alarm, with a reason (audited).
+	// It closes a delivery_failed or delivery_abandoned alarm; a
+	// cisp_not_published alarm is marked acknowledged and stays open
+	// until the publication or the end of the restriction clears it.
+	// An alarm already acknowledged or cleared is 409.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/delivery-alarms/{id}/acknowledge (the `AcknowledgeDeliveryAlarm` operationId).
+	AcknowledgeDeliveryAlarmWithResponse(ctx context.Context, id AlarmID, body AcknowledgeDeliveryAlarmJSONRequestBody, reqEditors ...RequestEditorFn) (*AcknowledgeDeliveryAlarmResponse, error)
 
 	// GetMannedTrafficSnapshotWithResponse Bootstrap of the manned traffic picture
 	//
@@ -9500,6 +9889,186 @@ func (r StreamCoordinationResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r StreamCoordinationResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// ListDeliveryAlarmsResponse401Headers the declared response headers of an HTTP 401 response for ListDeliveryAlarms
+type ListDeliveryAlarmsResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+// ListDeliveryAlarmsResponse503Headers the declared response headers of an HTTP 503 response for ListDeliveryAlarms
+type ListDeliveryAlarmsResponse503Headers struct {
+	RetryAfter int
+}
+
+type ListDeliveryAlarmsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *DeliveryAlarmList
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *BadRequest
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *Unauthorized
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *Forbidden
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *Unavailable
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *ListDeliveryAlarmsResponse401Headers
+	// Headers503 the parsed response headers for an HTTP 503 response
+	Headers503 *ListDeliveryAlarmsResponse503Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListDeliveryAlarmsResponse) GetJSON200() *DeliveryAlarmList {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r ListDeliveryAlarmsResponse) GetApplicationproblemJSON400() *BadRequest {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r ListDeliveryAlarmsResponse) GetApplicationproblemJSON401() *Unauthorized {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r ListDeliveryAlarmsResponse) GetApplicationproblemJSON403() *Forbidden {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r ListDeliveryAlarmsResponse) GetApplicationproblemJSON503() *Unavailable {
+	return r.ApplicationproblemJSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r ListDeliveryAlarmsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListDeliveryAlarmsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListDeliveryAlarmsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListDeliveryAlarmsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// AcknowledgeDeliveryAlarmResponse401Headers the declared response headers of an HTTP 401 response for AcknowledgeDeliveryAlarm
+type AcknowledgeDeliveryAlarmResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+// AcknowledgeDeliveryAlarmResponse503Headers the declared response headers of an HTTP 503 response for AcknowledgeDeliveryAlarm
+type AcknowledgeDeliveryAlarmResponse503Headers struct {
+	RetryAfter int
+}
+
+type AcknowledgeDeliveryAlarmResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *DeliveryAlarm
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *BadRequest
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *Unauthorized
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *Forbidden
+	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationproblemJSON404 *NotFound
+	// ApplicationproblemJSON409 the response for an HTTP 409 `application/problem+json` response
+	ApplicationproblemJSON409 *Conflict
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *Unavailable
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *AcknowledgeDeliveryAlarmResponse401Headers
+	// Headers503 the parsed response headers for an HTTP 503 response
+	Headers503 *AcknowledgeDeliveryAlarmResponse503Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r AcknowledgeDeliveryAlarmResponse) GetJSON200() *DeliveryAlarm {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r AcknowledgeDeliveryAlarmResponse) GetApplicationproblemJSON400() *BadRequest {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r AcknowledgeDeliveryAlarmResponse) GetApplicationproblemJSON401() *Unauthorized {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r AcknowledgeDeliveryAlarmResponse) GetApplicationproblemJSON403() *Forbidden {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r AcknowledgeDeliveryAlarmResponse) GetApplicationproblemJSON404() *NotFound {
+	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
+func (r AcknowledgeDeliveryAlarmResponse) GetApplicationproblemJSON409() *Conflict {
+	return r.ApplicationproblemJSON409
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r AcknowledgeDeliveryAlarmResponse) GetApplicationproblemJSON503() *Unavailable {
+	return r.ApplicationproblemJSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r AcknowledgeDeliveryAlarmResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r AcknowledgeDeliveryAlarmResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r AcknowledgeDeliveryAlarmResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r AcknowledgeDeliveryAlarmResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -12097,6 +12666,66 @@ func (c *ClientWithResponses) StreamCoordinationWithResponse(ctx context.Context
 	return ParseStreamCoordinationResponse(rsp)
 }
 
+// ListDeliveryAlarmsWithResponse The delivery alarms
+//
+// The alarms of the outbox (WP-8), newest first: cisp_not_published
+// (a restriction active here and not yet published to the CISP for
+// its current version after cisp_alarm_after_s; cleared with its
+// duration when the publication succeeds or the restriction is no
+// longer active), delivery_failed (a 4xx answer, not retried) and
+// delivery_abandoned (retried for the whole window). A failed or
+// abandoned delivery's alarm stays open until a watch supervisor
+// acknowledges it with a reason. Without all, the open alarms only.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/delivery-alarms (the `ListDeliveryAlarms` operationId).
+func (c *ClientWithResponses) ListDeliveryAlarmsWithResponse(ctx context.Context, params *ListDeliveryAlarmsParams, reqEditors ...RequestEditorFn) (*ListDeliveryAlarmsResponse, error) {
+	rsp, err := c.ListDeliveryAlarms(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListDeliveryAlarmsResponse(rsp)
+}
+
+// AcknowledgeDeliveryAlarmWithBodyWithResponse Acknowledge a delivery alarm
+//
+// A person's acknowledgement of an alarm, with a reason (audited).
+// It closes a delivery_failed or delivery_abandoned alarm; a
+// cisp_not_published alarm is marked acknowledged and stays open
+// until the publication or the end of the restriction clears it.
+// An alarm already acknowledged or cleared is 409.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/delivery-alarms/{id}/acknowledge (the `AcknowledgeDeliveryAlarm` operationId).
+func (c *ClientWithResponses) AcknowledgeDeliveryAlarmWithBodyWithResponse(ctx context.Context, id AlarmID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AcknowledgeDeliveryAlarmResponse, error) {
+	rsp, err := c.AcknowledgeDeliveryAlarmWithBody(ctx, id, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseAcknowledgeDeliveryAlarmResponse(rsp)
+}
+
+// AcknowledgeDeliveryAlarmWithResponse Acknowledge a delivery alarm
+//
+// A person's acknowledgement of an alarm, with a reason (audited).
+// It closes a delivery_failed or delivery_abandoned alarm; a
+// cisp_not_published alarm is marked acknowledged and stays open
+// until the publication or the end of the restriction clears it.
+// An alarm already acknowledged or cleared is 409.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/delivery-alarms/{id}/acknowledge (the `AcknowledgeDeliveryAlarm` operationId).
+func (c *ClientWithResponses) AcknowledgeDeliveryAlarmWithResponse(ctx context.Context, id AlarmID, body AcknowledgeDeliveryAlarmJSONRequestBody, reqEditors ...RequestEditorFn) (*AcknowledgeDeliveryAlarmResponse, error) {
+	rsp, err := c.AcknowledgeDeliveryAlarm(ctx, id, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseAcknowledgeDeliveryAlarmResponse(rsp)
+}
+
 // GetMannedTrafficSnapshotWithResponse Bootstrap of the manned traffic picture
 //
 // Every relevant aircraft's last sample with its age, plus what is
@@ -13908,6 +14537,174 @@ func ParseStreamCoordinationResponse(rsp *http.Response) (*StreamCoordinationRes
 		response.Headers401 = &headers
 	case rsp.StatusCode == 503:
 		var headers StreamCoordinationResponse503Headers
+		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.RetryAfter = value
+		}
+		response.Headers503 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseListDeliveryAlarmsResponse parses an HTTP response from a ListDeliveryAlarmsWithResponse call
+func ParseListDeliveryAlarmsResponse(rsp *http.Response) (*ListDeliveryAlarmsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListDeliveryAlarmsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest DeliveryAlarmList
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers ListDeliveryAlarmsResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	case rsp.StatusCode == 503:
+		var headers ListDeliveryAlarmsResponse503Headers
+		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.RetryAfter = value
+		}
+		response.Headers503 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseAcknowledgeDeliveryAlarmResponse parses an HTTP response from a AcknowledgeDeliveryAlarmWithResponse call
+func ParseAcknowledgeDeliveryAlarmResponse(rsp *http.Response) (*AcknowledgeDeliveryAlarmResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &AcknowledgeDeliveryAlarmResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest DeliveryAlarm
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Conflict
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers AcknowledgeDeliveryAlarmResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	case rsp.StatusCode == 503:
+		var headers AcknowledgeDeliveryAlarmResponse503Headers
 		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
 			var value int
 			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "integer", Format: ""}); err != nil {
@@ -15981,6 +16778,12 @@ type ServerInterface interface {
 	// StreamCoordination New notices and escalations for the console (WebSocket)
 	// (GET /v1/coordination/stream)
 	StreamCoordination(w http.ResponseWriter, r *http.Request)
+	// ListDeliveryAlarms The delivery alarms
+	// (GET /v1/delivery-alarms)
+	ListDeliveryAlarms(w http.ResponseWriter, r *http.Request, params ListDeliveryAlarmsParams)
+	// AcknowledgeDeliveryAlarm Acknowledge a delivery alarm
+	// (POST /v1/delivery-alarms/{id}/acknowledge)
+	AcknowledgeDeliveryAlarm(w http.ResponseWriter, r *http.Request, id AlarmID)
 	// GetMannedTrafficSnapshot Bootstrap of the manned traffic picture
 	// (GET /v1/manned-traffic/snapshot)
 	GetMannedTrafficSnapshot(w http.ResponseWriter, r *http.Request, params GetMannedTrafficSnapshotParams)
@@ -16448,6 +17251,78 @@ func (siw *ServerInterfaceWrapper) StreamCoordination(w http.ResponseWriter, r *
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.StreamCoordination(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListDeliveryAlarms operation middleware
+func (siw *ServerInterfaceWrapper) ListDeliveryAlarms(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListDeliveryAlarmsParams
+
+	// ------------- Optional query parameter "all" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "all", r.URL.Query(), &params.All, runtime.BindQueryParameterOptions{Type: "boolean", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "all"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "all", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "limit", r.URL.Query(), &params.Limit, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "limit"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "limit", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListDeliveryAlarms(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// AcknowledgeDeliveryAlarm operation middleware
+func (siw *ServerInterfaceWrapper) AcknowledgeDeliveryAlarm(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id AlarmID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.AcknowledgeDeliveryAlarm(w, r, id)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -17238,6 +18113,8 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/restrictions/{id}/extend", wrapper.ExtendRestriction)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/restrictions/{id}/end", wrapper.EndRestriction)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/restrictions/{id}/cancel", wrapper.CancelRestriction)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/delivery-alarms", wrapper.ListDeliveryAlarms)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/delivery-alarms/{id}/acknowledge", wrapper.AcknowledgeDeliveryAlarm)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/restriction-requests", wrapper.CreateRestrictionRequest)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/restriction-requests/{id}", wrapper.GetRestrictionRequest)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/restriction-requests/{id}/accept", wrapper.AcceptRestrictionRequest)
@@ -18675,6 +19552,219 @@ type StreamCoordination503ApplicationProblemPlusJSONResponse struct {
 }
 
 func (response StreamCoordination503ApplicationProblemPlusJSONResponse) VisitStreamCoordinationResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListDeliveryAlarmsRequestObject struct {
+	Params ListDeliveryAlarmsParams
+}
+
+type ListDeliveryAlarmsResponseObject interface {
+	VisitListDeliveryAlarmsResponse(w http.ResponseWriter) error
+}
+
+type ListDeliveryAlarms200JSONResponse DeliveryAlarmList
+
+func (response ListDeliveryAlarms200JSONResponse) VisitListDeliveryAlarmsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListDeliveryAlarms400ApplicationProblemPlusJSONResponse struct {
+	BadRequestApplicationProblemPlusJSONResponse
+}
+
+func (response ListDeliveryAlarms400ApplicationProblemPlusJSONResponse) VisitListDeliveryAlarmsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListDeliveryAlarms401ApplicationProblemPlusJSONResponse struct {
+	UnauthorizedApplicationProblemPlusJSONResponse
+}
+
+func (response ListDeliveryAlarms401ApplicationProblemPlusJSONResponse) VisitListDeliveryAlarmsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	if response.Headers.WWWAuthenticate != nil {
+		w.Header().Set("WWW-Authenticate", fmt.Sprint(*response.Headers.WWWAuthenticate))
+	}
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListDeliveryAlarms403ApplicationProblemPlusJSONResponse struct {
+	ForbiddenApplicationProblemPlusJSONResponse
+}
+
+func (response ListDeliveryAlarms403ApplicationProblemPlusJSONResponse) VisitListDeliveryAlarmsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListDeliveryAlarms503ApplicationProblemPlusJSONResponse struct {
+	UnavailableApplicationProblemPlusJSONResponse
+}
+
+func (response ListDeliveryAlarms503ApplicationProblemPlusJSONResponse) VisitListDeliveryAlarmsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type AcknowledgeDeliveryAlarmRequestObject struct {
+	Id   AlarmID `json:"id"`
+	Body *AcknowledgeDeliveryAlarmJSONRequestBody
+}
+
+type AcknowledgeDeliveryAlarmResponseObject interface {
+	VisitAcknowledgeDeliveryAlarmResponse(w http.ResponseWriter) error
+}
+
+type AcknowledgeDeliveryAlarm200JSONResponse DeliveryAlarm
+
+func (response AcknowledgeDeliveryAlarm200JSONResponse) VisitAcknowledgeDeliveryAlarmResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type AcknowledgeDeliveryAlarm400ApplicationProblemPlusJSONResponse struct {
+	BadRequestApplicationProblemPlusJSONResponse
+}
+
+func (response AcknowledgeDeliveryAlarm400ApplicationProblemPlusJSONResponse) VisitAcknowledgeDeliveryAlarmResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type AcknowledgeDeliveryAlarm401ApplicationProblemPlusJSONResponse struct {
+	UnauthorizedApplicationProblemPlusJSONResponse
+}
+
+func (response AcknowledgeDeliveryAlarm401ApplicationProblemPlusJSONResponse) VisitAcknowledgeDeliveryAlarmResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	if response.Headers.WWWAuthenticate != nil {
+		w.Header().Set("WWW-Authenticate", fmt.Sprint(*response.Headers.WWWAuthenticate))
+	}
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type AcknowledgeDeliveryAlarm403ApplicationProblemPlusJSONResponse struct {
+	ForbiddenApplicationProblemPlusJSONResponse
+}
+
+func (response AcknowledgeDeliveryAlarm403ApplicationProblemPlusJSONResponse) VisitAcknowledgeDeliveryAlarmResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type AcknowledgeDeliveryAlarm404ApplicationProblemPlusJSONResponse struct {
+	NotFoundApplicationProblemPlusJSONResponse
+}
+
+func (response AcknowledgeDeliveryAlarm404ApplicationProblemPlusJSONResponse) VisitAcknowledgeDeliveryAlarmResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type AcknowledgeDeliveryAlarm409ApplicationProblemPlusJSONResponse struct {
+	ConflictApplicationProblemPlusJSONResponse
+}
+
+func (response AcknowledgeDeliveryAlarm409ApplicationProblemPlusJSONResponse) VisitAcknowledgeDeliveryAlarmResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type AcknowledgeDeliveryAlarm503ApplicationProblemPlusJSONResponse struct {
+	UnavailableApplicationProblemPlusJSONResponse
+}
+
+func (response AcknowledgeDeliveryAlarm503ApplicationProblemPlusJSONResponse) VisitAcknowledgeDeliveryAlarmResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
@@ -21279,6 +22369,12 @@ type StrictServerInterface interface {
 	// StreamCoordination New notices and escalations for the console (WebSocket)
 	// (GET /v1/coordination/stream)
 	StreamCoordination(ctx context.Context, request StreamCoordinationRequestObject) (StreamCoordinationResponseObject, error)
+	// ListDeliveryAlarms The delivery alarms
+	// (GET /v1/delivery-alarms)
+	ListDeliveryAlarms(ctx context.Context, request ListDeliveryAlarmsRequestObject) (ListDeliveryAlarmsResponseObject, error)
+	// AcknowledgeDeliveryAlarm Acknowledge a delivery alarm
+	// (POST /v1/delivery-alarms/{id}/acknowledge)
+	AcknowledgeDeliveryAlarm(ctx context.Context, request AcknowledgeDeliveryAlarmRequestObject) (AcknowledgeDeliveryAlarmResponseObject, error)
 	// GetMannedTrafficSnapshot Bootstrap of the manned traffic picture
 	// (GET /v1/manned-traffic/snapshot)
 	GetMannedTrafficSnapshot(ctx context.Context, request GetMannedTrafficSnapshotRequestObject) (GetMannedTrafficSnapshotResponseObject, error)
@@ -21865,6 +22961,65 @@ func (sh *strictHandler) StreamCoordination(w http.ResponseWriter, r *http.Reque
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(StreamCoordinationResponseObject); ok {
 		if err := validResponse.VisitStreamCoordinationResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// ListDeliveryAlarms operation middleware
+func (sh *strictHandler) ListDeliveryAlarms(w http.ResponseWriter, r *http.Request, params ListDeliveryAlarmsParams) {
+	var request ListDeliveryAlarmsRequestObject
+
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ListDeliveryAlarms(ctx, request.(ListDeliveryAlarmsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ListDeliveryAlarms")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ListDeliveryAlarmsResponseObject); ok {
+		if err := validResponse.VisitListDeliveryAlarmsResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// AcknowledgeDeliveryAlarm operation middleware
+func (sh *strictHandler) AcknowledgeDeliveryAlarm(w http.ResponseWriter, r *http.Request, id AlarmID) {
+	var request AcknowledgeDeliveryAlarmRequestObject
+
+	request.Id = id
+
+	var body AcknowledgeDeliveryAlarmJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.AcknowledgeDeliveryAlarm(ctx, request.(AcknowledgeDeliveryAlarmRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "AcknowledgeDeliveryAlarm")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(AcknowledgeDeliveryAlarmResponseObject); ok {
+		if err := validResponse.VisitAcknowledgeDeliveryAlarmResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

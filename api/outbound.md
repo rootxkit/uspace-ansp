@@ -1,17 +1,30 @@
 # Outbound calls
 
 The calls this system makes. Their contracts are owned elsewhere and are
-not in `openapi.yaml`; they are described in `docs/PLAN.md` section 6
-("Outbound calls") and consumed from the owner's published file (a
-pinned copy in `clients/`) or the standard.
+not in `openapi.yaml`; they are consumed from the owner's published file
+(a pinned copy in `clients/`) or the standard, and kept in step with
+`docs/PLAN.md` section 6 ("Outbound calls"). Every call that changes
+something at the peer goes through the outbox (`internal/deliver`, D5):
+a `deliveries` row written in the transaction of the change, a
+`deliver.v1.<kind>` job published after the commit, one
+`delivery_attempts` row per attempt.
 
-| Call | Owner | Contract | Client | Spec |
-|---|---|---|---|---|
-| `POST /v1/restrictions`, `PATCH /v1/restrictions/{id}` on the CISP (`cis/restriction/v1`, detached JWS in `X-JWS-Signature`, idempotent on `(ansp_ref, ansp_version)`) | uspace-cisp | `clients/cisp.yaml` | `clients/cispclient` | `02 F2` |
-| `POST /v1/publishers/heartbeat {sent_at, active_refs}` every `cisp_heartbeat_s` | uspace-cisp | `clients/cisp.yaml` | `clients/cispclient` | `02 F2` failure rule |
-| `GET /v1/uspace_airspace`, `GET /v1/ussp_list`, `GET /v1/restrictions` unfiltered with `If-None-Match`; `GET /v1/{dataset}/versions/{v}` for the publisher's `X-Publisher-Signature`; `GET /v1/subscriptions`, `POST /v1/subscriptions`, `GET` and `PATCH /v1/subscriptions/{id}` (WP-7, `internal/cis`) | uspace-cisp | `clients/cisp.yaml` | `clients/cispclient` | `02 F3`, `06` T4 |
-| `PUT /dss/v1/constraint_references/{entityid}`, `DELETE .../{entityid}/{ovn}`, `GET .../{entityid}` | InterUSS DSS | ASTM F3548-21 `utm.yaml` (`uspace-core/f3548/SOURCE`) | `uspace-core/f3548` types | `02 F2`, `02 F6` |
-| `POST {uss_base_url}/uss/v1/constraints` to each subscriber | each USSP | ASTM F3548-21 | `uspace-core/f3548` types | `02 F6` |
-| Degraded direct delivery: `POST {base_url}/v1/cis/notifications` (compact JWS of `cis/change/v1`) on every USSP of the CIS list and on the authority | uspace-ussp, uspace-authority | `clients/ussp.yaml` (`receiveCISNotification`); the body is the CISP's `Change` | `clients/cispclient` (`Change`) | `02 F2` failure rule |
-| `POST /v1/occurrences` on the authority (`occurrence/v1`) | uspace-authority | not yet in `clients/authority.yaml` (`docs/PLAN.md` section 15 gap 23) | none until published | `02 F7`, `F11` |
-| `POST /oauth/token`, `GET /.well-known/jwks.json` on the authority | uspace-authority | `clients/authority.yaml` | `internal/auth` (client credentials) | `06 §3` |
+The common failure rule of the outbox (02 F2): `5xx`, `408`, `409`,
+`429`, a timeout or a network error is retried with backoff from 1 s
+doubling to 60 s (a `429` waits at least its `Retry-After`), for 24 h
+and at most 1445 attempts, then the job is `abandoned`; any other `4xx`
+is `failed` at once with the response excerpt (at most 1 KiB of an
+answer read to 1 MiB). Both raise an alarm that stays on the console
+until a watch supervisor acknowledges it with a reason (audited,
+`POST /v1/delivery-alarms/{id}/acknowledge`). No redirect is followed.
+
+| Call | Owner | Contract | Auth | Idempotency key | Failure rule | Spec |
+|---|---|---|---|---|---|---|
+| `POST /v1/restrictions` (planned create; the first publication of an active restriction) and `PATCH /v1/restrictions/{ansp_ref}?by=ansp_ref` `{op, ansp_version, ends_at?, feature?}` (activate, extend, end, cancel) on the CISP; body `cis/restriction/v1` from the generated `clients/cispclient` types | uspace-cisp | `clients/cisp.yaml` | bearer from the authority as `ansp-01`, scope `cis.publish:restrictions`, `aud` the CISP's host; client certificate of `ANSP_CISP_CLIENT_CERT_FILE` (mTLS, the subject bound by the CISP to `ansp-01`); detached JWS of core's `SignDetached` over the exact body in `X-JWS-Signature` (`b64: false`, `crit: ["b64"]`, RS256, `kid`, `iat`; key `ANSP_DELIVERY_KEY_FILE`, in `/.well-known/jwks.json`) | the body pair `(ansp_ref, ansp_version)`; the bytes are fixed at the first attempt so every retry is the CISP's replay; `Idempotency-Key: <ansp_ref>#<ansp_version>` is sent and nothing depends on it | outbox; versions of one restriction go in order; an expiry is not sent (the CISP expires at `ends_at`); an end or cancel of a restriction the CISP never held is `cancelled` (`never_published`); a restriction active and not published at its current version for `cisp_alarm_after_s` raises `cisp_not_published` and the degraded direct delivery | `02 F2` |
+| `POST /v1/publishers/heartbeat {sent_at, active_refs}` every `cisp_heartbeat_s` (15 s) | uspace-cisp | `clients/cisp.yaml` | as the publication, without a JWS | none: each heartbeat replaces the one before | not a job: never retried; a failure is counted and shown as `cisp_publisher: unreachable since T` in readiness, never as data loss; the first answer after a failure runs the reconciliation (every active restriction not published at its current version is re-queued) | `02 F2` failure rule |
+| `GET /v1/uspace_airspace`, `GET /v1/ussp_list`, `GET /v1/restrictions` unfiltered with `If-None-Match`; `GET /v1/{dataset}/versions/{v}` for the publisher's `X-Publisher-Signature`; `GET /v1/subscriptions`, `POST /v1/subscriptions`, `GET` and `PATCH /v1/subscriptions/{id}` (WP-7, `internal/cis`) | uspace-cisp | `clients/cisp.yaml` | bearer, scope `cis.read`, `aud` the CISP's host | reads; the subscription is looked up before it is created | the projection keeps the version it holds and ages it (WP-7) | `02 F3`, `06` T4 |
+| Degraded direct delivery: `POST {base_url}/v1/cis/notifications` on every USSP of the CIS list and on the authority, `application/jose`: a compact JWS of core's `SignCompact` with `iss` this system (`ANSP_PUBLIC_BASE_URL`), `aud` the host of the target's base URL, `sub` the restriction id, `jti` the delivery id, `iat`; payload body the CISP's `cis/change/v1` (`Change`): `dataset: restrictions`, `version` the `ansp_version`, `feature_ids` the identifier, `reason` `restriction_*`, `pull_url` this system's `GET /v1/restrictions/{id}` | uspace-ussp, uspace-authority | `clients/ussp.yaml` (`receiveCISNotification`); the body is the CISP's `Change` | the signature (no bearer) | the delivery id (`jti`, the change's `msg_id`), unique per (restriction version, target) | outbox; queued when `cisp_not_published` is raised (and for each newer version while it is open); the jobs still queued when the CISP publishes are `cancelled` (`superseded_by_cisp`), when the restriction is no longer active `restriction_not_active` | `02 F2` failure rule |
+| `PUT /dss/v1/constraint_references/{entityid}`, `DELETE .../{entityid}/{ovn}`, `GET .../{entityid}` | InterUSS DSS | ASTM F3548-21 `utm.yaml` (`uspace-core/f3548/SOURCE`) | bearer, scope `utm.constraint_management`, `aud` the DSS's host | the entity id and its `ovn` | the outbox (WP-9; kinds `dss_put`, `dss_delete`) | `02 F2`, `02 F6` |
+| `POST {uss_base_url}/uss/v1/constraints` to each subscriber | each USSP | ASTM F3548-21 | bearer, scope `utm.constraint_processing`, `aud` that USS's host | the subscription notification index | the outbox (WP-9; kind `uss_notify`) | `02 F6` |
+| `POST /v1/occurrences` on the authority (`occurrence/v1`) | uspace-authority | not yet in `clients/authority.yaml` (`docs/PLAN.md` section 15 gap 23) | bearer, scope `occurrences.write`, `aud` the authority's host | the report reference | the outbox (WP-10; kind `occurrence`) | `02 F7`, `F11` |
+| `POST /oauth/token`, `GET /.well-known/jwks.json` on the authority | uspace-authority | `clients/authority.yaml` | client credentials (`client_secret_post`) as `ansp-01`; JWKS public | none: a token is fetched again at half its lifetime | bounded retries of the fetch; the cached token is used to its `exp` during an outage (`internal/auth`) | `06 §3` |

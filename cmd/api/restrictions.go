@@ -17,6 +17,7 @@ import (
 	"github.com/rootxkit/uspace-ansp/internal/apierr"
 	"github.com/rootxkit/uspace-ansp/internal/audit"
 	"github.com/rootxkit/uspace-ansp/internal/auth"
+	"github.com/rootxkit/uspace-ansp/internal/deliver"
 	"github.com/rootxkit/uspace-ansp/internal/restriction"
 )
 
@@ -35,10 +36,14 @@ const DefaultListLimit = 100
 const restrictionsUnavailableRetry = 60 * time.Second
 
 // restrictionAPI serves the restriction and restriction-request
-// operations (WP-5) and the console stream.
+// operations (WP-5), the console stream, and the outbox's view (WP-8):
+// the deliveries summary and the delivery alarms.
 type restrictionAPI struct {
 	svc    *restriction.Service
 	stream *restrictionStream
+	// dl is the outbox; nil while there is none (every channel "none",
+	// the alarm operations 503).
+	dl *deliveryAPI
 }
 
 // actorOf is the caller as the state machine records it: a console
@@ -441,25 +446,6 @@ func (rs *restrictionAPI) cisStatus(ctx context.Context) (*string, *float64) {
 // --- wire shapes (api/openapi.yaml Restriction, RestrictionVersion,
 // RestrictionRequest); numbers are float64, unlike the generated types.
 
-type channelJSON struct {
-	State    string `json:"state"`
-	Attempts int    `json:"attempts"`
-}
-
-type deliveriesJSON struct {
-	CISP           channelJSON `json:"cisp"`
-	DSS            channelJSON `json:"dss"`
-	USSNotify      channelJSON `json:"uss_notify"`
-	DirectDegraded channelJSON `json:"direct_degraded"`
-}
-
-// noDeliveries is the deliveries summary until the outbox exists (WP-8):
-// nothing has been queued on any channel.
-var noDeliveries = deliveriesJSON{
-	CISP: channelJSON{State: "none"}, DSS: channelJSON{State: "none"},
-	USSNotify: channelJSON{State: "none"}, DirectDegraded: channelJSON{State: "none"},
-}
-
 type restrictionJSON struct {
 	ID                  string          `json:"id"`
 	AnspRef             string          `json:"ansp_ref"`
@@ -492,7 +478,7 @@ type restrictionJSON struct {
 	DSSVersion          *int64          `json:"dss_version"`
 	Feature             json.RawMessage `json:"feature"`
 	ConstraintReference json.RawMessage `json:"constraint_reference"`
-	Deliveries          deliveriesJSON  `json:"deliveries"`
+	Deliveries          deliver.Summary `json:"deliveries"`
 	CISVersion          *string         `json:"cis_version"`
 	CISAgeS             *float64        `json:"cis_age_s"`
 }
@@ -525,7 +511,7 @@ func (rs *restrictionAPI) restrictionJSON(ctx context.Context, x restriction.Res
 		ActivatedAt: stampPtr(x.ActivatedAt), ActivateAt: stampPtr(x.ActivateAt), EndedAtActual: stampPtr(x.EndedAtActual),
 		RequestID: x.RequestID, PublishedVersion: x.PublishedVersion, SupersedesID: x.SupersedesID,
 		DSSConstraintID: x.DSSConstraintID, DSSVersion: x.DSSVersion, Feature: x.Feature,
-		ConstraintReference: json.RawMessage("null"), Deliveries: noDeliveries, CISVersion: x.CISVersion, CISAgeS: age,
+		ConstraintReference: json.RawMessage("null"), Deliveries: rs.deliveries(ctx, x), CISVersion: x.CISVersion, CISAgeS: age,
 	}
 }
 

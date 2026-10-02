@@ -1,0 +1,116 @@
+{
+  "schema": "restriction/state/v1",
+  "msg_id": "01K6P0B9C8D7E6F5G4H3J2K1M2",
+  "producer": "ansp/api",
+  "ts": "2026-10-02T12:00:10.120Z",
+  "rx_ts": "2026-10-02T12:00:10.120Z",
+  "captured_at": "2026-10-02T12:00:10.120Z",
+  "time_source": "system",
+  "backlog": false,
+  "body": {
+    "restriction_id": "01K6P0A1B2C3D4E5F6G7H8J9KM",
+    "ansp_ref": "ansp-01:01K6P0A1B2C3D4E5F6G7H8J9KM",
+    "state": "active",
+    "starts_at": "2026-10-02T12:00:00.000Z",
+    "ends_at": "2026-10-02T16:00:00.000Z",
+    "ansp_version": 2,
+    "feature": {
+      "type": "Feature",
+      "id": "DAR7K2Q",
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [
+              44.78,
+              41.7
+            ],
+            [
+              44.82,
+              41.7
+            ],
+            [
+              44.82,
+              41.73
+            ],
+            [
+              44.78,
+              41.73
+            ],
+            [
+              44.78,
+              41.7
+            ]
+          ]
+        ],
+        "layer": {
+          "upper": 1200,
+          "upperReference": "AMSL",
+          "lower": 0,
+          "lowerReference": "AMSL",
+          "uom": "m"
+        }
+      },
+      "properties": {
+        "identifier": "DAR7K2Q",
+        "country": "GEO",
+        "type": "PROHIBITED",
+        "variant": "COMMON",
+        "reason": [
+          "DAR"
+        ],
+        "limitedApplicability": [
+          {
+            "startDateTime": "2026-10-02T12:00:00.000Z",
+            "endDateTime": "2026-10-02T16:00:00.000Z"
+          }
+        ],
+        "zoneAuthority": [
+          {
+            "name": [
+              {
+                "text": "Test ANSP",
+                "lang": "en-GB"
+              }
+            ],
+            "purpose": "AUTHORIZATION"
+          }
+        ]
+      }
+    },
+    "deliveries": {
+      "cisp": {
+        "state": "queued",
+        "attempts": 4,
+        "last_attempt_at": "2026-10-02T12:00:07.050Z",
+        "last_status_code": 503,
+        "next_retry_at": "2026-10-02T12:00:15.050Z"
+      },
+      "dss": {
+        "state": "sent",
+        "attempts": 1,
+        "last_attempt_at": "2026-10-02T12:00:00.240Z",
+        "last_status_code": 200
+      },
+      "uss_notify": {
+        "state": "none",
+        "attempts": 0
+      },
+      "direct_degraded": {
+        "state": "queued",
+        "attempts": 0
+      }
+    },
+    "published": false,
+    "alarm": {
+      "id": "01K6P0A9QZ3V1H8M2T6R4W5X7C",
+      "kind": "cisp_not_published",
+      "state": "open",
+      "restriction_id": "01K6P0A1B2C3D4E5F6G7H8J9KM",
+      "ansp_version": 2,
+      "since": "2026-10-02T12:00:00.000Z",
+      "raised_at": "2026-10-02T12:00:10.120Z",
+      "detail": "restriction DAR7K2Q (version 2) is active and not yet published to the CISP since 2026-10-02T12:00:00.000Z; delivering it directly to the USSPs and the authority"
+    }
+  }
+}

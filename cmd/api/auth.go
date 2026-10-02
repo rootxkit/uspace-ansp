@@ -36,8 +36,11 @@ type authWiring struct {
 	handlers *auth.Handlers
 	// accounts is nil while console sign-in is not configured.
 	accounts *auth.Accounts
-	checks   []obs.Check
-	run      []func(ctx context.Context)
+	// keys is the JWKS of /.well-known/jwks.json: the session ring when
+	// sign-in is configured and the delivery ring (WP-8) when its key is.
+	keys   *auth.PublicKeys
+	checks []obs.Check
+	run    []func(ctx context.Context)
 }
 
 // wireAuth builds the guard, and the console sign-in, user and key
@@ -58,7 +61,11 @@ func wireAuth(ctx context.Context, cfg config.Config, db *store.Relational, reg 
 		return nil, err
 	}
 	guard := &auth.Guard{Origins: cfg.WSAllowedOrigins, MTLS: mtls}
-	w := &authWiring{guard: guard, realIP: auth.RealIP(proxies)}
+	keys := auth.NewPublicKeys()
+	if err := obs.Counters(reg, "auth_jwks", keys.Counters()); err != nil {
+		return nil, err
+	}
+	w := &authWiring{guard: guard, realIP: auth.RealIP(proxies), keys: keys}
 	if len(cfg.TokenIssuers) > 0 {
 		m, err := auth.NewMachineVerifier(ctx, cfg)
 		if err != nil {
@@ -131,7 +138,6 @@ func wireAuth(ctx context.Context, cfg config.Config, db *store.Relational, reg 
 	}
 	accounts.SetSessionVerifier(sessions)
 	guard.Sessions = sessions
-	keys := auth.NewPublicKeys()
 	if err := keys.Add("session", ring); err != nil {
 		return nil, err
 	}
@@ -155,7 +161,7 @@ func wireAuth(ctx context.Context, cfg config.Config, db *store.Relational, reg 
 
 	for prefix, c := range map[string]*core.Counters{
 		"": guard.Counters(), "auth_accounts": accounts.Counters(), "auth_sessions": sessions.Counters(),
-		"auth_sessions_core": sessions.CoreCounters(), "auth_limiter": limiterCounters, "auth_jwks": keys.Counters(),
+		"auth_sessions_core": sessions.CoreCounters(), "auth_limiter": limiterCounters,
 	} {
 		if err := obs.Counters(reg, prefix, c); err != nil {
 			return nil, err

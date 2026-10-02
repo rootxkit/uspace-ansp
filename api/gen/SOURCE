@@ -1,6 +1,6 @@
 # What api/gen was generated from, written by scripts/generate.sh.
 # A stale hash means api/gen is stale: run make generate.
 generator = github.com/oapi-codegen/oapi-codegen/v2 v2.8.0 (api/oapi-codegen.yaml), api/internal/opsgen
-spec_sha256 = 30b67a42a09198a27c2cb06da54c2f984877a5a996810673577dbaf94b1c24fe
+spec_sha256 = c4b0369e78a910d7d4714e416257f653a4e081f22a816b68b3039d531698a229
 annex_v_schema_sha256 = 73e454121090df9d12e8f2152fead269427845652f4957429352e7b83e92da40
 codegen_config_sha256 = 5a687a5c141ec98539454785569285e54e89cb918b70e465b472a9d521931278
