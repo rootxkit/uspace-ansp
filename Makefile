@@ -3,7 +3,11 @@
 #   make test GO=/c/Users/<you>/AppData/Local/anaconda3/bin/go
 #
 # bash, not /bin/sh: the recipes use pipefail, which ubuntu's dash lacks.
-SHELL := bash
+# -e and pipefail on every recipe line: a command that fails anywhere in
+# a line, also on the left of a pipe into tee or tail, fails the target.
+# Without them only the last command of a line decides.
+SHELL       := bash
+.SHELLFLAGS := -eo pipefail -c
 GO    ?= go
 PKGS  ?= ./...
 
@@ -88,10 +92,12 @@ integration:
 	@missing=""; for v in ANSP_RELATIONAL_DSN ANSP_TIMESERIES_DSN ANSP_NATS_URL; do \
 	  if [ -z "$${!v:-}" ]; then missing="$$missing $$v"; fi; done; \
 	if [ -n "$$missing" ]; then echo "integration: SKIPPED, not set:$$missing"; exit 0; fi; \
-	set -o pipefail; \
-	$(GO) test -tags integration -count=1 -p 1 -run Integration -v $(PKGS) 2>&1 | tee integration.log; \
+	rc=0; \
+	$(GO) test -tags integration -count=1 -p 1 -run Integration -v $(PKGS) 2>&1 | tee integration.log || rc=$$?; \
 	n=$$(grep -c '^--- PASS' integration.log || true); \
-	echo "integration: $$n top-level tests passed"; \
+	f=$$(grep -c '^--- FAIL' integration.log || true); \
+	echo "integration: $$n top-level tests passed, $$f failed"; \
+	if [ "$$rc" -ne 0 ]; then echo "integration: go test exited $$rc"; exit "$$rc"; fi; \
 	if [ "$$n" -eq 0 ]; then echo "integration: zero tests ran"; exit 1; fi
 
 # This repository's RunOwned vector tests (none before WP-4), then
