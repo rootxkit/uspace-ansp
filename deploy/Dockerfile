@@ -13,6 +13,8 @@ COPY cmd ./cmd
 COPY internal ./internal
 # The generated server and models of the contract (WP-3).
 COPY api/gen ./api/gen
+# The generated client of the pinned CISP contract (WP-7, internal/cis).
+COPY api/clients/cispclient ./api/clients/cispclient
 # The goose trees, embedded into the binaries (package migrations).
 COPY migrations ./migrations
 ARG VERSION=dev
