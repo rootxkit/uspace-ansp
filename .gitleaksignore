@@ -1,0 +1,6 @@
+# Findings reviewed and not secrets. One fingerprint per line
+# (<commit>:<file>:<rule>:<line>), never a path or a rule as a whole.
+# The SHA-256 of api/openapi.yaml under a key gitleaks' generic-api-key
+# rule matched (openapi_sha256); the key is spec_sha256 from the next
+# commit on, and the history cannot be rewritten on a shared branch.
+d28563699be3a094c45187ee3bbf9b6c51437059:api/gen/SOURCE:generic-api-key:4
