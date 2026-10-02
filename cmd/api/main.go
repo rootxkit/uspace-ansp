@@ -109,6 +109,10 @@ func run(ctx context.Context, args, environ []string, stdout io.Writer) int {
 		return 2
 	}
 	// Every operation of api/openapi.yaml, behind its x-auth (WP-3).
+	if err := wireLiveSessions(db, b, aw, reg, logger); err != nil {
+		logger.Error("live sessions refused", slog.String("error", err.Error()))
+		return 2
+	}
 	if _, err := mountAPI(mux, aw.guard, aw.handlers, rw.api, aw.realIP); err != nil {
 		logger.Error("routes refused", slog.String("error", err.Error()))
 		return 2

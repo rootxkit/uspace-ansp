@@ -48,7 +48,7 @@ func TestNames(t *testing.T) {
 			t.Fatalf("bucket %s is not on file storage", kc.Bucket)
 		}
 	}
-	if want := []string{"cis_current", "source_control", "policy"}; !slices.Equal(buckets, want) {
+	if want := []string{"cis_current", "source_control", "policy", "sessions_live"}; !slices.Equal(buckets, want) {
 		t.Fatalf("buckets %v", buckets)
 	}
 }

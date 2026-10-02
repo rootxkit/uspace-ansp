@@ -52,6 +52,29 @@ func (r AuthRepo) TouchSession(ctx context.Context, jti string) error {
 	})
 }
 
+var _ auth.LiveSessionLister = AuthRepo{}
+
+// LiveSessions lists at most limit live sessions (not revoked, not
+// expired, used within idle) on the database clock, by jti: what
+// sessions_live must hold (docs/PLAN.md section 15 row 21).
+func (r AuthRepo) LiveSessions(ctx context.Context, idle time.Duration, limit int) ([]auth.SessionRow, error) {
+	var out []auth.SessionRow
+	err := r.DB.Do(ctx, func(ctx context.Context, _ relational.DBTX, q *relational.Queries) error {
+		rows, err := q.ListLiveSessions(ctx, relational.ListLiveSessionsParams{
+			IdleS: idle.Seconds(), PageSize: int32(min(max(limit, 0), auth.MaxLiveSessions+1)),
+		})
+		if err != nil {
+			return err
+		}
+		out = make([]auth.SessionRow, 0, len(rows))
+		for i := range rows {
+			out = append(out, auth.SessionRow{JTI: rows[i].Jti, UserID: rows[i].UserID.String(), Role: rows[i].Role, ExpiresAt: rows[i].ExpiresAt})
+		}
+		return nil
+	})
+	return out, err
+}
+
 // Users lists at most limit accounts by username.
 func (r AuthRepo) Users(ctx context.Context, limit int) ([]auth.User, error) {
 	var out []auth.User
