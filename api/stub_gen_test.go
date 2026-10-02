@@ -127,6 +127,18 @@ func (s exampleStub) StreamCoordination(_ context.Context, request gen.StreamCoo
 
 func (c canned) VisitStreamCoordinationResponse(w http.ResponseWriter) error { return c.visit(w) }
 
+func (s exampleStub) ListDeliveryAlarms(_ context.Context, request gen.ListDeliveryAlarmsRequestObject) (gen.ListDeliveryAlarmsResponseObject, error) {
+	return s.answer("listDeliveryAlarms", request), nil
+}
+
+func (c canned) VisitListDeliveryAlarmsResponse(w http.ResponseWriter) error { return c.visit(w) }
+
+func (s exampleStub) AcknowledgeDeliveryAlarm(_ context.Context, request gen.AcknowledgeDeliveryAlarmRequestObject) (gen.AcknowledgeDeliveryAlarmResponseObject, error) {
+	return s.answer("acknowledgeDeliveryAlarm", request), nil
+}
+
+func (c canned) VisitAcknowledgeDeliveryAlarmResponse(w http.ResponseWriter) error { return c.visit(w) }
+
 func (s exampleStub) GetMannedTrafficSnapshot(_ context.Context, request gen.GetMannedTrafficSnapshotRequestObject) (gen.GetMannedTrafficSnapshotResponseObject, error) {
 	return s.answer("getMannedTrafficSnapshot", request), nil
 }

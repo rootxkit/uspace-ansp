@@ -42,6 +42,8 @@ var Operations = []Operation{
 	{ID: "submitCoordinationNotice", Method: "POST", Path: "/v1/coordination/notices", Pattern: "POST /v1/coordination/notices", Tag: "coordination", Process: "api", Spec: "02 F13, 04 §3.5 coordination/annex_v/v1, Art. 13(2)", Auth: "token:ansp.coordination+mtls", WebSocket: false},
 	{ID: "getCoordinationNotice", Method: "GET", Path: "/v1/coordination/notices/{ack_id}", Pattern: "GET /v1/coordination/notices/{ack_id}", Tag: "coordination", Process: "api", Spec: "02 F13", Auth: "token:ansp.coordination+mtls or session", WebSocket: false},
 	{ID: "streamCoordination", Method: "GET", Path: "/v1/coordination/stream", Pattern: "GET /v1/coordination/stream", Tag: "coordination", Process: "api", Spec: "01 N3 (console)", Auth: "session", WebSocket: true},
+	{ID: "listDeliveryAlarms", Method: "GET", Path: "/v1/delivery-alarms", Pattern: "GET /v1/delivery-alarms", Tag: "restrictions", Process: "api", Spec: "02 F2 failure rule", Auth: "session", WebSocket: false},
+	{ID: "acknowledgeDeliveryAlarm", Method: "POST", Path: "/v1/delivery-alarms/{id}/acknowledge", Pattern: "POST /v1/delivery-alarms/{id}/acknowledge", Tag: "restrictions", Process: "api", Spec: "02 F2 failure rule", Auth: "session:watch_supervisor", WebSocket: false},
 	{ID: "getMannedTrafficSnapshot", Method: "GET", Path: "/v1/manned-traffic/snapshot", Pattern: "GET /v1/manned-traffic/snapshot", Tag: "manned-traffic", Process: "manned-feed", Spec: "02 F4", Auth: "token:ansp.traffic+mtls or session", WebSocket: false},
 	{ID: "streamMannedTraffic", Method: "GET", Path: "/v1/manned-traffic/stream", Pattern: "GET /v1/manned-traffic/stream", Tag: "manned-traffic", Process: "manned-feed", Spec: "02 F4, 04 §3.1 track/manned/v1", Auth: "token:ansp.traffic+mtls or session", WebSocket: true},
 	{ID: "createOccurrence", Method: "POST", Path: "/v1/occurrences", Pattern: "POST /v1/occurrences", Tag: "occurrences", Process: "api", Spec: "01 N4, 376/2014 Art. 4(8), 02 F7", Auth: "session:watch_supervisor", WebSocket: false},
@@ -170,6 +172,16 @@ func (Unimplemented) GetCoordinationNotice(context.Context, GetCoordinationNotic
 // StreamCoordination answers GET /v1/coordination/stream with a *NotImplementedError.
 func (Unimplemented) StreamCoordination(context.Context, StreamCoordinationRequestObject) (StreamCoordinationResponseObject, error) {
 	return nil, &NotImplementedError{Operation: "streamCoordination"}
+}
+
+// ListDeliveryAlarms answers GET /v1/delivery-alarms with a *NotImplementedError.
+func (Unimplemented) ListDeliveryAlarms(context.Context, ListDeliveryAlarmsRequestObject) (ListDeliveryAlarmsResponseObject, error) {
+	return nil, &NotImplementedError{Operation: "listDeliveryAlarms"}
+}
+
+// AcknowledgeDeliveryAlarm answers POST /v1/delivery-alarms/{id}/acknowledge with a *NotImplementedError.
+func (Unimplemented) AcknowledgeDeliveryAlarm(context.Context, AcknowledgeDeliveryAlarmRequestObject) (AcknowledgeDeliveryAlarmResponseObject, error) {
+	return nil, &NotImplementedError{Operation: "acknowledgeDeliveryAlarm"}
 }
 
 // GetMannedTrafficSnapshot answers GET /v1/manned-traffic/snapshot with a *NotImplementedError.

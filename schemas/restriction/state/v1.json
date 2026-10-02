@@ -24,6 +24,28 @@
         "next_retry_at": { "type": "string", "format": "date-time" }
       }
     },
+    "alarm": {
+      "description": "An alarm of the outbox (WP-8): cisp_not_published (active here, not yet published to the CISP for the current version after cisp_alarm_after_s), delivery_failed or delivery_abandoned; raised, acknowledged or cleared (duration_s = cleared_at - since). Never worded as lost (C-12).",
+      "type": "object",
+      "required": ["id", "kind", "state", "since", "raised_at", "detail"],
+      "properties": {
+        "id": { "$ref": "#/$defs/ulid" },
+        "kind": { "enum": ["cisp_not_published", "delivery_failed", "delivery_abandoned"] },
+        "state": { "enum": ["open", "acknowledged", "cleared"] },
+        "restriction_id": { "$ref": "#/$defs/ulid" },
+        "ansp_version": { "type": "integer", "minimum": 1 },
+        "delivery_id": { "$ref": "#/$defs/ulid" },
+        "since": { "type": "string", "format": "date-time" },
+        "raised_at": { "type": "string", "format": "date-time" },
+        "detail": { "type": "string", "maxLength": 1024 },
+        "cleared_at": { "type": "string", "format": "date-time" },
+        "clear_reason": { "type": "string" },
+        "duration_s": { "type": "number", "minimum": 0 },
+        "acknowledged_by": { "type": "string" },
+        "acknowledged_at": { "type": "string", "format": "date-time" },
+        "ack_reason": { "type": "string", "maxLength": 1000 }
+      }
+    },
     "body": {
       "type": "object",
       "required": ["restriction_id", "ansp_ref", "state", "starts_at", "ends_at", "ansp_version", "feature"],
@@ -66,7 +88,12 @@
             "uss_notify": { "$ref": "#/$defs/channel" },
             "direct_degraded": { "$ref": "#/$defs/channel" }
           }
-        }
+        },
+        "published": {
+          "description": "On a delivery outcome (WP-8), whether the CISP holds the current version.",
+          "type": "boolean"
+        },
+        "alarm": { "$ref": "#/$defs/alarm" }
       }
     }
   }

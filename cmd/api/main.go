@@ -19,6 +19,11 @@
 // cmd/api/wire_cis.go): the pulls of the CISP's datasets with their
 // reconciliation, the subscription, cis_cache, KV cis_current, the
 // receiver of POST /v1/cis/notifications, and the readiness line cisp.
+// It runs the outbox (WP-8, cmd/api/wire_deliver.go): every restriction
+// version queues its CISP publication in its own transaction; the worker
+// signs and sends it, the monitor raises cisp_not_published and the
+// degraded direct delivery, the heartbeat and the reconciliation keep
+// the CISP in step, and the delivery-signing key is in the JWKS.
 package main
 
 import (
@@ -116,6 +121,12 @@ func run(ctx context.Context, args, environ []string, stdout io.Writer) int {
 		logger.Error("restrictions refused", slog.String("error", err.Error()))
 		return 2
 	}
+	dw, err := wireDeliver(cfg, db, b, aw.keys, deliverOptions{targets: directTargets(cw.proj, cfg.AuthorityURL)}, reg, logger)
+	if err != nil {
+		logger.Error("outbox refused", slog.String("error", err.Error()))
+		return 2
+	}
+	attachDeliver(rw, dw)
 	// Every operation of api/openapi.yaml, behind its x-auth (WP-3).
 	sw, err := wireSources(db, b, reg, logger)
 	if err != nil {
@@ -130,8 +141,8 @@ func run(ctx context.Context, args, environ []string, stdout io.Writer) int {
 		logger.Error("routes refused", slog.String("error", err.Error()))
 		return 2
 	}
-	checks = append(append(checks, aw.checks...), cw.checks...)
-	for _, fn := range append(append(append(aw.run, rw.run...), sw.run...), cw.run...) {
+	checks = append(append(append(checks, aw.checks...), cw.checks...), dw.checks...)
+	for _, fn := range append(append(append(append(aw.run, rw.run...), sw.run...), cw.run...), dw.run...) {
 		go fn(ctx)
 	}
 
