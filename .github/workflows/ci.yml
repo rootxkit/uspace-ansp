@@ -69,6 +69,7 @@ jobs:
             image:
               - 'cmd/**'
               - 'internal/**'
+              - 'migrations/**'
               - 'go.mod'
               - 'go.sum'
               - 'deploy/Dockerfile'
