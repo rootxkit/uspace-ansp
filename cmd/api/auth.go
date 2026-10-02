@@ -122,11 +122,11 @@ func wireAuth(ctx context.Context, cfg config.Config, db *store.Relational, mux 
 		if err != nil {
 			return nil, err
 		}
-		if guard.MTLS, err = auth.NewMTLS(cfg.MTLSMode, bindings); err != nil {
+		if guard.MTLS, err = auth.NewMTLS(cfg.MTLSMode, bindings, proxies); err != nil {
 			return nil, err
 		}
 	} else if cfg.MTLSMode == config.MTLSOff {
-		guard.MTLS, _ = auth.NewMTLS(config.MTLSOff, nil)
+		guard.MTLS, _ = auth.NewMTLS(config.MTLSOff, nil, nil)
 	}
 	keys := auth.NewPublicKeys()
 	if err := keys.Add("session", ring); err != nil {

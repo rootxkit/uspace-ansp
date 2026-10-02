@@ -45,7 +45,10 @@
 // With ANSP_MTLS_MODE=required the header must be present once and
 // equal the subject bound to the token's sub in ANSP_MTLS_BINDINGS_FILE
 // (a JSON array of {sub, subject}); an unmapped sub is refused: there
-// is no trust on first use. With off nothing is checked (counted) and
+// is no trust on first use. The header is believed only when the
+// request's peer (RemoteAddr) is in ANSP_TRUSTED_PROXIES; from any
+// other peer it is ignored and the call is refused as having no client
+// certificate. With off nothing is checked (counted) and
 // obs.Server logs the mode at error level every status period.
 //
 // # Outbound tokens

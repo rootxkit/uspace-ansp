@@ -519,7 +519,10 @@ func newWorld(t testing.TB) *world {
 	must(t, err)
 	w.accounts.SetSessionVerifier(w.sessions)
 	w.eco = newEcosystem(t)
-	mtls, err := NewMTLS("required", map[string]string{ussp: "CN=" + ussp})
+	// httptest.NewRequest's peer is 192.0.2.1: the fixture's Caddy.
+	proxies, err := ParseTrustedProxies([]string{"192.0.2.1"})
+	must(t, err)
+	mtls, err := NewMTLS("required", map[string]string{ussp: "CN=" + ussp}, proxies)
 	must(t, err)
 	w.guard = &Guard{Machine: newMachine(t, w.eco, w.clock), Sessions: w.sessions, MTLS: mtls, Origins: []string{"https://ansp.test"}}
 	w.keys = NewPublicKeys()

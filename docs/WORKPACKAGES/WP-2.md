@@ -41,7 +41,10 @@ interfaces in `docs/PLAN.md §5` and rebase). Consumers: every handler of
 - mTLS binding: when `ANSP_MTLS_MODE=required` (M25; the only other
   value is `off`), the middleware on the mTLS route groups
   (`/v1/manned-traffic/*`, `/v1/coordination/*`) requires the header
-  Caddy sets from the client certificate (`X-Client-Cert-Subject`) and
+  Caddy sets from the client certificate (`X-Client-Cert-Subject`),
+  believed only when the request's peer is in `ANSP_TRUSTED_PROXIES`
+  (CIDRs or addresses; empty trusts no proxy; from any other peer the
+  header is ignored and the call has no client certificate), and
   refuses when the subject does not match the binding for `sub` (trust
   on first use is **not** acceptable: the binding comes from
   configuration `ANSP_MTLS_BINDINGS_FILE` mapping `sub` → subject, and

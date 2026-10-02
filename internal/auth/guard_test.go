@@ -270,7 +270,7 @@ func writeFile(path, content string) error { return os.WriteFile(path, []byte(co
 // line).
 func TestMTLSOffAcceptsAndIsLogged(t *testing.T) {
 	w := newWorld(t)
-	off, err := NewMTLS(config.MTLSOff, nil)
+	off, err := NewMTLS(config.MTLSOff, nil, nil)
 	must(t, err)
 	w.guard.MTLS = off
 	mux := http.NewServeMux()
@@ -302,14 +302,69 @@ func TestMTLSOffAcceptsAndIsLogged(t *testing.T) {
 	}
 }
 
+// X-Client-Cert-Subject is believed only from a peer in
+// ANSP_TRUSTED_PROXIES (a single address or a CIDR): from the trusted
+// proxy the bound subject is accepted; the same header from any other
+// peer, or with no trusted proxy configured, is ignored, so the call
+// has no client certificate and is refused as absent.
+func TestMTLSSubjectOnlyFromTrustedProxy(t *testing.T) {
+	w := newWorld(t)
+	tok := w.eco.token(t, ussp, ownHost, []string{"ansp.coordination"}, w.clock.Now())
+	send := func(m *MTLS, peer string) (*httptest.ResponseRecorder, *Principal) {
+		t.Helper()
+		w.guard.MTLS = m
+		var seen *Principal
+		h := w.guard.Require(Access{Scopes: []string{"ansp.coordination"}, MTLS: true})(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if p, ok := PrincipalFrom(r.Context()); ok {
+				seen = &p
+			}
+			w.WriteHeader(http.StatusOK)
+		}))
+		r := httptest.NewRequest(http.MethodPost, "/v1/coordination/notices", nil)
+		r.RemoteAddr = peer
+		r.Header.Set("Authorization", "Bearer "+tok)
+		r.Header.Set(HeaderClientCertSubject, "CN="+ussp)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, r)
+		return rec, seen
+	}
+	bindings := map[string]string{ussp: "CN=" + ussp}
+	for name, list := range map[string][]string{"address": {"10.0.0.7"}, "CIDR": {"172.18.0.0/16", "10.0.0.0/24"}} {
+		t.Run(name, func(t *testing.T) {
+			proxies, err := ParseTrustedProxies(list)
+			must(t, err)
+			m, err := NewMTLS(config.MTLSRequired, bindings, proxies)
+			must(t, err)
+			if rec, p := send(m, "10.0.0.7:5000"); rec.Code != http.StatusOK || p == nil || p.MTLSSubject != "CN="+ussp {
+				t.Fatalf("trusted proxy: %d %s", rec.Code, rec.Body.String())
+			}
+			for _, peer := range []string{"10.0.1.7:5000", "192.0.2.1:1234", "[2001:db8::1]:443", "garbage"} {
+				rec, p := send(m, peer)
+				if pb := problemOf(t, rec); rec.Code != http.StatusForbidden || pb.Slug() != SlugMTLSRequired || p != nil {
+					t.Fatalf("untrusted peer %s: %d %s", peer, rec.Code, rec.Body.String())
+				}
+			}
+			c := m.Counters()
+			if c.Get(CounterMTLSAccepted) != 1 || c.Get(CounterMTLSUntrustedPeer) != 4 || c.Get(CounterMTLSAbsent) != 4 {
+				t.Fatalf("counters %v", c.Snapshot())
+			}
+		})
+	}
+	none, err := NewMTLS(config.MTLSRequired, bindings, nil)
+	must(t, err)
+	if rec, _ := send(none, "10.0.0.7:5000"); rec.Code != http.StatusForbidden || none.Counters().Get(CounterMTLSUntrustedPeer) != 1 {
+		t.Fatalf("no trusted proxy: %d", rec.Code)
+	}
+}
+
 func TestNewMTLS(t *testing.T) {
-	if _, err := NewMTLS(config.MTLSRequired, nil); err == nil {
+	if _, err := NewMTLS(config.MTLSRequired, nil, nil); err == nil {
 		t.Fatal("required without bindings")
 	}
-	if _, err := NewMTLS("sometimes", nil); err == nil {
+	if _, err := NewMTLS("sometimes", nil, nil); err == nil {
 		t.Fatal("unknown mode")
 	}
-	m, err := NewMTLS(config.MTLSRequired, map[string]string{"a": "CN=a"})
+	m, err := NewMTLS(config.MTLSRequired, map[string]string{"a": "CN=a"}, nil)
 	if err != nil || m.Mode() != config.MTLSRequired {
 		t.Fatal(err)
 	}

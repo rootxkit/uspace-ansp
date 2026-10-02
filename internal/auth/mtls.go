@@ -3,7 +3,9 @@ package auth
 import (
 	"bytes"
 	"encoding/json"
+	"net"
 	"net/http"
+	"net/netip"
 	"strings"
 	"unicode/utf8"
 
@@ -14,7 +16,8 @@ import (
 
 // HeaderClientCertSubject is the header Caddy sets from a verified
 // client certificate on the mTLS route groups and strips everywhere
-// else (M25; the Caddy snippet is WP-13's).
+// else (M25; the Caddy snippet is WP-13's). It is believed only from a
+// peer in ANSP_TRUSTED_PROXIES: anyone else could write it.
 const HeaderClientCertSubject = "X-Client-Cert-Subject"
 
 // Bounds of the bindings file.
@@ -26,11 +29,12 @@ const (
 
 // Counters of the mTLS binding.
 const (
-	CounterMTLSAbsent     = "mtls_subject_absent"
-	CounterMTLSUnbound    = "mtls_sub_unbound"
-	CounterMTLSMismatch   = "mtls_subject_mismatch"
-	CounterMTLSAccepted   = "mtls_subject_accepted"
-	CounterMTLSOffSkipped = "mtls_off_unchecked"
+	CounterMTLSAbsent        = "mtls_subject_absent"
+	CounterMTLSUntrustedPeer = "mtls_subject_untrusted_peer"
+	CounterMTLSUnbound       = "mtls_sub_unbound"
+	CounterMTLSMismatch      = "mtls_subject_mismatch"
+	CounterMTLSAccepted      = "mtls_subject_accepted"
+	CounterMTLSOffSkipped    = "mtls_off_unchecked"
 )
 
 // Binding is one entry of ANSP_MTLS_BINDINGS_FILE.
@@ -82,18 +86,25 @@ func ParseMTLSBindings(raw []byte) (map[string]string, error) {
 // mTLS route groups (/v1/manned-traffic/*, /v1/coordination/*). With
 // ANSP_MTLS_MODE=required the header must be present, once, and equal
 // the subject configured for sub; an unmapped sub is refused (no trust
-// on first use). With off nothing is checked, counted as
-// mtls_off_unchecked; obs.Server logs the mode at error level every
-// status period so a staging setting cannot reach production unnoticed.
+// on first use). The header is read only when the request's peer
+// (r.RemoteAddr) is one of ANSP_TRUSTED_PROXIES; from any other peer
+// it is ignored, so the request has no client certificate and is
+// refused as absent (counted as mtls_subject_untrusted_peer). With no
+// trusted proxy configured no header is ever believed. With off
+// nothing is checked, counted as mtls_off_unchecked; obs.Server logs
+// the mode at error level every status period so a staging setting
+// cannot reach production unnoticed.
 type MTLS struct {
 	mode     string
 	bindings map[string]string
+	proxies  []netip.Prefix
 	counters core.Counters
 }
 
 // NewMTLS builds the binding for mode (config.MTLSRequired or
-// config.MTLSOff). required needs bindings.
-func NewMTLS(mode string, bindings map[string]string) (*MTLS, error) {
+// config.MTLSOff). required needs bindings. proxies are the peers whose
+// X-Client-Cert-Subject is believed (ParseTrustedProxies).
+func NewMTLS(mode string, bindings map[string]string, proxies []netip.Prefix) (*MTLS, error) {
 	switch mode {
 	case config.MTLSOff:
 	case config.MTLSRequired:
@@ -103,7 +114,7 @@ func NewMTLS(mode string, bindings map[string]string) (*MTLS, error) {
 	default:
 		return nil, core.Fieldf("ANSP_MTLS_MODE", "%q is not required or off", mode)
 	}
-	return &MTLS{mode: mode, bindings: bindings}, nil
+	return &MTLS{mode: mode, bindings: bindings, proxies: proxies}, nil
 }
 
 // Mode is required or off.
@@ -120,7 +131,12 @@ func (m *MTLS) Check(r *http.Request, sub string) (string, error) {
 		m.counters.Inc(CounterMTLSOffSkipped)
 		return "", nil
 	}
-	vals := r.Header.Values(HeaderClientCertSubject)
+	var vals []string
+	if m.fromTrustedProxy(r) {
+		vals = r.Header.Values(HeaderClientCertSubject)
+	} else if len(r.Header.Values(HeaderClientCertSubject)) > 0 {
+		m.counters.Inc(CounterMTLSUntrustedPeer)
+	}
 	if len(vals) != 1 || strings.TrimSpace(vals[0]) == "" {
 		m.counters.Inc(CounterMTLSAbsent)
 		return "", refusal(http.StatusForbidden, SlugMTLSRequired, "this route requires a client certificate (mTLS)",
@@ -140,4 +156,22 @@ func (m *MTLS) Check(r *http.Request, sub string) (string, error) {
 	}
 	m.counters.Inc(CounterMTLSAccepted)
 	return got, nil
+}
+
+// fromTrustedProxy is whether r's peer is in ANSP_TRUSTED_PROXIES. The
+// peer is r.RemoteAddr, never X-Forwarded-For: the header names the
+// certificate the connecting proxy verified, so only that proxy counts.
+func (m *MTLS) fromTrustedProxy(r *http.Request) bool {
+	if len(m.proxies) == 0 {
+		return false
+	}
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		host = r.RemoteAddr
+	}
+	a, err := netip.ParseAddr(host)
+	if err != nil {
+		return false
+	}
+	return trusted(a, m.proxies)
 }

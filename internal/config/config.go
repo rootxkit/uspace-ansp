@@ -95,7 +95,8 @@ type Config struct {
 	// certificate (M25); an unmapped sub is refused on the mTLS routes.
 	MTLSBindingsFile string `env:"ANSP_MTLS_BINDINGS_FILE"`
 	// TrustedProxies are the reverse proxies (CIDRs or addresses) whose
-	// X-Forwarded-For is believed; nobody else's is.
+	// X-Forwarded-For and X-Client-Cert-Subject are believed; nobody
+	// else's is. Empty trusts no proxy.
 	TrustedProxies []string `env:"ANSP_TRUSTED_PROXIES"`
 	// WSAllowedOrigins are the origins (scheme://host[:port]) a browser
 	// WebSocket upgrade with the session cookie may come from (M22).
