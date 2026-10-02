@@ -2,6 +2,7 @@ package config
 
 import (
 	"errors"
+	"net/netip"
 	"net/url"
 	"os"
 	"regexp"
@@ -89,7 +90,33 @@ type Config struct {
 	// callback_url base and the host of this system's own aud.
 	PublicBaseURL string `env:"ANSP_PUBLIC_BASE_URL" kind:"url"`
 
-	MTLSMode     string `env:"ANSP_MTLS_MODE" default:"required" enum:"required|off"`
+	MTLSMode string `env:"ANSP_MTLS_MODE" default:"required" enum:"required|off"`
+	// MTLSBindingsFile maps a client's sub to the subject of its client
+	// certificate (M25); an unmapped sub is refused on the mTLS routes.
+	MTLSBindingsFile string `env:"ANSP_MTLS_BINDINGS_FILE"`
+	// TrustedProxies are the reverse proxies (CIDRs or addresses) whose
+	// X-Forwarded-For is believed; nobody else's is.
+	TrustedProxies []string `env:"ANSP_TRUSTED_PROXIES"`
+	// WSAllowedOrigins are the origins (scheme://host[:port]) a browser
+	// WebSocket upgrade with the session cookie may come from (M22).
+	WSAllowedOrigins []string `env:"ANSP_WS_ALLOWED_ORIGINS"`
+
+	// SessionKeyFile is the PEM RSA key that signs console sessions;
+	// SecretsKeyFile the 32-byte key that seals TOTP secrets at rest.
+	SessionKeyFile string `env:"ANSP_SESSION_KEY_FILE"`
+	SecretsKeyFile string `env:"ANSP_SECRETS_KEY_FILE"`
+	// Sign-in limits (S-15): per address and per username per minute in
+	// each process, and the lockout of a username in the database after
+	// LoginLockoutAfter failures for LoginLockoutS.
+	LoginIPPerMin     int `env:"ANSP_LOGIN_IP_PER_MIN" default:"10" min:"1" max:"1000"`
+	LoginUserPerMin   int `env:"ANSP_LOGIN_USER_PER_MIN" default:"5" min:"1" max:"1000"`
+	LoginLockoutAfter int `env:"ANSP_LOGIN_LOCKOUT_AFTER" default:"10" min:"1" max:"100"`
+	LoginLockoutS     int `env:"ANSP_LOGIN_LOCKOUT_S" default:"900" min:"60" max:"86400"`
+	// The first admin, created at start when the users table is empty:
+	// the username and the path of a file holding the password.
+	BootstrapAdminUsername     string `env:"ANSP_BOOTSTRAP_ADMIN_USERNAME"`
+	BootstrapAdminPasswordFile string `env:"ANSP_BOOTSTRAP_ADMIN_PASSWORD_FILE"`
+
 	LogLevel     string `env:"ANSP_LOG_LEVEL" default:"info" enum:"debug|info|warn|error"`
 	OTLPEndpoint string `env:"ANSP_OTLP_ENDPOINT" kind:"url"`
 	Country      string `env:"ANSP_COUNTRY" default:"GEO"`
@@ -196,6 +223,19 @@ func (c *Config) validate() []error {
 		// CLAUDE.md rule 6: two trees, two databases, never one.
 		errs = append(errs, core.Fieldf("ANSP_TIMESERIES_DSN", "must name a different database from ANSP_RELATIONAL_DSN"))
 	}
+	for _, p := range c.TrustedProxies {
+		if !validProxy(p) {
+			errs = append(errs, core.Fieldf("ANSP_TRUSTED_PROXIES", "%q is neither a CIDR nor an address", p))
+		}
+	}
+	for _, o := range c.WSAllowedOrigins {
+		if !validOrigin(o) {
+			errs = append(errs, core.Fieldf("ANSP_WS_ALLOWED_ORIGINS", "%q is not an origin (scheme://host[:port], no path)", o))
+		}
+	}
+	if (c.BootstrapAdminUsername == "") != (c.BootstrapAdminPasswordFile == "") {
+		errs = append(errs, core.Fieldf("ANSP_BOOTSTRAP_ADMIN_USERNAME", "set together with ANSP_BOOTSTRAP_ADMIN_PASSWORD_FILE, or neither"))
+	}
 	if !countryPattern.MatchString(c.Country) {
 		errs = append(errs, core.Fieldf("ANSP_COUNTRY", "%q is not an ISO 3166-1 alpha-3 code", c.Country))
 	}
@@ -235,4 +275,21 @@ func checkURL(raw string) error {
 		return errors.New("must be an absolute URL with a scheme and a host")
 	}
 	return nil
+}
+
+// validProxy reports whether p is a CIDR or a single address.
+func validProxy(p string) bool {
+	if _, err := netip.ParsePrefix(p); err == nil {
+		return true
+	}
+	_, err := netip.ParseAddr(p)
+	return err == nil
+}
+
+// validOrigin reports whether o is an origin as browsers send it:
+// http or https, a host, an optional port, nothing else.
+func validOrigin(o string) bool {
+	u, err := url.Parse(o)
+	return err == nil && (u.Scheme == "https" || u.Scheme == "http") && u.Host != "" && u.User == nil &&
+		u.Path == "" && u.RawQuery == "" && u.Fragment == "" && o == u.Scheme+"://"+u.Host
 }
