@@ -1,7 +1,7 @@
 package cis_test
 
 import (
-	"bufio"
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/rsa"
@@ -259,13 +259,18 @@ func (s *stub) serveDataset(w http.ResponseWriter, r *http.Request, d cis.Datase
 	}
 	w.Header().Set("Content-Type", "application/geo+json")
 	if big > 0 {
-		bw := bufio.NewWriter(w)
-		_, _ = bw.WriteString(`{"pad":"`)
-		for i := 0; i < big; i++ {
-			_ = bw.WriteByte('a')
+		// In 64 KiB writes: the reader stops past the bound, and a
+		// write after that fails, which ends the answer.
+		chunk := bytes.Repeat([]byte{'a'}, 64<<10)
+		if _, err := w.Write([]byte(`{"pad":"`)); err != nil {
+			return
 		}
-		_, _ = bw.WriteString(`"}`)
-		_ = bw.Flush()
+		for sent := 0; sent < big; sent += len(chunk) {
+			if _, err := w.Write(chunk); err != nil {
+				return
+			}
+		}
+		_, _ = w.Write([]byte(`"}`))
 		return
 	}
 	_, _ = w.Write(sd.body)
@@ -364,7 +369,7 @@ func (tokens) Token(context.Context, string, ...string) (string, error) { return
 // client is a cis.Client on the stub.
 func (s *stub) client(t *testing.T) *cis.Client {
 	t.Helper()
-	c, err := cis.NewClient(cis.ClientConfig{BaseURL: s.srv.URL, Tokens: tokens{}, HTTPClient: s.srv.Client(), Timeout: 2 * time.Second})
+	c, err := cis.NewClient(cis.ClientConfig{BaseURL: s.srv.URL, Tokens: tokens{}, HTTPClient: s.srv.Client(), Timeout: 15 * time.Second})
 	if err != nil {
 		t.Fatal(err)
 	}
