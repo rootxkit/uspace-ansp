@@ -56,8 +56,10 @@ type InsertRestrictionRow struct {
 	CreatedAt   time.Time
 }
 
-// WP-1: restrictions, their versions and restriction requests. WP-5
-// adds the state transitions in its own query file. Geometry crosses as
+// WP-1: restrictions, their versions and restriction requests; WP-5
+// (migration 0030) added the version's state, window and msg_id and the
+// request's client_ref here, and the state transitions in
+// restriction_lifecycle.sql. Geometry crosses as
 // GeoJSON text (store.ParseGeometry, store.GeometryJSON).
 func (q *Queries) InsertRestriction(ctx context.Context, arg InsertRestrictionParams) (InsertRestrictionRow, error) {
 	row := q.db.QueryRow(ctx, insertRestriction,
@@ -86,16 +88,20 @@ func (q *Queries) InsertRestriction(ctx context.Context, arg InsertRestrictionPa
 }
 
 const insertRestrictionRequest = `-- name: InsertRestrictionRequest :one
-INSERT INTO restriction_requests (id, requester, source, payload, received_at)
-VALUES ($1, $2, $3, $4, clock_timestamp())
-RETURNING id, requester, source, payload, received_at, state, decided_by, decided_at, decision_reason, restriction_id
+INSERT INTO restriction_requests (id, requester, source, payload, received_at, client_ref, payload_sha256)
+VALUES ($1, $2, $3, $4, $5,
+        $6, $7)
+RETURNING id, requester, source, payload, received_at, state, decided_by, decided_at, decision_reason, restriction_id, client_ref, payload_sha256
 `
 
 type InsertRestrictionRequestParams struct {
-	ID        string
-	Requester string
-	Source    string
-	Payload   json.RawMessage
+	ID            string
+	Requester     string
+	Source        string
+	Payload       json.RawMessage
+	ReceivedAt    time.Time
+	ClientRef     string
+	PayloadSha256 string
 }
 
 func (q *Queries) InsertRestrictionRequest(ctx context.Context, arg InsertRestrictionRequestParams) (RestrictionRequest, error) {
@@ -104,6 +110,9 @@ func (q *Queries) InsertRestrictionRequest(ctx context.Context, arg InsertRestri
 		arg.Requester,
 		arg.Source,
 		arg.Payload,
+		arg.ReceivedAt,
+		arg.ClientRef,
+		arg.PayloadSha256,
 	)
 	var i RestrictionRequest
 	err := row.Scan(
@@ -117,14 +126,18 @@ func (q *Queries) InsertRestrictionRequest(ctx context.Context, arg InsertRestri
 		&i.DecidedAt,
 		&i.DecisionReason,
 		&i.RestrictionID,
+		&i.ClientRef,
+		&i.PayloadSha256,
 	)
 	return i, err
 }
 
 const insertRestrictionVersion = `-- name: InsertRestrictionVersion :exec
-INSERT INTO restriction_versions (restriction_id, version, feature, "constraint", changed_by, changed_at, change_reason)
+INSERT INTO restriction_versions (restriction_id, version, feature, "constraint", changed_by, changed_at, change_reason,
+                                  state, starts_at, ends_at, msg_id)
 VALUES ($1, $2, $3, $4,
-        $5, clock_timestamp(), $6)
+        $5, $6, $7,
+        $8, $9, $10, $11)
 `
 
 type InsertRestrictionVersionParams struct {
@@ -133,7 +146,12 @@ type InsertRestrictionVersionParams struct {
 	Feature         json.RawMessage
 	F3548Constraint json.RawMessage
 	ChangedBy       string
+	ChangedAt       time.Time
 	ChangeReason    string
+	State           RestrictionState
+	StartsAt        time.Time
+	EndsAt          time.Time
+	MsgID           string
 }
 
 func (q *Queries) InsertRestrictionVersion(ctx context.Context, arg InsertRestrictionVersionParams) error {
@@ -143,7 +161,12 @@ func (q *Queries) InsertRestrictionVersion(ctx context.Context, arg InsertRestri
 		arg.Feature,
 		arg.F3548Constraint,
 		arg.ChangedBy,
+		arg.ChangedAt,
 		arg.ChangeReason,
+		arg.State,
+		arg.StartsAt,
+		arg.EndsAt,
+		arg.MsgID,
 	)
 	return err
 }
@@ -245,7 +268,7 @@ func (q *Queries) RestrictionByID(ctx context.Context, id string) (RestrictionBy
 }
 
 const restrictionRequestByID = `-- name: RestrictionRequestByID :one
-SELECT id, requester, source, payload, received_at, state, decided_by, decided_at, decision_reason, restriction_id FROM restriction_requests WHERE id = $1
+SELECT id, requester, source, payload, received_at, state, decided_by, decided_at, decision_reason, restriction_id, client_ref, payload_sha256 FROM restriction_requests WHERE id = $1
 `
 
 func (q *Queries) RestrictionRequestByID(ctx context.Context, id string) (RestrictionRequest, error) {
@@ -262,15 +285,18 @@ func (q *Queries) RestrictionRequestByID(ctx context.Context, id string) (Restri
 		&i.DecidedAt,
 		&i.DecisionReason,
 		&i.RestrictionID,
+		&i.ClientRef,
+		&i.PayloadSha256,
 	)
 	return i, err
 }
 
 const restrictionVersions = `-- name: RestrictionVersions :many
-SELECT restriction_id, version, feature, "constraint", changed_by, changed_at, change_reason
-FROM restriction_versions
-WHERE restriction_id = $1
-ORDER BY version
+SELECT v.restriction_id, v.version, v.feature, v."constraint", v.changed_by, v.changed_at, v.change_reason,
+       v.state, v.starts_at, v.ends_at, v.msg_id, r.ansp_ref
+FROM restriction_versions v JOIN restrictions r ON r.id = v.restriction_id
+WHERE v.restriction_id = $1
+ORDER BY v.version
 LIMIT $2
 `
 
@@ -279,15 +305,30 @@ type RestrictionVersionsParams struct {
 	PageSize      int32
 }
 
-func (q *Queries) RestrictionVersions(ctx context.Context, arg RestrictionVersionsParams) ([]RestrictionVersion, error) {
+type RestrictionVersionsRow struct {
+	RestrictionID string
+	Version       int64
+	Feature       json.RawMessage
+	Constraint    json.RawMessage
+	ChangedBy     string
+	ChangedAt     time.Time
+	ChangeReason  string
+	State         RestrictionState
+	StartsAt      time.Time
+	EndsAt        time.Time
+	MsgID         string
+	AnspRef       string
+}
+
+func (q *Queries) RestrictionVersions(ctx context.Context, arg RestrictionVersionsParams) ([]RestrictionVersionsRow, error) {
 	rows, err := q.db.Query(ctx, restrictionVersions, arg.RestrictionID, arg.PageSize)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []RestrictionVersion{}
+	items := []RestrictionVersionsRow{}
 	for rows.Next() {
-		var i RestrictionVersion
+		var i RestrictionVersionsRow
 		if err := rows.Scan(
 			&i.RestrictionID,
 			&i.Version,
@@ -296,6 +337,11 @@ func (q *Queries) RestrictionVersions(ctx context.Context, arg RestrictionVersio
 			&i.ChangedBy,
 			&i.ChangedAt,
 			&i.ChangeReason,
+			&i.State,
+			&i.StartsAt,
+			&i.EndsAt,
+			&i.MsgID,
+			&i.AnspRef,
 		); err != nil {
 			return nil, err
 		}

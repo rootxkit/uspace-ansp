@@ -291,6 +291,7 @@ func TestIntegrationRestrictions(t *testing.T) {
 	err = db.Tx(ctx, func(ctx context.Context, tx store.Tx) error {
 		return tx.Q.InsertRestrictionVersion(ctx, relational.InsertRestrictionVersionParams{
 			RestrictionID: row.ID, Version: 1, Feature: []byte(`{"identifier":"DAR0001"}`), ChangedBy: "watch", ChangeReason: "planned",
+			ChangedAt: start, State: relational.RestrictionStatePlanned, StartsAt: start, EndsAt: start.Add(time.Hour), MsgID: "01JABCDEFGHJKMNPQRSTVWXYZA",
 		})
 	})
 	if err != nil {
@@ -315,12 +316,14 @@ func TestIntegrationRestrictions(t *testing.T) {
 	err = db.Tx(ctx, func(ctx context.Context, tx store.Tx) error {
 		req, err := tx.Q.InsertRestrictionRequest(ctx, relational.InsertRestrictionRequestParams{
 			ID: "01JABCDEFGHJKMNPQRSTVWXYZ9", Requester: "authority-01", Source: "authority", Payload: []byte(`{"reason":"x"}`),
+			ReceivedAt: start, ClientRef: "GCAA-1", PayloadSha256: strings.Repeat("a", 64),
 		})
 		if err != nil || req.State != "received" {
 			t.Fatalf("request: %+v %v", req, err)
 		}
 		return tx.Q.InsertRestrictionVersion(ctx, relational.InsertRestrictionVersionParams{
 			RestrictionID: row.ID, Version: 2, Feature: []byte(`{}`), ChangedBy: "watch", ChangeReason: "activated",
+			ChangedAt: start, State: relational.RestrictionStateActive, StartsAt: start, EndsAt: start.Add(time.Hour), MsgID: "01JABCDEFGHJKMNPQRSTVWXYZB",
 		})
 	})
 	if err != nil {
