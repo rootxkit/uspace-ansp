@@ -84,6 +84,7 @@ jobs:
             contracts:
               - 'api/**'
               - 'schemas/**'
+              - 'internal/manned/dump1090/SOURCE'
               - 'scripts/check-contracts.sh'
               - 'scripts/lint-api.sh'
               - '.github/workflows/ci.yml'
