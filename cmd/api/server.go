@@ -31,28 +31,32 @@ func operations() []auth.Operation {
 // apiServer is the generated server interface of api: every operation
 // answers 501 not_implemented through the strict server's
 // gen.Unimplemented until its work package serves it, except the
-// console sign-in, user and key operations of WP-2, which are mounted
-// here (docs/PLAN.md section 15 gap 22). Auth is nil while console
-// sign-in is not configured; those operations then answer 503.
+// console sign-in, user and key operations of WP-2 (docs/PLAN.md
+// section 15 gap 22) and the restriction and restriction-request
+// operations of WP-5 (cmd/api/restrictions.go, stream.go), which are
+// mounted here. Auth is nil while console sign-in is not configured, rs
+// while there is no relational database; their operations then answer
+// 503.
 type apiServer struct {
 	gen.ServerInterface
 	auth *auth.Handlers
+	rs   *restrictionAPI
 }
 
-func newAPIServer(h *auth.Handlers) apiServer {
+func newAPIServer(h *auth.Handlers, rs *restrictionAPI) apiServer {
 	strict := gen.NewStrictHandlerWithOptions(gen.Unimplemented{}, nil, gen.StrictHTTPServerOptions{
 		RequestErrorHandlerFunc:  requestError,
 		ResponseErrorHandlerFunc: responseError,
 	})
-	return apiServer{ServerInterface: strict, auth: h}
+	return apiServer{ServerInterface: strict, auth: h, rs: rs}
 }
 
 // mountAPI registers every operation of api on mux through the
 // generated router, each behind its x-auth (auth.Routes), and returns
 // the routes or why they cannot be served.
-func mountAPI(mux *http.ServeMux, guard *auth.Guard, h *auth.Handlers, middlewares ...func(http.Handler) http.Handler) (*auth.Routes, error) {
+func mountAPI(mux *http.ServeMux, guard *auth.Guard, h *auth.Handlers, rs *restrictionAPI, middlewares ...func(http.Handler) http.Handler) (*auth.Routes, error) {
 	rt := auth.NewRoutes(mux, process, guard, maxBodyBytes, operations(), middlewares...)
-	gen.HandlerWithOptions(newAPIServer(h), gen.StdHTTPServerOptions{BaseRouter: rt, ErrorHandlerFunc: requestError})
+	gen.HandlerWithOptions(newAPIServer(h, rs), gen.StdHTTPServerOptions{BaseRouter: rt, ErrorHandlerFunc: requestError})
 	err := rt.Err()
 	return rt, err
 }

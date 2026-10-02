@@ -11,7 +11,11 @@
 // cmd/api/server.go); those no work package serves yet answer 501. With
 // ANSP_SESSION_KEY_FILE set it serves console sign-in, the user
 // operations and the JWKS (WP-2, cmd/api/auth.go); without it they
-// answer 503.
+// answer 503. With the relational database it serves the restrictions,
+// the restriction requests and their console stream, and runs the
+// ticker that activates scheduled restrictions, expires ended ones and
+// republishes restr.v1 (WP-5, cmd/api/wire_restrictions.go); without it
+// they answer 503.
 package main
 
 import (
@@ -99,13 +103,18 @@ func run(ctx context.Context, args, environ []string, stdout io.Writer) int {
 		logger.Error("auth refused", slog.String("error", err.Error()))
 		return 2
 	}
+	rw, err := wireRestrictions(cfg, db, b, aw.guard.Sessions, nil, reg, logger)
+	if err != nil {
+		logger.Error("restrictions refused", slog.String("error", err.Error()))
+		return 2
+	}
 	// Every operation of api/openapi.yaml, behind its x-auth (WP-3).
-	if _, err := mountAPI(mux, aw.guard, aw.handlers, aw.realIP); err != nil {
+	if _, err := mountAPI(mux, aw.guard, aw.handlers, rw.api, aw.realIP); err != nil {
 		logger.Error("routes refused", slog.String("error", err.Error()))
 		return 2
 	}
 	checks = append(checks, aw.checks...)
-	for _, fn := range aw.run {
+	for _, fn := range append(aw.run, rw.run...) {
 		go fn(ctx)
 	}
 

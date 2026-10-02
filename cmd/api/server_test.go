@@ -37,7 +37,7 @@ func testServer(t *testing.T, h *auth.Handlers) (*auth.Routes, http.Handler) {
 		t.Fatal(err)
 	}
 	mux := http.NewServeMux()
-	rt, err := mountAPI(mux, &auth.Guard{Machine: scopeVerifier{}, MTLS: mtls}, h)
+	rt, err := mountAPI(mux, &auth.Guard{Machine: scopeVerifier{}, MTLS: mtls}, h, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -97,7 +97,11 @@ func TestUnimplementedAndRefusals(t *testing.T) {
 		slug                                   string
 	}{
 		// Presence: a caller the rule admits reaches the (501) handler.
-		{"token admitted", "GET", "/v1/restrictions", "scopes:ansp.coordination", "", "", 501, apierr.SlugNotImplemented},
+		{"token admitted", "GET", "/v1/coordination/notices/01K6P3Q8Y2D6W4Z1V7R5T9X3MB", "scopes:ansp.coordination", "", "", 501, apierr.SlugNotImplemented},
+		// WP-5 serves the restrictions; without the database they say so.
+		{"restrictions without a database", "GET", "/v1/restrictions", "scopes:ansp.coordination", "", "", 503, apierr.SlugUnavailable},
+		{"restriction request without a database", "POST", "/v1/restriction-requests", "scopes:ansp.requests", "application/json", "{}", 503, apierr.SlugUnavailable},
+		{"stream without a database", "GET", "/v1/restrictions/stream", "scopes:ansp.coordination", "", "", 403, apierr.SlugForbidden},
 		{"signed body admitted to its handler", "POST", "/v1/cis/notifications", "", "application/jose", "aGVhZGVy.cGF5bG9hZA.c2lnbmF0dXJl", 501, apierr.SlugNotImplemented},
 		{"constraint details", "GET", "/uss/v1/constraints/2f8343be-6482-4d1b-a474-16847e01af1e", "scopes:utm.constraint_processing", "", "", 501, apierr.SlugNotImplemented},
 		// Absence: no credential, a missing scope, a session-only route
@@ -109,8 +113,8 @@ func TestUnimplementedAndRefusals(t *testing.T) {
 		{"another process", "GET", "/v1/manned-traffic/snapshot", "scopes:ansp.traffic", "", "", 404, ""},
 		// The generated binding and decoding answer the one error body.
 		{"bad path parameter", "GET", "/uss/v1/constraints/not-a-uuid", "scopes:utm.constraint_processing", "", "", 400, apierr.SlugInvalidRequest},
-		{"bad JSON body", "POST", "/v1/restriction-requests", "scopes:ansp.requests", "application/json", "{", 400, apierr.SlugInvalidRequest},
-		{"body past the bound", "POST", "/v1/restriction-requests", "scopes:ansp.requests", "application/json", `{"a":"` + strings.Repeat("x", maxBodyBytes) + `"}`, 413, apierr.SlugBodyTooLarge},
+		{"bad JSON body", "POST", "/v1/coordination/notices", "scopes:ansp.coordination", "application/json", "{", 400, apierr.SlugInvalidRequest},
+		{"body past the bound", "POST", "/v1/coordination/notices", "scopes:ansp.coordination", "application/json", `{"a":"` + strings.Repeat("x", maxBodyBytes) + `"}`, 413, apierr.SlugBodyTooLarge},
 		// Sign-in is not configured here: 503 that says so.
 		{"sign-in not configured", "POST", "/v1/auth/login", "", "application/json", `{"username":"a","password":"b"}`, 503, apierr.SlugUnavailable},
 		{"jwks not configured", "GET", "/.well-known/jwks.json", "", "", "", 503, apierr.SlugUnavailable},

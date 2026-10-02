@@ -143,6 +143,16 @@ type Config struct {
 	LogLevel     string `env:"ANSP_LOG_LEVEL" default:"info" enum:"debug|info|warn|error"`
 	OTLPEndpoint string `env:"ANSP_OTLP_ENDPOINT" kind:"url"`
 	Country      string `env:"ANSP_COUNTRY" default:"GEO"`
+
+	// api (WP-5): the GeographicLib geoid grid that makes a restriction's
+	// AMSL limits W84 for its F3548 constraint (empty: AMSL restrictions
+	// are refused with geoid_unavailable), and the zone authority every
+	// restriction feature names (branding is configuration).
+	GeoidFile        string `env:"ANSP_GEOID_FILE"`
+	AuthorityName    string `env:"ANSP_AUTHORITY_NAME" default:"ANSP"`
+	AuthorityService string `env:"ANSP_AUTHORITY_SERVICE"`
+	AuthorityEmail   string `env:"ANSP_AUTHORITY_EMAIL"`
+	AuthorityPhone   string `env:"ANSP_AUTHORITY_PHONE"`
 }
 
 // Load reads the configuration from the process environment.

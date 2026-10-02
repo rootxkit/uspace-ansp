@@ -156,35 +156,46 @@ type OauthClientsSeen struct {
 }
 
 type Restriction struct {
-	ID               string
-	AnspRef          string
-	Identifier       string
-	UspaceAirspaceID string
-	ZoneType         string
-	Geom             interface{}
-	RadiusM          *float64
-	LowerM           float64
-	LowerRef         string
-	UpperM           float64
-	UpperRef         string
-	StartsAt         time.Time
-	EndsAt           time.Time
-	ReasonText       string
-	State            RestrictionState
-	AnspVersion      int64
-	CreatedBy        string
-	ActivatedBy      *string
-	EndedBy          *string
-	CancelledBy      *string
-	CreatedAt        time.Time
-	ActivatedAt      *time.Time
-	EndedAtActual    *time.Time
-	RequestID        *string
-	PublishedVersion *int64
-	DssConstraintID  *uuid.UUID
-	DssOvn           *string
-	DssVersion       *int64
-	SupersedesID     *string
+	ID                string
+	AnspRef           string
+	Identifier        string
+	UspaceAirspaceID  string
+	ZoneType          string
+	Geom              interface{}
+	RadiusM           *float64
+	LowerM            float64
+	LowerRef          string
+	UpperM            float64
+	UpperRef          string
+	StartsAt          time.Time
+	EndsAt            time.Time
+	ReasonText        string
+	State             RestrictionState
+	AnspVersion       int64
+	CreatedBy         string
+	ActivatedBy       *string
+	EndedBy           *string
+	CancelledBy       *string
+	CreatedAt         time.Time
+	ActivatedAt       *time.Time
+	EndedAtActual     *time.Time
+	RequestID         *string
+	PublishedVersion  *int64
+	DssConstraintID   *uuid.UUID
+	DssOvn            *string
+	DssVersion        *int64
+	SupersedesID      *string
+	ActivateAt        *time.Time
+	BusVersion        int64
+	IdempotencyActor  *string
+	IdempotencyKey    *string
+	IdempotencySha256 *string
+	CisVersion        *string
+}
+
+type RestrictionIdentifierKey struct {
+	Singleton bool
+	OffsetN   int64
 }
 
 type RestrictionRequest struct {
@@ -198,6 +209,8 @@ type RestrictionRequest struct {
 	DecidedAt      *time.Time
 	DecisionReason *string
 	RestrictionID  *string
+	ClientRef      string
+	PayloadSha256  string
 }
 
 type RestrictionVersion struct {
@@ -208,6 +221,10 @@ type RestrictionVersion struct {
 	ChangedBy     string
 	ChangedAt     time.Time
 	ChangeReason  string
+	State         RestrictionState
+	StartsAt      time.Time
+	EndsAt        time.Time
+	MsgID         string
 }
 
 type SourceControl struct {

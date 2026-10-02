@@ -1,5 +1,7 @@
--- WP-1: restrictions, their versions and restriction requests. WP-5
--- adds the state transitions in its own query file. Geometry crosses as
+-- WP-1: restrictions, their versions and restriction requests; WP-5
+-- (migration 0030) added the version's state, window and msg_id and the
+-- request's client_ref here, and the state transitions in
+-- restriction_lifecycle.sql. Geometry crosses as
 -- GeoJSON text (store.ParseGeometry, store.GeometryJSON).
 
 -- name: InsertRestriction :one
@@ -29,20 +31,24 @@ FROM restrictions WHERE id = sqlc.arg(id);
 SELECT id, ansp_version, state FROM restrictions WHERE ansp_ref = sqlc.arg(ansp_ref);
 
 -- name: InsertRestrictionVersion :exec
-INSERT INTO restriction_versions (restriction_id, version, feature, "constraint", changed_by, changed_at, change_reason)
+INSERT INTO restriction_versions (restriction_id, version, feature, "constraint", changed_by, changed_at, change_reason,
+                                  state, starts_at, ends_at, msg_id)
 VALUES (sqlc.arg(restriction_id), sqlc.arg(version), sqlc.arg(feature), sqlc.narg(f3548_constraint),
-        sqlc.arg(changed_by), clock_timestamp(), sqlc.arg(change_reason));
+        sqlc.arg(changed_by), sqlc.arg(changed_at), sqlc.arg(change_reason),
+        sqlc.arg(state), sqlc.arg(starts_at), sqlc.arg(ends_at), sqlc.arg(msg_id));
 
 -- name: RestrictionVersions :many
-SELECT restriction_id, version, feature, "constraint", changed_by, changed_at, change_reason
-FROM restriction_versions
-WHERE restriction_id = sqlc.arg(restriction_id)
-ORDER BY version
+SELECT v.restriction_id, v.version, v.feature, v."constraint", v.changed_by, v.changed_at, v.change_reason,
+       v.state, v.starts_at, v.ends_at, v.msg_id, r.ansp_ref
+FROM restriction_versions v JOIN restrictions r ON r.id = v.restriction_id
+WHERE v.restriction_id = sqlc.arg(restriction_id)
+ORDER BY v.version
 LIMIT sqlc.arg(page_size);
 
 -- name: InsertRestrictionRequest :one
-INSERT INTO restriction_requests (id, requester, source, payload, received_at)
-VALUES (sqlc.arg(id), sqlc.arg(requester), sqlc.arg(source), sqlc.arg(payload), clock_timestamp())
+INSERT INTO restriction_requests (id, requester, source, payload, received_at, client_ref, payload_sha256)
+VALUES (sqlc.arg(id), sqlc.arg(requester), sqlc.arg(source), sqlc.arg(payload), sqlc.arg(received_at),
+        sqlc.arg(client_ref), sqlc.arg(payload_sha256))
 RETURNING *;
 
 -- name: RestrictionRequestByID :one

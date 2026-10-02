@@ -313,6 +313,30 @@ func (e AuditEventActorType) Valid() bool {
 	}
 }
 
+// Defines values for ChangedBy.
+const (
+	ChangedByAdmin           ChangedBy = "admin"
+	ChangedBySystem          ChangedBy = "system"
+	ChangedByViewer          ChangedBy = "viewer"
+	ChangedByWatchSupervisor ChangedBy = "watch_supervisor"
+)
+
+// Valid indicates whether the value is a known member of the ChangedBy enum.
+func (e ChangedBy) Valid() bool {
+	switch e {
+	case ChangedByAdmin:
+		return true
+	case ChangedBySystem:
+		return true
+	case ChangedByViewer:
+		return true
+	case ChangedByWatchSupervisor:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ConsoleSnapshotMessageSchema.
 const (
 	ConsoleSnapshotMessageSchemaConsolesnapshotv1 ConsoleSnapshotMessageSchema = "console/snapshot/v1"
@@ -1563,6 +1587,11 @@ type AuditList struct {
 	Truncated *bool        `json:"truncated,omitempty"`
 }
 
+// ChangedBy Who made a restriction change: the console role of the person, or
+// system for the ticker's scheduled activation at starts_at and its
+// expiry at ends_at (never a name).
+type ChangedBy string
+
 // ConsoleSnapshot The body of console/snapshot/v1 (uspace-lab schemas/common, pinned
 // under schemas/common/console/snapshot/v1/): tracks and alerts are
 // always empty here (this system carries no UAS), manned holds the
@@ -2278,10 +2307,16 @@ type ReasonRequest struct {
 // and its deliveries summary, with the CIS version it was placed
 // against and the age of that projection.
 type Restriction struct {
+	// ActivateAt While a planned restriction waits to be activated at its
+	// starts_at (an activation asked for before then): the
+	// instant the ticker activates it, on the database's clock.
+	ActivateAt  *time.Time `json:"activate_at,omitempty"`
 	ActivatedAt *time.Time `json:"activated_at,omitempty"`
 
-	// ActivatedBy A console role (01 §4).
-	ActivatedBy *Role `json:"activated_by,omitempty"`
+	// ActivatedBy Who made a restriction change: the console role of the person, or
+	// system for the ticker's scheduled activation at starts_at and its
+	// expiry at ends_at (never a name).
+	ActivatedBy *ChangedBy `json:"activated_by,omitempty"`
 
 	// AnspRef The ANSP reference; with ansp_version the idempotency key towards the CISP and the DSS (D5, M4).
 	AnspRef string `json:"ansp_ref"`
@@ -2289,8 +2324,10 @@ type Restriction struct {
 	// AnspVersion Monotonic per restriction, bumped on every change (M4).
 	AnspVersion int64 `json:"ansp_version"`
 
-	// CancelledBy A console role (01 §4).
-	CancelledBy *Role `json:"cancelled_by,omitempty"`
+	// CancelledBy Who made a restriction change: the console role of the person, or
+	// system for the ticker's scheduled activation at starts_at and its
+	// expiry at ends_at (never a name).
+	CancelledBy *ChangedBy `json:"cancelled_by,omitempty"`
 
 	// CisAgeS Age of the CIS projection in seconds; null before the first pull.
 	CisAgeS *float32 `json:"cis_age_s"`
@@ -2304,8 +2341,10 @@ type Restriction struct {
 	// CreatedAt RFC 3339 UTC with Z, millisecond precision (02 §1).
 	CreatedAt Timestamp `json:"created_at"`
 
-	// CreatedBy A console role (01 §4).
-	CreatedBy Role `json:"created_by"`
+	// CreatedBy Who made a restriction change: the console role of the person, or
+	// system for the ticker's scheduled activation at starts_at and its
+	// expiry at ends_at (never a name).
+	CreatedBy ChangedBy `json:"created_by"`
 
 	// Deliveries The deliveries of the current version: the CISP publication (the
 	// regulatory channel), the DSS write, the subscriber notifications
@@ -2317,8 +2356,10 @@ type Restriction struct {
 	DssVersion      *int32             `json:"dss_version,omitempty"`
 	EndedAtActual   *time.Time         `json:"ended_at_actual,omitempty"`
 
-	// EndedBy A console role (01 §4).
-	EndedBy *Role `json:"ended_by,omitempty"`
+	// EndedBy Who made a restriction change: the console role of the person, or
+	// system for the ticker's scheduled activation at starts_at and its
+	// expiry at ends_at (never a name).
+	EndedBy *ChangedBy `json:"ended_by,omitempty"`
 
 	// EndsAt RFC 3339 UTC with Z, millisecond precision (02 §1).
 	EndsAt Timestamp `json:"ends_at"`
@@ -2433,8 +2474,15 @@ type RestrictionArea struct {
 	UspaceAirspaceId *string `json:"uspace_airspace_id,omitempty"`
 }
 
-// RestrictionCreate A restriction to plan.
+// RestrictionCreate A restriction to plan. A window longer than F3548
+// CstrMaxDurationHours is refused 400 chain_required with the
+// re-issues it would make in errors[] (chain[i]); sent again with
+// confirm_chain true, the chain is planned as linked restrictions
+// (supersedes_id) and the answer is the first.
 type RestrictionCreate struct {
+	// ConfirmChain Plan a window longer than CstrMaxDurationHours as the chain of linked re-issues it was refused with.
+	ConfirmChain *bool `json:"confirm_chain,omitempty"`
+
 	// EndsAt RFC 3339 UTC with Z, millisecond precision (02 §1).
 	EndsAt Timestamp `json:"ends_at"`
 
@@ -2653,8 +2701,10 @@ type RestrictionVersion struct {
 	// ChangedAt RFC 3339 UTC with Z, millisecond precision (02 §1).
 	ChangedAt Timestamp `json:"changed_at"`
 
-	// ChangedBy A console role (01 §4).
-	ChangedBy Role `json:"changed_by"`
+	// ChangedBy Who made a restriction change: the console role of the person, or
+	// system for the ticker's scheduled activation at starts_at and its
+	// expiry at ends_at (never a name).
+	ChangedBy ChangedBy `json:"changed_by"`
 
 	// Constraint The F3548 Constraint as written to the DSS for this version, when it was.
 	Constraint *Constraint `json:"constraint,omitempty"`

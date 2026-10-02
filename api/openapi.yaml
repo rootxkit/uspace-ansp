@@ -937,6 +937,13 @@ components:
       type: string
       description: A console role (01 §4).
       enum: [watch_supervisor, viewer, admin]
+    ChangedBy:
+      type: string
+      description: |
+        Who made a restriction change: the console role of the person, or
+        system for the ticker's scheduled activation at starts_at and its
+        expiry at ends_at (never a name).
+      enum: [watch_supervisor, viewer, admin, system]
 
     Problem:
       type: object
@@ -1073,7 +1080,12 @@ components:
           minLength: 1
           maxLength: 500
     RestrictionCreate:
-      description: A restriction to plan.
+      description: |
+        A restriction to plan. A window longer than F3548
+        CstrMaxDurationHours is refused 400 chain_required with the
+        re-issues it would make in errors[] (chain[i]); sent again with
+        confirm_chain true, the chain is planned as linked restrictions
+        (supersedes_id) and the answer is the first.
       allOf:
         - $ref: "#/components/schemas/RestrictionArea"
         - type: object
@@ -1081,6 +1093,9 @@ components:
           properties:
             zone_type:
               $ref: "#/components/schemas/ZoneType"
+            confirm_chain:
+              type: boolean
+              description: Plan a window longer than CstrMaxDurationHours as the chain of linked re-issues it was refused with.
     Restriction:
       description: |
         A restriction as the client sees it (docs/PLAN.md §5.1): its
@@ -1112,18 +1127,25 @@ components:
               minimum: 1
               description: Monotonic per restriction, bumped on every change (M4).
             created_by:
-              $ref: "#/components/schemas/Role"
+              $ref: "#/components/schemas/ChangedBy"
             activated_by:
-              $ref: "#/components/schemas/Role"
+              $ref: "#/components/schemas/ChangedBy"
             ended_by:
-              $ref: "#/components/schemas/Role"
+              $ref: "#/components/schemas/ChangedBy"
             cancelled_by:
-              $ref: "#/components/schemas/Role"
+              $ref: "#/components/schemas/ChangedBy"
             created_at:
               $ref: "#/components/schemas/Timestamp"
             activated_at:
               type: [string, "null"]
               format: date-time
+            activate_at:
+              type: [string, "null"]
+              format: date-time
+              description: |
+                While a planned restriction waits to be activated at its
+                starts_at (an activation asked for before then): the
+                instant the ticker activates it, on the database's clock.
             ended_at_actual:
               type: [string, "null"]
               format: date-time
@@ -1228,7 +1250,7 @@ components:
             - $ref: "#/components/schemas/Constraint"
             - type: "null"
         changed_by:
-          $ref: "#/components/schemas/Role"
+          $ref: "#/components/schemas/ChangedBy"
         changed_at:
           $ref: "#/components/schemas/Timestamp"
         change_reason:
