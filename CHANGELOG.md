@@ -115,3 +115,21 @@ additively within `/v1`. One line per work package.
   timeseries migration `0010` (`manned_tracks.msg_id`, a sample lands
   once); the live-session projection `sessions_live` with
   `ctl.sessions.seen` (PLAN section 15 row 21); uspace-core `v1.3.0`.
+- WP-7 cis-projection: `internal/cis` (the CISP client on the pinned
+  `cisp.yaml` with `getDatasetVersion`, `listSubscriptions` and
+  `patchSubscription` generated; unfiltered pulls with `If-None-Match`,
+  a 20 MB body bound, `ed318.Parse` and the strict `cis/ussp_list/v1`
+  decode refusing a dataset whole; the publisher's detached signature
+  verified before a version is used, untrusted versions held; the
+  `cis_cache` row committed before the KV `cis_current` put and the
+  `cis.v1` push; a reconciliation every `cis_reconcile_s`; the
+  idempotent subscription, registered again when the CISP forgets it;
+  the `POST /v1/cis/notifications` receiver on core's compact JWS with
+  the delivery ids in the database; the hot-path `Follower`; the
+  readiness line `cisp: ok | stale | down since T`), relational
+  migration `0040` (`cis_cache`, `cis_notifications_seen`),
+  `ANSP_CIS_PUBLISHER_KEYS` and `ANSP_CIS_PUBLISHER_SIG_MAX_AGE_S`,
+  restriction placement and manned-feed relevance wired to the
+  projection, the fixtures under `testdata/fixtures/`, and the layout
+  tests for a direct `jwx` import and the hot-path import rule (PLAN
+  section 15 rows 30, 34, 38).
