@@ -70,7 +70,8 @@ func TestIntegrationTreesUpDownUp(t *testing.T) {
 		tables    []string
 		extension string
 	}{
-		{store.TreeRelational, []string{"events", "ansp_policy", "source_controls", "source_control_epoch", "restrictions", "restriction_versions", "restriction_requests", "adapters"}, "postgis"},
+		{store.TreeRelational, []string{"events", "ansp_policy", "source_controls", "source_control_epoch", "restrictions", "restriction_versions", "restriction_requests", "adapters",
+			"users", "user_mfa", "login_challenges", "login_lockouts", "user_sessions", "oauth_clients_seen"}, "postgis"},
 		{store.TreeTimeseries, []string{"manned_tracks", "feed_products"}, "timescaledb"},
 	} {
 		t.Run(tc.tree.Name, func(t *testing.T) {
@@ -85,7 +86,14 @@ func TestIntegrationTreesUpDownUp(t *testing.T) {
 				if err != nil {
 					t.Fatalf("round %d up: %v", round, err)
 				}
-				if res.From != 0 || res.To != latest || res.Applied != int(latest) {
+				// Versions are numbered in ranges per work package
+				// (docs/PLAN.md 5.3), so the count of files, not the
+				// latest version, is what an up from zero applies.
+				versions, err := store.Versions(tc.tree)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if res.From != 0 || res.To != latest || res.Applied != len(versions) {
 					t.Fatalf("round %d up: %+v, latest %d", round, res, latest)
 				}
 				for _, table := range append([]string{tc.tree.VersionTable}, tc.tables...) {
@@ -140,17 +148,18 @@ func TestIntegrationTreeRefusesTheOtherDatabase(t *testing.T) {
 // database never migrated is version 0.
 func TestIntegrationRequireVersion(t *testing.T) {
 	ctx := ctxT(t)
-	latest, _ := store.Latest(store.TreeRelational)
+	versions, _ := store.Versions(store.TreeRelational)
+	latest, previous := versions[len(versions)-1], versions[len(versions)-2]
 	dsn := storetest.Scratch(t, store.TreeRelational, true)
 	db := storetest.Relational(t, dsn, store.RoleRelational)
 	if err := db.RequireVersion(ctx, latest); err != nil {
 		t.Fatalf("current schema refused: %v", err)
 	}
-	if err := store.DownTo(ctx, dsn, store.TreeRelational, latest-1); err != nil {
+	if err := store.DownTo(ctx, dsn, store.TreeRelational, previous); err != nil {
 		t.Fatal(err)
 	}
 	err := db.RequireVersion(ctx, latest)
-	want := []string{"relational", "version " + itoa(latest-1), "needs " + itoa(latest)}
+	want := []string{"relational", "version " + itoa(previous), "needs " + itoa(latest)}
 	if !errors.Is(err, store.ErrSchemaTooOld) {
 		t.Fatalf("old schema: %v", err)
 	}

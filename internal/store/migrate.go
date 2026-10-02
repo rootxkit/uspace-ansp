@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -64,11 +65,23 @@ func sub(fsys fs.FS, dir string) fs.FS {
 // Latest is the newest migration embedded in tree: the schema version a
 // process of this build needs.
 func Latest(tree Tree) (int64, error) {
+	vs, err := Versions(tree)
+	if err != nil {
+		return 0, err
+	}
+	return vs[len(vs)-1], nil
+}
+
+// Versions are the versions of every migration embedded in tree, in
+// ascending order. They are numbered in ranges reserved per work
+// package (docs/PLAN.md section 5.3), so they are not contiguous: the
+// version below the latest is Versions[len-2], never latest-1.
+func Versions(tree Tree) ([]int64, error) {
 	entries, err := fs.ReadDir(tree.fsys, ".")
 	if err != nil {
-		return 0, fmt.Errorf("%s: read embedded tree: %w", tree.Name, err)
+		return nil, fmt.Errorf("%s: read embedded tree: %w", tree.Name, err)
 	}
-	var latest int64
+	var out []int64
 	for _, e := range entries {
 		name := e.Name()
 		if e.IsDir() || !strings.HasSuffix(name, ".sql") {
@@ -77,14 +90,15 @@ func Latest(tree Tree) (int64, error) {
 		digits, _, ok := strings.Cut(name, "_")
 		v, err := strconv.ParseInt(digits, 10, 64)
 		if !ok || err != nil || v <= 0 {
-			return 0, fmt.Errorf("%s: %s is not named NNNN_<slug>.sql", tree.Name, name)
+			return nil, fmt.Errorf("%s: %s is not named NNNN_<slug>.sql", tree.Name, name)
 		}
-		latest = max(latest, v)
+		out = append(out, v)
 	}
-	if latest == 0 {
-		return 0, fmt.Errorf("%s: no migration embedded", tree.Name)
+	if len(out) == 0 {
+		return nil, fmt.Errorf("%s: no migration embedded", tree.Name)
 	}
-	return latest, nil
+	slices.Sort(out)
+	return out, nil
 }
 
 // openSQL opens a database/sql handle for goose; the parse error is not

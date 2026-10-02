@@ -59,27 +59,30 @@ func TestIntegrationReadyWithNATS(t *testing.T) {
 func TestIntegrationMigrateThenStart(t *testing.T) {
 	rel := storetest.Scratch(t, store.TreeRelational, false)
 	ts := storetest.Scratch(t, store.TreeTimeseries, false)
-	latest, err := store.Latest(store.TreeRelational)
+	versions, err := store.Versions(store.TreeRelational)
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Versions are numbered in ranges per work package: the one below
+	// the latest is not latest-1.
+	latest, previous := versions[len(versions)-1], versions[len(versions)-2]
 	dbEnv := []string{"ANSP_PROCESS=" + process, "ANSP_RELATIONAL_DSN=" + rel, "ANSP_TIMESERIES_DSN=" + ts}
 	out := &syncBuffer{}
 	if code := run(context.Background(), []string{"migrate", "relational", "timeseries"}, dbEnv, out); code != 0 {
 		t.Fatalf("migrate exit %d:\n%s", code, out.String())
 	}
-	want := `"tree":"relational","from_version":0,"version":` + strconv.FormatInt(latest, 10) + `,"applied":` + strconv.FormatInt(latest, 10)
+	want := `"tree":"relational","from_version":0,"version":` + strconv.FormatInt(latest, 10) + `,"applied":` + strconv.Itoa(len(versions))
 	if !strings.Contains(out.String(), want) || !strings.Contains(out.String(), `"tree":"timeseries","from_version":0`) {
 		t.Fatalf("migrate log lacks %s:\n%s", want, out.String())
 	}
 
-	if err := store.DownTo(context.Background(), rel, store.TreeRelational, latest-1); err != nil {
+	if err := store.DownTo(context.Background(), rel, store.TreeRelational, previous); err != nil {
 		t.Fatal(err)
 	}
 	out = &syncBuffer{}
 	env := append([]string{"ANSP_HTTP_ADDR=" + freeAddr(t)}, dbEnv...)
 	if code := run(context.Background(), nil, env, out); code != 1 ||
-		!strings.Contains(out.String(), "the relational tree is at version "+strconv.FormatInt(latest-1, 10)+", this build needs "+strconv.FormatInt(latest, 10)) {
+		!strings.Contains(out.String(), "the relational tree is at version "+strconv.FormatInt(previous, 10)+", this build needs "+strconv.FormatInt(latest, 10)) {
 		t.Fatalf("old schema: exit %d:\n%s", code, out.String())
 	}
 
