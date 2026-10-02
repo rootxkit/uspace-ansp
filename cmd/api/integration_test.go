@@ -32,7 +32,7 @@ func TestIntegrationReadyWithNATS(t *testing.T) {
 	out := &syncBuffer{}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan int, 1)
-	env := []string{"ANSP_PROCESS=" + process, "ANSP_HTTP_ADDR=" + addr, "ANSP_NATS_URL=" + url}
+	env := []string{"ANSP_PROCESS=" + process, "ANSP_HTTP_ADDR=" + addr, "ANSP_MTLS_MODE=off", "ANSP_NATS_URL=" + url}
 	if creds := os.Getenv("ANSP_NATS_CREDS"); creds != "" {
 		env = append(env, "ANSP_NATS_CREDS="+creds)
 	}
@@ -95,7 +95,7 @@ func TestIntegrationMigrateThenStart(t *testing.T) {
 		t.Fatal("re-migrate failed")
 	}
 	addr := freeAddr(t)
-	env = append([]string{"ANSP_HTTP_ADDR=" + addr}, dbEnv...)
+	env = append([]string{"ANSP_HTTP_ADDR=" + addr, "ANSP_MTLS_MODE=off"}, dbEnv...)
 	out = &syncBuffer{}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan int, 1)

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/netip"
 	"os"
 	"strings"
 	"time"
@@ -37,10 +38,19 @@ type authWiring struct {
 // ANSP_SECRETS_KEY_FILE, ANSP_PUBLIC_BASE_URL and ANSP_AUDIENCES), and
 // builds the machine verifier when ANSP_TOKEN_ISSUERS is set (start-up
 // fails while an issuer's JWKS cannot be fetched). Without either it
-// mounts nothing and says so.
+// mounts nothing and says so. ANSP_MTLS_MODE=required without
+// bindings refuses the start in every case (buildMTLS).
 func wireAuth(ctx context.Context, cfg config.Config, db *store.Relational, mux *http.ServeMux, reg prometheus.Registerer, logger *slog.Logger) (*authWiring, error) {
 	w := &authWiring{}
-	guard := &auth.Guard{Origins: cfg.WSAllowedOrigins}
+	proxies, err := auth.ParseTrustedProxies(cfg.TrustedProxies)
+	if err != nil {
+		return nil, err
+	}
+	mtls, err := buildMTLS(cfg, proxies)
+	if err != nil {
+		return nil, err
+	}
+	guard := &auth.Guard{Origins: cfg.WSAllowedOrigins, MTLS: mtls}
 	if len(cfg.TokenIssuers) > 0 {
 		m, err := auth.NewMachineVerifier(ctx, cfg)
 		if err != nil {
@@ -97,10 +107,6 @@ func wireAuth(ctx context.Context, cfg config.Config, db *store.Relational, mux 
 	if err != nil {
 		return nil, err
 	}
-	proxies, err := auth.ParseTrustedProxies(cfg.TrustedProxies)
-	if err != nil {
-		return nil, err
-	}
 	issuer := strings.TrimSuffix(cfg.PublicBaseURL, "/")
 	limiterCounters := &core.Counters{}
 	accounts, err := auth.NewAccounts(auth.AccountsDeps{
@@ -117,17 +123,6 @@ func wireAuth(ctx context.Context, cfg config.Config, db *store.Relational, mux 
 	}
 	accounts.SetSessionVerifier(sessions)
 	guard.Sessions = sessions
-	if cfg.MTLSMode == config.MTLSRequired && cfg.MTLSBindingsFile != "" {
-		bindings, err := auth.LoadMTLSBindings(cfg.MTLSBindingsFile)
-		if err != nil {
-			return nil, err
-		}
-		if guard.MTLS, err = auth.NewMTLS(cfg.MTLSMode, bindings, proxies); err != nil {
-			return nil, err
-		}
-	} else if cfg.MTLSMode == config.MTLSOff {
-		guard.MTLS, _ = auth.NewMTLS(config.MTLSOff, nil, nil)
-	}
 	keys := auth.NewPublicKeys()
 	if err := keys.Add("session", ring); err != nil {
 		return nil, err
@@ -173,4 +168,23 @@ func wireAuth(ctx context.Context, cfg config.Config, db *store.Relational, mux 
 	})
 	logger.Info("console sign-in mounted", slog.String("issuer", issuer), slog.String("kid", ring.ActiveKID()))
 	return w, nil
+}
+
+// buildMTLS is the certificate binding of the mTLS route groups.
+// ANSP_MTLS_MODE=required with no ANSP_MTLS_BINDINGS_FILE (or an empty
+// one) is refused: every mTLS route would refuse every client, which is
+// a misconfiguration to stop at start, not an outage to find later.
+func buildMTLS(cfg config.Config, proxies []netip.Prefix) (*auth.MTLS, error) {
+	if cfg.MTLSMode != config.MTLSRequired {
+		return auth.NewMTLS(cfg.MTLSMode, nil, nil)
+	}
+	if cfg.MTLSBindingsFile == "" {
+		return nil, core.Fieldf("ANSP_MTLS_BINDINGS_FILE",
+			"required when ANSP_MTLS_MODE=required: without bindings no client can pass the mTLS routes (set the file, or ANSP_MTLS_MODE=off outside production)")
+	}
+	bindings, err := auth.LoadMTLSBindings(cfg.MTLSBindingsFile)
+	if err != nil {
+		return nil, err
+	}
+	return auth.NewMTLS(cfg.MTLSMode, bindings, proxies)
 }

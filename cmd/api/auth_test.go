@@ -7,10 +7,14 @@ import (
 	"crypto/x509"
 	"encoding/hex"
 	"encoding/pem"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/rootxkit/uspace-ansp/internal/config"
 )
 
 // authFiles writes a session key, a secrets key and an admin password
@@ -60,5 +64,76 @@ func TestRunRefusesIncompleteAuth(t *testing.T) {
 				t.Fatalf("exit %d; log:\n%s", code, out.String())
 			}
 		})
+	}
+}
+
+// ANSP_MTLS_MODE=required needs bindings: without the file, or with an
+// empty one, buildMTLS refuses naming ANSP_MTLS_BINDINGS_FILE; with
+// bindings it builds a required binding, and off builds without any.
+func TestBuildMTLS(t *testing.T) {
+	dir := t.TempDir()
+	empty, bound := filepath.Join(dir, "empty.json"), filepath.Join(dir, "bound.json")
+	if err := os.WriteFile(empty, []byte("[]"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(bound, []byte(`[{"sub":"ussp-geo-01","subject":"CN=ussp-geo-01"}]`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for name, file := range map[string]string{"no file": "", "empty file": empty} {
+		if _, err := buildMTLS(config.Config{MTLSMode: config.MTLSRequired, MTLSBindingsFile: file}, nil); err == nil ||
+			!strings.Contains(err.Error(), "ANSP_MTLS_BINDINGS_FILE") {
+			t.Fatalf("required, %s: %v", name, err)
+		}
+	}
+	m, err := buildMTLS(config.Config{MTLSMode: config.MTLSRequired, MTLSBindingsFile: bound}, nil)
+	if err != nil || m.Mode() != config.MTLSRequired {
+		t.Fatalf("required with bindings: %v", err)
+	}
+	m, err = buildMTLS(config.Config{MTLSMode: config.MTLSOff}, nil)
+	if err != nil || m.Mode() != config.MTLSOff {
+		t.Fatalf("off without bindings: %v", err)
+	}
+}
+
+// The process refuses to start (exit 2) with ANSP_MTLS_MODE=required
+// and no bindings, and starts with the same mode once bindings are
+// configured.
+func TestRunRequiredMTLSNeedsBindings(t *testing.T) {
+	out := &syncBuffer{}
+	env := []string{"ANSP_PROCESS=" + process, "ANSP_HTTP_ADDR=" + freeAddr(t), "ANSP_MTLS_MODE=required"}
+	if code := run(context.Background(), nil, env, out); code != 2 || !strings.Contains(out.String(), "ANSP_MTLS_BINDINGS_FILE") ||
+		!strings.Contains(out.String(), `"msg":"auth refused"`) {
+		t.Fatalf("no bindings: exit %d; log:\n%s", code, out.String())
+	}
+
+	bound := filepath.Join(t.TempDir(), "bound.json")
+	if err := os.WriteFile(bound, []byte(`[{"sub":"ussp-geo-01","subject":"CN=ussp-geo-01"}]`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	addr := freeAddr(t)
+	out = &syncBuffer{}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan int, 1)
+	go func() {
+		done <- run(ctx, nil, []string{"ANSP_PROCESS=" + process, "ANSP_HTTP_ADDR=" + addr, "ANSP_MTLS_MODE=required", "ANSP_MTLS_BINDINGS_FILE=" + bound}, out)
+	}()
+	for deadline := time.Now().Add(10 * time.Second); ; {
+		if code, _ := get(t, "http://"+addr+"/healthz"); code == http.StatusOK {
+			break
+		}
+		if time.Now().After(deadline) {
+			cancel()
+			t.Fatalf("with bindings: no /healthz; log:\n%s", out.String())
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	cancel()
+	select {
+	case c := <-done:
+		if c != 0 {
+			t.Fatalf("with bindings: exit %d; log:\n%s", c, out.String())
+		}
+	case <-time.After(15 * time.Second):
+		t.Fatal("no drain")
 	}
 }
