@@ -65,3 +65,17 @@ additively within `/v1`. One line per work package.
   schemas, diffed in CI; the generated CISP client; contract tests (lint,
   examples, request and response validation, every route through the
   generated client, the PLAN table).
+- WP-4 manned adapter: `internal/manned` (the `track/manned/v1` model
+  with the pressure and WGS84 altitudes kept apart, the unit
+  conversions in one file, time placement through
+  `timeplace.PlaceBatch` against the feed's own clock, order, dedupe,
+  refusals by field, clearing of implausible optional members, the
+  bounded aircraft set); the runner (reconnect forever with backoff,
+  stall detection with feed-time placement or `backlog`, the source
+  switch from KV `source_control` and `ctl.sources`, `source/status/v1`
+  every 2 s on `src.v1.manned.<adapter>`); the replay adapter (synthetic
+  NDJSON only, never without `ANSP_ADAPTER_REPLAY_ALLOWED=true`), the
+  dump1090 SBS and `aircraft.json` readers with field names and columns
+  pinned in `internal/manned/dump1090/SOURCE`, and the ASTERIX CAT021
+  stub that refuses to start; `cmd/manned-adapter` with `ANSP_ADAPTER_*`;
+  three synthetic replay files in `testdata/replay/`.

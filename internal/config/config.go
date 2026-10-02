@@ -2,12 +2,14 @@ package config
 
 import (
 	"errors"
+	"net"
 	"net/netip"
 	"net/url"
 	"os"
 	"regexp"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/rootxkit/uspace-core/core"
 )
@@ -118,6 +120,26 @@ type Config struct {
 	BootstrapAdminUsername     string `env:"ANSP_BOOTSTRAP_ADMIN_USERNAME"`
 	BootstrapAdminPasswordFile string `env:"ANSP_BOOTSTRAP_ADMIN_PASSWORD_FILE"`
 
+	// manned-adapter (WP-4): the kind of feed, the instance id (the
+	// source_instance of its tracks and the <adapter> of its subjects),
+	// the source class of its tracks and the kind's connection settings.
+	AdapterKind        string `env:"ANSP_ADAPTER_KIND" enum:"replay|dump1090_sbs|dump1090_json|asterix_cat021"`
+	AdapterID          string `env:"ANSP_ADAPTER_ID"`
+	AdapterSourceClass string `env:"ANSP_ADAPTER_SOURCE_CLASS" enum:"ads_b|mode_s|ssr|atm_feed|ads_l"`
+	// AdapterSBSAddr is dump1090's BaseStation output, host:port.
+	AdapterSBSAddr string `env:"ANSP_ADAPTER_SBS_ADDR"`
+	// AdapterSBSTimezone is the zone of the SBS time columns, which
+	// dump1090 writes in the receiver's local time (IANA name).
+	AdapterSBSTimezone string `env:"ANSP_ADAPTER_SBS_TIMEZONE" default:"UTC"`
+	// AdapterJSONURL is where dump1090 serves aircraft.json.
+	AdapterJSONURL string `env:"ANSP_ADAPTER_JSON_URL" kind:"url"`
+	// The replay adapter: the synthetic NDJSON file, whether replay may
+	// run at all (never by default, 06 T11), its speed and loop.
+	AdapterReplayFile    string  `env:"ANSP_ADAPTER_REPLAY_FILE"`
+	AdapterReplayAllowed string  `env:"ANSP_ADAPTER_REPLAY_ALLOWED" default:"false" enum:"true|false"`
+	AdapterReplaySpeed   float64 `env:"ANSP_ADAPTER_REPLAY_SPEED" default:"1" min:"0.01" max:"1000"`
+	AdapterReplayLoop    string  `env:"ANSP_ADAPTER_REPLAY_LOOP" default:"false" enum:"true|false"`
+
 	LogLevel     string `env:"ANSP_LOG_LEVEL" default:"info" enum:"debug|info|warn|error"`
 	OTLPEndpoint string `env:"ANSP_OTLP_ENDPOINT" kind:"url"`
 	Country      string `env:"ANSP_COUNTRY" default:"GEO"`
@@ -189,7 +211,43 @@ var (
 	hostPattern    = regexp.MustCompile(`^[A-Za-z0-9]([A-Za-z0-9.-]{0,251}[A-Za-z0-9])?(:[0-9]{1,5})?$`)
 	countryPattern = regexp.MustCompile(`^[A-Z]{3}$`)
 	idPattern      = regexp.MustCompile(`^[A-Za-z0-9._-]{1,64}$`)
+	// adapterIDPattern is track/manned/v1's source_instance pattern: the
+	// id is also one NATS subject token.
+	adapterIDPattern = regexp.MustCompile(`^[a-z][a-z0-9]*(-[a-z0-9]+)*$`)
 )
+
+// validateAdapter checks the manned-adapter settings: a kind, an id, a
+// source class, and the setting the kind reads.
+func (c *Config) validateAdapter() []error {
+	var errs []error
+	if c.AdapterKind == "" {
+		errs = append(errs, core.Fieldf("ANSP_ADAPTER_KIND", "required for %s", ProcessMannedAdapter))
+	}
+	if len(c.AdapterID) > 64 || !adapterIDPattern.MatchString(c.AdapterID) {
+		errs = append(errs, core.Fieldf("ANSP_ADAPTER_ID", "required: lower-case words of a-z 0-9 joined by -, at most 64 characters"))
+	}
+	if c.AdapterSourceClass == "" {
+		errs = append(errs, core.Fieldf("ANSP_ADAPTER_SOURCE_CLASS", "required for %s", ProcessMannedAdapter))
+	}
+	switch c.AdapterKind {
+	case "dump1090_sbs":
+		if _, _, err := net.SplitHostPort(c.AdapterSBSAddr); err != nil {
+			errs = append(errs, core.Fieldf("ANSP_ADAPTER_SBS_ADDR", "required for dump1090_sbs: host:port"))
+		}
+		if _, err := time.LoadLocation(c.AdapterSBSTimezone); err != nil {
+			errs = append(errs, core.Fieldf("ANSP_ADAPTER_SBS_TIMEZONE", "%q is not a time zone", c.AdapterSBSTimezone))
+		}
+	case "dump1090_json":
+		if u, err := url.Parse(c.AdapterJSONURL); err != nil || (u.Scheme != "http" && u.Scheme != "https") {
+			errs = append(errs, core.Fieldf("ANSP_ADAPTER_JSON_URL", "required for dump1090_json: an http(s) URL"))
+		}
+	case "replay":
+		if c.AdapterReplayFile == "" {
+			errs = append(errs, core.Fieldf("ANSP_ADAPTER_REPLAY_FILE", "required for replay"))
+		}
+	}
+	return errs
+}
 
 func (c *Config) validate() []error {
 	var errs []error
@@ -236,6 +294,9 @@ func (c *Config) validate() []error {
 	}
 	if (c.BootstrapAdminUsername == "") != (c.BootstrapAdminPasswordFile == "") {
 		errs = append(errs, core.Fieldf("ANSP_BOOTSTRAP_ADMIN_USERNAME", "set together with ANSP_BOOTSTRAP_ADMIN_PASSWORD_FILE, or neither"))
+	}
+	if c.Process == ProcessMannedAdapter {
+		errs = append(errs, c.validateAdapter()...)
 	}
 	if !countryPattern.MatchString(c.Country) {
 		errs = append(errs, core.Fieldf("ANSP_COUNTRY", "%q is not an ISO 3166-1 alpha-3 code", c.Country))

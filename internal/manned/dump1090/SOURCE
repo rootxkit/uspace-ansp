@@ -1,0 +1,38 @@
+# The documents every dump1090 field name and column position in this
+# package comes from (CLAUDE.md rule 8, LESSONS E-03), each at a pinned
+# commit with the SHA-256 of the file as fetched from
+# raw.githubusercontent.com. scripts/check-contracts.sh fetches each and
+# fails on a different hash. A bump is a `build:` commit of its own, with
+# the golden tests re-derived from the new document.
+#
+# aircraft.json: README-json.md, section "aircraft.json", names every key
+# read here (now, aircraft, hex, type, flight, alt_baro, alt_geom, gs,
+# track, baro_rate, geom_rate, squawk, emergency, lat, lon, nic, rc,
+# seen_pos, version, nic_baro, nac_p, nac_v, sil, sil_type, gva, sda,
+# mlat, tisb, seen) with its unit. Two facts it does not state are taken
+# from the writer, generateAircraftJson in net_io.c at the same commit:
+# alt_baro is the string "ground" for an aircraft on the ground (line
+# 1769), and emergency is one of none, general, lifeguard, minfuel,
+# nordo, unlawful, downed, reserved (emergency_enum_string, line 1673).
+#
+# SBS / BaseStation (port 30003): the repository has no prose description
+# of this output. The authority is its writer, modesSendSBSOutput in
+# net_io.c (lines 571-787), whose comments number the 22 columns
+# ("Fields 1 to 6", "Fields 7 & 8", ... "Field 22"); this package reads
+# exactly those positions. ASSUMPTIONS, marked where they are used: (1)
+# the columns carry no unit, so the units are README-json.md's for the
+# same quantities (altitude feet, ground speed knots, vertical rate
+# feet/minute); (2) an altitude or vertical rate with the suffix "H" is
+# the geometric quantity (written from altitude_geom / geom_rate when
+# --gnss is set, "Show altitudes as HAE/GNSS when available", dump1090.c
+# line 334), referenced to the WGS84 ellipsoid as README-json.md defines
+# alt_geom; (3) columns 7-10 are the receiver's local time
+# (localtime_r), so the zone is configuration (ANSP_ADAPTER_SBS_TIMEZONE);
+# (4) the heartbeat is an empty line every 60 s by default
+# (send_sbs_heartbeat; MODES_NET_HEARTBEAT_INTERVAL in dump1090.h).
+#
+# <sha256> <owner/repo> <commit> <path in that repo>
+257bd2cc272058ede7ac62875ed31d65dc7ebfbee58ed1fd828fecf7cb32926b flightaware/dump1090 0339a57b89cd6e61856cbb13ae342c31ae7be5ac README-json.md
+e8146ab62cfb650562277e7c93603f631c91e4c5cbad3b9ec7fe70f55b3c6471 flightaware/dump1090 0339a57b89cd6e61856cbb13ae342c31ae7be5ac net_io.c
+ea72314adf0737d6965220c91f07eca0ec7e35b0ba0b76ba94f60c1378879ad7 flightaware/dump1090 0339a57b89cd6e61856cbb13ae342c31ae7be5ac dump1090.h
+5d1683cce851f1ec9ac4b7ca63a8ae4381c330c93139d948f0041f7780ce130a flightaware/dump1090 0339a57b89cd6e61856cbb13ae342c31ae7be5ac dump1090.c

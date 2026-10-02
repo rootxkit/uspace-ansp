@@ -23,3 +23,6 @@ go.sum text eol=lf
 *.pgm binary
 *.png binary
 *.woff2 binary
+
+# dump1090 SBS samples keep the writer's CRLF line endings (WP-4).
+internal/manned/dump1090/testdata/*.txt -text
