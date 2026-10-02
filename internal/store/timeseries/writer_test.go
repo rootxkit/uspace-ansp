@@ -64,6 +64,7 @@ func TestValidateRefusesEachField(t *testing.T) {
 		"squawk":         func(r *MannedTrackRow) { r.Squawk = &badSq },
 		"source_class":   func(r *MannedTrackRow) { r.SourceClass = "radar" },
 		"policy_version": func(r *MannedTrackRow) { r.PolicyVersion = -1 },
+		"msg_id":         func(r *MannedTrackRow) { id := "not-a-ulid"; r.MsgID = &id },
 		"quality":        func(r *MannedTrackRow) { r.Quality = []byte(`[1]`) },
 	} {
 		r := good()

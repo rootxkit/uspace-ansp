@@ -42,6 +42,11 @@ type MannedTrackRow struct {
 	Quality       json.RawMessage
 	Relevant      bool
 	PolicyVersion int64
+	// MsgID is the envelope's msg_id (migration 0010): a row whose
+	// (icao24, captured_at, msg_id) is already stored is skipped, so a
+	// sample delivered twice lands once. nil writes none and skips
+	// nothing.
+	MsgID *string
 }
 
 // MaxBatchRows bounds one Insert: about 10 minutes of a busy sky at 1 Hz
@@ -58,6 +63,7 @@ var (
 	icao24Pattern  = regexp.MustCompile(`^[0-9A-Fa-f]{6}$`)
 	adapterPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,63}$`)
 	squawkPattern  = regexp.MustCompile(`^[0-7]{4}$`)
+	ulidPattern    = regexp.MustCompile(`^[0-7][0-9A-HJKMNP-TV-Z]{25}$`)
 	sourceClasses  = []string{"ads_b", "mode_s", "ssr", "atm_feed", "ads_l"}
 )
 
@@ -108,6 +114,9 @@ func (r *MannedTrackRow) Validate() error {
 	if !slices.Contains(sourceClasses, r.SourceClass) {
 		errs = append(errs, core.Fieldf("source_class", "not one of ads_b, mode_s, ssr, atm_feed, ads_l"))
 	}
+	if r.MsgID != nil && !ulidPattern.MatchString(*r.MsgID) {
+		errs = append(errs, core.Fieldf("msg_id", "not a ULID"))
+	}
 	if r.PolicyVersion < 0 {
 		errs = append(errs, core.Fieldf("policy_version", "negative"))
 	}
@@ -155,7 +164,7 @@ func (w *Writer) Counters() *core.Counters { return w.counters }
 var stageColumns = []string{
 	"captured_at", "ts", "rx_ts", "time_source", "backlog", "adapter_id", "icao24", "callsign",
 	"lat_deg", "lon_deg", "alt_pressure_m", "alt_wgs84_m", "gs_ms", "track_deg", "vrate_ms",
-	"emergency", "squawk", "source_class", "quality", "relevant", "policy_version",
+	"emergency", "squawk", "source_class", "quality", "relevant", "policy_version", "msg_id",
 }
 
 const createStage = `CREATE TEMP TABLE manned_tracks_stage (
@@ -163,23 +172,29 @@ const createStage = `CREATE TEMP TABLE manned_tracks_stage (
     adapter_id text, icao24 text, callsign text, lat_deg double precision, lon_deg double precision,
     alt_pressure_m double precision, alt_wgs84_m double precision, gs_ms double precision,
     track_deg double precision, vrate_ms double precision, emergency boolean, squawk text,
-    source_class text, quality jsonb, relevant boolean, policy_version bigint
+    source_class text, quality jsonb, relevant boolean, policy_version bigint, msg_id text
 ) ON COMMIT DROP`
 
 const insertFromStage = `INSERT INTO manned_tracks (
     captured_at, ts, rx_ts, time_source, backlog, adapter_id, icao24, callsign, geom,
     alt_pressure_m, alt_wgs84_m, gs_ms, track_deg, vrate_ms, emergency, squawk,
-    source_class, quality, relevant, policy_version)
-SELECT captured_at, ts, rx_ts, time_source, backlog, adapter_id, icao24, callsign,
-    ST_SetSRID(ST_MakePoint(lon_deg, lat_deg), 4326),
-    alt_pressure_m, alt_wgs84_m, gs_ms, track_deg, vrate_ms, emergency, squawk,
-    source_class, quality, relevant, policy_version
-FROM manned_tracks_stage`
+    source_class, quality, relevant, policy_version, msg_id)
+SELECT DISTINCT ON (coalesce(s.msg_id, gen_random_uuid()::text))
+    s.captured_at, s.ts, s.rx_ts, s.time_source, s.backlog, s.adapter_id, s.icao24, s.callsign,
+    ST_SetSRID(ST_MakePoint(s.lon_deg, s.lat_deg), 4326),
+    s.alt_pressure_m, s.alt_wgs84_m, s.gs_ms, s.track_deg, s.vrate_ms, s.emergency, s.squawk,
+    s.source_class, s.quality, s.relevant, s.policy_version, s.msg_id
+FROM manned_tracks_stage s
+WHERE s.msg_id IS NULL OR NOT EXISTS (
+    SELECT 1 FROM manned_tracks m
+    WHERE m.icao24 = s.icao24 AND m.captured_at = s.captured_at AND m.msg_id = s.msg_id)`
 
 // Insert copies rows into manned_tracks in one transaction and returns
 // how many landed. A row that does not validate is left out and counted
-// (store_track_rows_refused); a batch above MaxBatchRows is refused
-// whole before the database is touched.
+// (store_track_rows_refused); a row whose msg_id is already stored (or
+// repeated in the batch) is skipped, so the count may be lower than the
+// rows given; a batch above MaxBatchRows is refused whole before the
+// database is touched.
 func (w *Writer) Insert(ctx context.Context, rows []MannedTrackRow) (int64, error) {
 	if len(rows) > MaxBatchRows {
 		return 0, fmt.Errorf("%w: %d rows, at most %d", ErrBatchTooLarge, len(rows), MaxBatchRows)
@@ -198,7 +213,7 @@ func (w *Writer) Insert(ctx context.Context, rows []MannedTrackRow) (int64, erro
 		src = append(src, []any{
 			r.CapturedAt, r.TS, r.RxTS, r.TimeSource, r.Backlog, r.AdapterID, r.ICAO24, r.Callsign,
 			r.Position.LatDeg, r.Position.LonDeg, r.AltPressureM, r.AltWGS84M, r.GSMS, r.TrackDeg, r.VRateMS,
-			r.Emergency, r.Squawk, r.SourceClass, []byte(quality), r.Relevant, r.PolicyVersion,
+			r.Emergency, r.Squawk, r.SourceClass, []byte(quality), r.Relevant, r.PolicyVersion, r.MsgID,
 		})
 	}
 	if len(src) == 0 {
