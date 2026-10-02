@@ -1,6 +1,11 @@
 package config
 
 import (
+	"net/url"
+	"slices"
+	"strings"
+	"time"
+
 	"github.com/rootxkit/uspace-core/auth"
 	"github.com/rootxkit/uspace-core/core"
 )
@@ -32,4 +37,62 @@ func (c Config) VerifierConfig() (auth.Config, error) {
 		Audiences:           append([]string(nil), c.Audiences...),
 		StrictSessionClaims: true,
 	}, nil
+}
+
+// The publishers ANSP_CIS_PUBLISHER_KEYS may name (internal/cis
+// PublisherAuthority, PublisherANSP).
+var cisPublishers = []string{"authority", "ansp"}
+
+// PublisherConfig is the uspace-core auth.DetachedConfig that verifies
+// the publishers' signatures of CIS dataset versions:
+// ANSP_CIS_PUBLISHER_KEYS (publisher=jwks_url, the publisher one of
+// authority and ansp) and MaxAge ANSP_CIS_PUBLISHER_SIG_MAX_AGE_S.
+func (c Config) PublisherConfig() (auth.DetachedConfig, error) {
+	if len(c.CISPublisherKeys) == 0 {
+		return auth.DetachedConfig{}, core.Fieldf("ANSP_CIS_PUBLISHER_KEYS", "required to verify CIS dataset versions")
+	}
+	pubs := make(map[string]auth.IssuerConfig, len(c.CISPublisherKeys))
+	for _, e := range c.CISPublisherKeys {
+		name, jwks, ok := strings.Cut(e, "=")
+		name, jwks = strings.TrimSpace(name), strings.TrimSpace(jwks)
+		switch {
+		case !ok || name == "" || jwks == "":
+			return auth.DetachedConfig{}, core.Fieldf("ANSP_CIS_PUBLISHER_KEYS", "each entry must be publisher=jwks_url")
+		case !slices.Contains(cisPublishers, name):
+			return auth.DetachedConfig{}, core.Fieldf("ANSP_CIS_PUBLISHER_KEYS", "%q is not a publisher (%s)", name, strings.Join(cisPublishers, ", "))
+		case checkURL(jwks) != nil:
+			return auth.DetachedConfig{}, core.Fieldf("ANSP_CIS_PUBLISHER_KEYS", "the JWKS URL of %s is not an absolute URL", name)
+		}
+		if _, dup := pubs[name]; dup {
+			return auth.DetachedConfig{}, core.Fieldf("ANSP_CIS_PUBLISHER_KEYS", "%s is listed twice", name)
+		}
+		pubs[name] = auth.IssuerConfig{JWKSURL: jwks}
+	}
+	return auth.DetachedConfig{Publishers: pubs, MaxAge: time.Duration(c.CISPublisherSigMaxAgeS) * time.Second}, nil
+}
+
+// NotifyConfig is the uspace-core auth.CompactConfig of the CIS change
+// notification receiver: the issuers ANSP_CIS_NOTIFY_ISSUERS with their
+// JWKS URLs and the audiences ANSP_AUDIENCES (hosts, M18, M19), which
+// must hold the host of ANSP_PUBLIC_BASE_URL: the CISP signs aud as the
+// host of the callback_url this system registers there.
+func (c Config) NotifyConfig() (auth.CompactConfig, error) {
+	if len(c.CISNotifyIssuers) == 0 {
+		return auth.CompactConfig{}, core.Fieldf("ANSP_CIS_NOTIFY_ISSUERS", "required to receive CIS change notifications")
+	}
+	if len(c.Audiences) == 0 {
+		return auth.CompactConfig{}, core.Fieldf("ANSP_AUDIENCES", "required to receive CIS change notifications")
+	}
+	u, err := url.Parse(c.PublicBaseURL)
+	if err != nil || u.Hostname() == "" {
+		return auth.CompactConfig{}, core.Fieldf("ANSP_PUBLIC_BASE_URL", "required to receive CIS change notifications (the callback_url base)")
+	}
+	if !slices.ContainsFunc(c.Audiences, func(a string) bool { return strings.EqualFold(a, u.Hostname()) }) {
+		return auth.CompactConfig{}, core.Fieldf("ANSP_AUDIENCES", "does not hold %s, the host of ANSP_PUBLIC_BASE_URL the CISP signs as aud", u.Hostname())
+	}
+	allow := make(map[string]auth.IssuerConfig, len(c.CISNotifyIssuers))
+	for _, iss := range c.CISNotifyIssuers {
+		allow[iss.Issuer] = auth.IssuerConfig{JWKSURL: iss.JWKSURL}
+	}
+	return auth.CompactConfig{Issuers: allow, Audiences: append([]string(nil), c.Audiences...)}, nil
 }

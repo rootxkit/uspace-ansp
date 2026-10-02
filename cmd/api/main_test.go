@@ -83,7 +83,8 @@ func TestRunServesHealthWithoutNATSAndDrains(t *testing.T) {
 		t.Fatal(err)
 	}
 	if code != http.StatusServiceUnavailable || rep.Process != process || rep.Status != "not_ready" ||
-		len(rep.Summary) != 1 || rep.Summary[0] != "nats: down (ANSP_NATS_URL is not set)" {
+		len(rep.Summary) != 2 || rep.Summary[0] != "nats: down (ANSP_NATS_URL is not set)" ||
+		!strings.HasPrefix(rep.Summary[1], "cisp: degraded (no CIS projection; ") || !strings.Contains(rep.Summary[1], "no CISP configured (ANSP_CISP_URL)") {
 		t.Fatalf("/readyz %d %s", code, body)
 	}
 	if code, body := get(t, "http://"+addr+"/metrics"); code != http.StatusOK || !strings.Contains(body, "go_goroutines") {

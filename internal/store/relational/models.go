@@ -107,6 +107,23 @@ type AnspPolicy struct {
 	ChangedAt           time.Time
 }
 
+type CisCache struct {
+	Dataset      string
+	Version      int64
+	Etag         string
+	FetchedAt    time.Time
+	InstalledAt  time.Time
+	CisUpdatedAt *time.Time
+	Body         json.RawMessage
+}
+
+type CisNotificationsSeen struct {
+	Issuer    string
+	Jti       string
+	SeenAt    time.Time
+	ExpiresAt time.Time
+}
+
 type Event struct {
 	ID         int64
 	Ts         time.Time

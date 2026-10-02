@@ -19,6 +19,7 @@ import (
 	"github.com/rootxkit/uspace-ansp/internal/apierr"
 	"github.com/rootxkit/uspace-ansp/internal/auth"
 	"github.com/rootxkit/uspace-ansp/internal/bus"
+	cisf "github.com/rootxkit/uspace-ansp/internal/cis"
 	"github.com/rootxkit/uspace-ansp/internal/config"
 	"github.com/rootxkit/uspace-ansp/internal/feed"
 	"github.com/rootxkit/uspace-ansp/internal/manned"
@@ -136,8 +137,8 @@ func natsState(b *bus.Bus) func() (string, bool) {
 func wire(ctx context.Context, cfg config.Config, b *bus.Bus, db *store.Timeseries, reg prometheus.Registerer, logger *slog.Logger) (*wiring, error) {
 	pol := policy.NewFollower(nil)
 	src := sources.NewFollower(nil)
-	cis := picture.CIS(picture.NoCIS{})
-	logger.Error("no CIS projection (WP-7): relevance is not evaluated, every aircraft is served as relevant and the status says so")
+	cisF := cisf.NewFollower(nil)
+	cis := followerCIS{f: cisF}
 	pic := picture.New(pol, src, cis, nil, picture.DefaultLimits())
 	adapters := feed.NewAdapters()
 	own := &core.Counters{}
@@ -189,7 +190,7 @@ func wire(ctx context.Context, cfg config.Config, b *bus.Bus, db *store.Timeseri
 
 	// Each counter is exported under its own snake_case name (CLAUDE.md
 	// rule 10); core's follower counters, which are not prefixed, get one.
-	for _, c := range []*core.Counters{svc.Counters(), pic.Counters(), adapters.Counters(), own, src.Counters(), pol.Counters()} {
+	for _, c := range []*core.Counters{svc.Counters(), pic.Counters(), adapters.Counters(), own, src.Counters(), pol.Counters(), cisF.Counters()} {
 		if err := obs.Counters(reg, "", c); err != nil {
 			return nil, err
 		}
@@ -210,6 +211,7 @@ func wire(ctx context.Context, cfg config.Config, b *bus.Bus, db *store.Timeseri
 	w.run = append(w.run,
 		func(ctx context.Context) { followPolicy(ctx, b, pol, logger) },
 		func(ctx context.Context) { followSources(ctx, b, src, logger) },
+		func(ctx context.Context) { followCIS(ctx, b, cisF, logger) },
 		func(ctx context.Context) { subscribe(ctx, b, svc, adapters, own, logger) },
 		svc.Run,
 	)
@@ -395,6 +397,49 @@ func followPolicy(ctx context.Context, b *bus.Bus, pol *policy.Follower, logger 
 		}
 		if err != nil && !logged {
 			logger.Warn("kv: policy not followed yet, retrying", slog.String("error", err.Error()))
+			logged = true
+		}
+		if !sleep(ctx, followRetry) {
+			return
+		}
+	}
+}
+
+// followerCIS is picture.CIS on the CIS follower (WP-7): no projection
+// while the follower holds no uspace_airspace version.
+type followerCIS struct{ f *cisf.Follower }
+
+func (c followerCIS) Projection() (picture.Projection, bool) {
+	v := c.f.Version()
+	if v == "" {
+		return picture.Projection{}, false
+	}
+	return picture.Projection{Volumes: c.f.USpaceVolumes(), Version: v, FetchedAt: c.f.FetchedAt()}, true
+}
+
+// followCIS watches the cis_current bucket api writes and applies the
+// cis.v1 push, retrying while the bucket does not exist or the watch
+// ends. Until a uspace_airspace version arrives the picture says
+// relevance is not evaluated (SC-22).
+func followCIS(ctx context.Context, b *bus.Bus, f *cisf.Follower, logger *slog.Logger) {
+	if b.JetStream() == nil {
+		logger.Error("CIS projection not followed: the bus is not configured; relevance is not evaluated and the status says so")
+		return
+	}
+	if nc := b.Conn(); nc != nil {
+		if _, err := nc.Subscribe(bus.SubjectCISPrefix+">", func(m *nats.Msg) { f.ApplyJSON(m.Data) }); err != nil {
+			logger.Error("cis.v1: subscribe", slog.String("error", err.Error()))
+		}
+	}
+	kv := b.KeyValue(bus.BucketCISCurrent)
+	logged := false
+	for ctx.Err() == nil {
+		err := f.Run(ctx, kv)
+		if ctx.Err() != nil {
+			return
+		}
+		if err != nil && !logged {
+			logger.Warn("kv: cis_current not followed yet, retrying; the projection held is served with its age", slog.String("error", err.Error()))
 			logged = true
 		}
 		if !sleep(ctx, followRetry) {

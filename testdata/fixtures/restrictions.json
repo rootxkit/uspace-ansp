@@ -1,0 +1,40 @@
+{
+  "type": "FeatureCollection",
+  "name": "SYNTHETIC restrictions dataset for tests (not real)",
+  "metadata": {
+    "issued": "2026-10-01T09:00:00.000Z",
+    "provider": [{"text": "Synthetic test ANSP", "lang": "en-GB"}]
+  },
+  "features": [
+    {
+      "type": "Feature",
+      "id": "DAR0001",
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[[44.75, 41.70], [44.80, 41.70], [44.80, 41.73], [44.75, 41.73], [44.75, 41.70]]],
+        "layer": {"upper": 900, "upperReference": "AMSL", "lower": 400, "lowerReference": "AMSL", "uom": "m"}
+      },
+      "properties": {
+        "identifier": "DAR0001",
+        "country": "GEO",
+        "name": [{"text": "SYNTHETIC dynamic restriction", "lang": "en-GB"}],
+        "type": "PROHIBITED",
+        "variant": "COMMON",
+        "reason": ["DAR"],
+        "zoneAuthority": [
+          {
+            "name": [{"text": "Synthetic test ANSP", "lang": "en-GB"}],
+            "email": "ops@example.invalid",
+            "purpose": "AUTHORIZATION"
+          }
+        ],
+        "limitedApplicability": [
+          {"startDateTime": "2026-10-01T09:00:00Z", "endDateTime": "2026-10-01T11:00:00Z"}
+        ]
+      }
+    }
+  ],
+  "cis_dataset": "restrictions",
+  "cis_version": 7,
+  "cis_updated_at": "2026-10-01T09:00:01.000Z"
+}

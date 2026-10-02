@@ -58,7 +58,7 @@ type restrictionWiring struct {
 
 // wireRestrictions builds the restriction service on the relational
 // database, the bus, the geoid (ANSP_GEOID_FILE) and the CIS projection
-// (none until WP-7: every placement is refused 503 cis_stale, and the
+// (WP-7; nil is none: every placement is refused 503 cis_stale, and the
 // log and the stream's status say so). Without the database there is
 // nothing to serve and the operations answer 503.
 func wireRestrictions(cfg config.Config, db *store.Relational, b *bus.Bus, sessions *auth.SessionVerifier, airspaces restriction.Airspaces,
@@ -80,7 +80,7 @@ func wireRestrictions(cfg config.Config, db *store.Relational, b *bus.Bus, sessi
 	}
 	if airspaces == nil {
 		airspaces = restriction.NoProjection{}
-		logger.Error("no CIS projection (WP-7): every restriction is refused 503 cis_stale until the uspace_airspace dataset is projected")
+		logger.Error("no CIS projection: every restriction is refused 503 cis_stale until the uspace_airspace dataset is projected")
 	}
 	svc := &restriction.Service{
 		Repo: store.RestrictionRepo{DB: db}, Airspaces: airspaces, Geoid: g,
