@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -53,6 +54,17 @@ func TestLatestRefusesMisnamedFiles(t *testing.T) {
 	}
 	if v, err := Latest(tree); err != nil || v != 3 {
 		t.Fatalf("one file: %d %v", v, err)
+	}
+	// Versions come in ranges per work package: a gap is normal, and
+	// the order is by number, not by name.
+	if err := os.WriteFile(filepath.Join(dir, "0020_auth.sql"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "0010_b.sql"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if vs, err := Versions(tree); err != nil || !slices.Equal(vs, []int64{3, 10, 20}) {
+		t.Fatalf("versions: %v %v", vs, err)
 	}
 	if err := os.WriteFile(filepath.Join(dir, "x_y.sql"), nil, 0o600); err != nil {
 		t.Fatal(err)

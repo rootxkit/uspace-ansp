@@ -33,3 +33,18 @@ additively within `/v1`. One line per work package.
   `internal/audit` (record, verify a month, query) and `internal/policy`
   (load, update through KV, follower with the compiled defaults);
   `uspace-core` v1.2.0.
+- WP-2 auth and accounts: ecosystem tokens verified by one
+  `uspace-core/auth` verifier (`ANSP_TOKEN_ISSUERS`, `aud` in
+  `ANSP_AUDIENCES`, readiness `jwks: degraded` with the cache's age), a
+  guard with an access entry per route that fails closed, RFC 9457
+  refusals typed by core's counters, the mTLS subject bound to `sub` from
+  `ANSP_MTLS_BINDINGS_FILE`, `oauth_clients_seen` off the request path;
+  client-credentials tokens as `ansp-01` with `audience` = the target's
+  host, refreshed at half their lifetime; console accounts (argon2id,
+  roles `watch_supervisor`, `viewer`, `admin`) with mandatory TOTP sealed
+  under `ANSP_SECRETS_KEY_FILE`, two-step sign-in, per-username lockout in
+  the database and per-address limits, session tokens through
+  `Issuer.IssueSession` checked against `user_sessions` (logout, 30 min
+  idle, 12 h), the WebSocket cookie rule with an `Origin` allow-list, the
+  JWKS endpoint, admin user operations and a bootstrap admin; migration
+  0020.

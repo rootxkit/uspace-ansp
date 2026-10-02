@@ -63,28 +63,39 @@ func TestLoadEveryVariable(t *testing.T) {
 		return nil, fs.ErrNotExist
 	}
 	c, err := LoadFrom(env(map[string]string{
-		"ANSP_PROCESS":            "manned-feed",
-		"ANSP_INSTANCE":           "feed-1",
-		"ANSP_AUDIENCES":          "ansp.example, ansp.lab",
-		"ANSP_HTTP_ADDR":          "127.0.0.1:9000",
-		"ANSP_NATS_URL":           "nats://feed:pw@nats:4222",
-		"ANSP_NATS_CREDS":         "/run/nats/feed.creds",
-		"ANSP_RELATIONAL_DSN":     "postgres://api:pw@db:5432/ansp?sslmode=disable",
-		"ANSP_TIMESERIES_DSN":     "postgres://tsdb:pw@db:5432/ansp_ts?sslmode=disable&password=pw",
-		"ANSP_TOKEN_ISSUERS":      "https://auth.example=https://auth.example/jwks,https://lab.example=https://lab.example/jwks",
-		"ANSP_TOKEN_URL":          "https://auth.example/oauth/token",
-		"ANSP_CLIENT_SECRET_FILE": "/run/secrets/client",
-		"ANSP_CISP_URL":           "https://cisp.example",
-		"ANSP_CIS_NOTIFY_ISSUERS": "https://cisp.example=https://cisp.example/jwks",
-		"ANSP_DSS_URL":            "https://dss.example",
-		"ANSP_AUTHORITY_URL":      "https://authority.example",
-		"ANSP_PUBLIC_BASE_URL":    "https://ansp.example",
-		"ANSP_MTLS_MODE":          "off",
-		"ANSP_LOG_LEVEL":          "debug",
-		"ANSP_OTLP_ENDPOINT":      "http://otel:4318",
-		"ANSP_COUNTRY":            "GEO",
-		"ANSP_DB_MAX_CONNS":       "20",
-		"ANSP_DB_TX_TIMEOUT_S":    "30",
+		"ANSP_PROCESS":                       "manned-feed",
+		"ANSP_INSTANCE":                      "feed-1",
+		"ANSP_AUDIENCES":                     "ansp.example, ansp.lab",
+		"ANSP_HTTP_ADDR":                     "127.0.0.1:9000",
+		"ANSP_NATS_URL":                      "nats://feed:pw@nats:4222",
+		"ANSP_NATS_CREDS":                    "/run/nats/feed.creds",
+		"ANSP_RELATIONAL_DSN":                "postgres://api:pw@db:5432/ansp?sslmode=disable",
+		"ANSP_TIMESERIES_DSN":                "postgres://tsdb:pw@db:5432/ansp_ts?sslmode=disable&password=pw",
+		"ANSP_TOKEN_ISSUERS":                 "https://auth.example=https://auth.example/jwks,https://lab.example=https://lab.example/jwks",
+		"ANSP_TOKEN_URL":                     "https://auth.example/oauth/token",
+		"ANSP_CLIENT_SECRET_FILE":            "/run/secrets/client",
+		"ANSP_CISP_URL":                      "https://cisp.example",
+		"ANSP_CIS_NOTIFY_ISSUERS":            "https://cisp.example=https://cisp.example/jwks",
+		"ANSP_DSS_URL":                       "https://dss.example",
+		"ANSP_AUTHORITY_URL":                 "https://authority.example",
+		"ANSP_PUBLIC_BASE_URL":               "https://ansp.example",
+		"ANSP_MTLS_MODE":                     "off",
+		"ANSP_LOG_LEVEL":                     "debug",
+		"ANSP_OTLP_ENDPOINT":                 "http://otel:4318",
+		"ANSP_COUNTRY":                       "GEO",
+		"ANSP_DB_MAX_CONNS":                  "20",
+		"ANSP_DB_TX_TIMEOUT_S":               "30",
+		"ANSP_MTLS_BINDINGS_FILE":            "/run/secrets/bindings.json",
+		"ANSP_TRUSTED_PROXIES":               "10.0.0.0/8, 192.0.2.10",
+		"ANSP_WS_ALLOWED_ORIGINS":            "https://ansp.example, http://localhost:3000",
+		"ANSP_SESSION_KEY_FILE":              "/run/secrets/session.pem",
+		"ANSP_SECRETS_KEY_FILE":              "/run/secrets/secrets.key",
+		"ANSP_LOGIN_IP_PER_MIN":              "20",
+		"ANSP_LOGIN_USER_PER_MIN":            "3",
+		"ANSP_LOGIN_LOCKOUT_AFTER":           "5",
+		"ANSP_LOGIN_LOCKOUT_S":               "600",
+		"ANSP_BOOTSTRAP_ADMIN_USERNAME":      "root",
+		"ANSP_BOOTSTRAP_ADMIN_PASSWORD_FILE": "/run/secrets/admin",
 	}), files)
 	if err != nil {
 		t.Fatal(err)
@@ -94,6 +105,12 @@ func TestLoadEveryVariable(t *testing.T) {
 		c.CISNotifyIssuers[0].Issuer != "https://cisp.example" || c.ClientSecret != "s3cret" || c.MTLSMode != MTLSOff ||
 		c.DBMaxConns != 20 || c.DBTxTimeoutS != 30 {
 		t.Fatalf("loaded %+v", c)
+	}
+	if !slices.Equal(c.TrustedProxies, []string{"10.0.0.0/8", "192.0.2.10"}) || len(c.WSAllowedOrigins) != 2 ||
+		c.SessionKeyFile != "/run/secrets/session.pem" || c.SecretsKeyFile != "/run/secrets/secrets.key" ||
+		c.MTLSBindingsFile != "/run/secrets/bindings.json" || c.LoginIPPerMin != 20 || c.LoginUserPerMin != 3 ||
+		c.LoginLockoutAfter != 5 || c.LoginLockoutS != 600 || c.BootstrapAdminUsername != "root" {
+		t.Fatalf("auth variables %+v", c)
 	}
 	r := c.Redacted()
 	if r["ANSP_NATS_URL"] != "nats://***@nats:4222" ||
@@ -138,6 +155,11 @@ func TestLoadRefusesNamingTheVariable(t *testing.T) {
 		{"instance", map[string]string{"ANSP_INSTANCE": "a b"}, []string{"ANSP_INSTANCE"}},
 		{"system id", map[string]string{"ANSP_SYSTEM_ID": "a/b"}, []string{"ANSP_SYSTEM_ID"}},
 		{"client id", map[string]string{"ANSP_CLIENT_ID": "a b"}, []string{"ANSP_CLIENT_ID"}},
+		{"trusted proxy", map[string]string{"ANSP_TRUSTED_PROXIES": "caddy"}, []string{"ANSP_TRUSTED_PROXIES"}},
+		{"origin with a path", map[string]string{"ANSP_WS_ALLOWED_ORIGINS": "https://ansp.example/console"}, []string{"ANSP_WS_ALLOWED_ORIGINS"}},
+		{"origin without scheme", map[string]string{"ANSP_WS_ALLOWED_ORIGINS": "ansp.example"}, []string{"ANSP_WS_ALLOWED_ORIGINS"}},
+		{"bootstrap half", map[string]string{"ANSP_BOOTSTRAP_ADMIN_USERNAME": "root"}, []string{"ANSP_BOOTSTRAP_ADMIN_USERNAME"}},
+		{"lockout bound", map[string]string{"ANSP_LOGIN_LOCKOUT_AFTER": "0"}, []string{"ANSP_LOGIN_LOCKOUT_AFTER"}},
 		{"secret file missing", map[string]string{"ANSP_CLIENT_SECRET_FILE": "/nope"}, []string{"ANSP_CLIENT_SECRET_FILE"}},
 		{"pool size not a number", map[string]string{"ANSP_DB_MAX_CONNS": "ten"}, []string{"ANSP_DB_MAX_CONNS"}},
 		{"pool size zero", map[string]string{"ANSP_DB_MAX_CONNS": "0"}, []string{"ANSP_DB_MAX_CONNS"}},

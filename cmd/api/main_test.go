@@ -127,7 +127,7 @@ func TestRunListenFailure(t *testing.T) {
 	}
 	defer ln.Close()
 	out := &syncBuffer{}
-	if code := run(context.Background(), nil, []string{"ANSP_PROCESS=" + process, "ANSP_HTTP_ADDR=" + ln.Addr().String()}, out); code != 1 {
+	if code := run(context.Background(), nil, []string{"ANSP_PROCESS=" + process, "ANSP_HTTP_ADDR=" + ln.Addr().String(), "ANSP_MTLS_MODE=off"}, out); code != 1 {
 		t.Fatalf("exit %d; log:\n%s", code, out.String())
 	}
 }

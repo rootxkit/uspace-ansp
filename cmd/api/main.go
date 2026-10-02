@@ -6,13 +6,15 @@
 // SIGTERM, then drains. `api migrate <relational|timeseries>...` is the
 // one-shot migration subcommand. With ANSP_RELATIONAL_DSN set it opens
 // the relational database as ansp_app and refuses to start on a schema
-// older than this build (M36).
+// older than this build (M36). With ANSP_SESSION_KEY_FILE set it serves
+// console sign-in, the user operations and the JWKS (WP-2, cmd/api/auth.go).
 package main
 
 import (
 	"context"
 	"io"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
@@ -74,8 +76,9 @@ func run(ctx context.Context, args, environ []string, stdout io.Writer) int {
 	go ensureStreams(ctx, b, logger)
 
 	checks := []obs.Check{b.Check()}
+	var db *store.Relational
 	if cfg.RelationalDSN != "" {
-		db, err := openRelational(ctx, cfg)
+		db, err = openRelational(ctx, cfg)
 		if err != nil {
 			// M36: never start on a schema older than this build.
 			logger.Error("relational database refused", slog.String("error", err.Error()))
@@ -85,7 +88,19 @@ func run(ctx context.Context, args, environ []string, stdout io.Writer) int {
 		checks = append(checks, db.Check())
 	}
 
-	srv := &obs.Server{Config: cfg, Logger: logger, Registry: obs.Metrics(), Checks: checks}
+	reg := obs.Metrics()
+	mux := http.NewServeMux()
+	aw, err := wireAuth(ctx, cfg, db, mux, reg, logger)
+	if err != nil {
+		logger.Error("auth refused", slog.String("error", err.Error()))
+		return 2
+	}
+	checks = append(checks, aw.checks...)
+	for _, fn := range aw.run {
+		go fn(ctx)
+	}
+
+	srv := &obs.Server{Config: cfg, Logger: logger, Registry: reg, Checks: checks, Mux: mux}
 	if err := srv.Serve(ctx); err != nil {
 		logger.Error("serve", slog.String("error", err.Error()))
 		return 1

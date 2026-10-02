@@ -128,6 +128,33 @@ type GooseDbVersionRelational struct {
 	Tstamp    pgtype.Timestamp
 }
 
+type LoginChallenge struct {
+	TokenHash string
+	UserID    uuid.UUID
+	CreatedAt time.Time
+	ExpiresAt time.Time
+	Attempts  int32
+	UsedAt    *time.Time
+	RemoteIp  string
+}
+
+type LoginLockout struct {
+	Username    string
+	Failures    int32
+	LockedUntil *time.Time
+	UpdatedAt   time.Time
+}
+
+type OauthClientsSeen struct {
+	ClientID    string
+	System      *string
+	Issuer      string
+	MtlsSubject *string
+	FirstSeenAt time.Time
+	LastSeenAt  time.Time
+	ScopesSeen  []string
+}
+
 type Restriction struct {
 	ID               string
 	AnspRef          string
@@ -198,4 +225,40 @@ type SourceControlEpoch struct {
 	Singleton bool
 	Epoch     uuid.UUID
 	CreatedAt time.Time
+}
+
+type User struct {
+	ID           uuid.UUID
+	Username     string
+	PasswordHash string
+	Role         string
+	Status       string
+	OidcSubject  *string
+	CreatedAt    time.Time
+	CreatedBy    string
+	UpdatedAt    time.Time
+	UpdatedBy    string
+	LastLoginAt  *time.Time
+}
+
+type UserMfa struct {
+	UserID     uuid.UUID
+	KeyID      string
+	SecretEnc  []byte
+	EnrolledAt *time.Time
+	LastStep   int64
+	UpdatedAt  time.Time
+}
+
+type UserSession struct {
+	Jti          string
+	UserID       uuid.UUID
+	Role         string
+	IssuedAt     time.Time
+	ExpiresAt    time.Time
+	LastSeenAt   time.Time
+	RevokedAt    *time.Time
+	RevokeReason *string
+	RemoteIp     string
+	UserAgent    string
 }
