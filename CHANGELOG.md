@@ -48,3 +48,20 @@ additively within `/v1`. One line per work package.
   idle, 12 h), the WebSocket cookie rule with an `Origin` allow-list, the
   JWKS endpoint, admin user operations and a bootstrap admin; migration
   0020.
+- WP-3 OpenAPI contract: `api/openapi.yaml` (OpenAPI 3.1) with every
+  operation of `docs/PLAN.md` section 6, each with `x-process`, `x-spec`
+  and `x-auth`, examples for every parameter, request and response, the
+  WebSocket frames (envelope plus body) and the one problem body; the
+  strict server, models and client generated with oapi-codegen v2.8.0 in
+  `api/gen`, with the F3548 types aliased to `uspace-core/f3548`; every
+  route mounted through the generated router behind its `x-auth`
+  (`auth.ParseAccess`, `auth.Routes`; unserved operations answer 501);
+  the WP-2 sign-in, user and key operations moved onto it;
+  `internal/apierr` (RFC 9457 with `errors[]`, capped at 100 with
+  `truncated`) replacing `auth.WriteProblem`; the JSON Schemas of
+  `track/manned/v1`, `restriction/state/v1` and
+  `coordination/annex_v/v1` with examples both ways; pinned copies of
+  the CISP, authority and USSP OpenAPI files and of the lab's common
+  schemas, diffed in CI; the generated CISP client; contract tests (lint,
+  examples, request and response validation, every route through the
+  generated client, the PLAN table).
