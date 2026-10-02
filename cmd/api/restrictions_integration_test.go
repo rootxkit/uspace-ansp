@@ -178,7 +178,7 @@ func TestIntegrationRestrictionLifecycleOverHTTP(t *testing.T) {
 		go fn(runCtx)
 	}
 	mux := http.NewServeMux()
-	if _, err := mountAPI(mux, aw.guard, aw.handlers, rw.api, aw.realIP); err != nil {
+	if _, err := mountAPI(mux, aw.guard, aw.handlers, rw.api, nil, aw.realIP); err != nil {
 		t.Fatal(err)
 	}
 	srv := httptest.NewServer(mux)

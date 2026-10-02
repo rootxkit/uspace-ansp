@@ -142,6 +142,9 @@ type Accounts struct {
 	counters    core.Counters
 	// sessions, when set, forgets a session this process ended.
 	sessions *SessionVerifier
+	// projection, when set, is told of every session started and ended
+	// after the commit (sessions_live, docs/PLAN.md section 15 row 21).
+	projection SessionProjection
 }
 
 // AccountsDeps are what Accounts works with.
@@ -640,6 +643,9 @@ func (s *Accounts) VerifyMFA(ctx context.Context, mfaToken, code string, ri Requ
 		return MFAResult{}, refused
 	}
 	s.counters.Inc(CounterSessionsStarted)
+	if s.projection != nil {
+		s.projection.Started(ctx, out.JTI, LiveSession{UserID: out.User.ID, Role: out.User.Role, ExpiresAt: out.ExpiresAt})
+	}
 	return out, nil
 }
 
@@ -707,6 +713,8 @@ func (s *Accounts) CheckSession(ctx context.Context, jti, sub string) (string, e
 		})
 		if err != nil {
 			s.counters.Inc(CounterRefusalNotSaved)
+		} else {
+			s.ended(ctx, jti)
 		}
 		return "", fmt.Errorf("%w: the session was idle longer than %s", ErrSessionRefused, s.cfg.IdleTimeout)
 	}
@@ -747,6 +755,7 @@ func (s *Accounts) Logout(ctx context.Context, p Principal) error {
 		return fmt.Errorf("logout: %w", err)
 	}
 	s.forget(p.Claims.JTI)
+	s.ended(ctx, p.Claims.JTI)
 	return nil
 }
 
@@ -912,6 +921,7 @@ func (s *Accounts) change(ctx context.Context, actor Principal, id, eventType, r
 		return UserView{}, wrapUnlessRefusal(eventType, err)
 	}
 	s.forget(ended...)
+	s.ended(ctx, ended...)
 	return viewOf(out), nil
 }
 

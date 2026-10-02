@@ -97,3 +97,21 @@ additively within `/v1`. One line per work package.
   `/v1/restrictions/stream` console WebSocket in `cmd/api` with the
   ticker; `ANSP_GEOID_FILE` and `ANSP_AUTHORITY_*`;
   `github.com/coder/websocket` (PLAN section 4).
+- WP-6 manned-feed: `internal/sources` (the KV document of WP-4
+  confirmed unchanged; the api's writer, row first and a compare-and-set
+  put to KV and `ctl.sources` after the commit, 503 when the bucket
+  cannot be reached, a republish every 60 s; the follower with three
+  reads at start, the push and a re-read every 60 s; the ansp vectors of
+  `source_control.json`), `GET /v1/sources` and `PUT
+  /v1/sources/{type}/{instance}` in `cmd/api`; `internal/picture` (last
+  sample per icao24, out-of-order dropped, backlog never live, stale,
+  `source_disabled` within one tick, eviction by age and by
+  `max_aircraft`, relevance through uspace-core with no CIS projection
+  "not evaluated"); `internal/feed` (the snapshot and the WebSocket
+  stream in the console frames with `age_s`, 2 Hz throttle, bounded
+  queues, connection caps, `degraded[]`, `feed_products`, and the
+  `MAN_MIRROR` recorder that acknowledges after the commit);
+  `cmd/manned-feed` wired with readiness for every dependency;
+  timeseries migration `0010` (`manned_tracks.msg_id`, a sample lands
+  once); the live-session projection `sessions_live` with
+  `ctl.sessions.seen` (PLAN section 15 row 21); uspace-core `v1.3.0`.

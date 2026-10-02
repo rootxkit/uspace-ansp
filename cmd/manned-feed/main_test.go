@@ -82,9 +82,22 @@ func TestRunServesHealthWithoutNATSAndDrains(t *testing.T) {
 	if err := json.Unmarshal([]byte(body), &rep); err != nil {
 		t.Fatal(err)
 	}
-	if code != http.StatusServiceUnavailable || rep.Process != process || rep.Status != "not_ready" ||
-		len(rep.Summary) != 1 || rep.Summary[0] != "nats: down (ANSP_NATS_URL is not set)" {
+	// Every dependency is named, none hidden (E-02): the bus, the
+	// database, the CIS projection, the switches and the policy.
+	want := []string{
+		"nats: down (ANSP_NATS_URL is not set)",
+		"timeseries: down (ANSP_TIMESERIES_DSN is not set: samples are not written)",
+		"cis_projection: degraded (relevance: not evaluated (no CIS projection))",
+		"source_control: degraded (unknown, nothing read (every source enabled)",
+		"policy: degraded (policy: defaults, KV empty)",
+	}
+	if code != http.StatusServiceUnavailable || rep.Process != process || rep.Status != "not_ready" || len(rep.Summary) != len(want) {
 		t.Fatalf("/readyz %d %s", code, body)
+	}
+	for i, w := range want {
+		if !strings.HasPrefix(rep.Summary[i], w) {
+			t.Fatalf("/readyz check %d: %q, want %q", i, rep.Summary[i], w)
+		}
 	}
 	if code, body := get(t, "http://"+addr+"/metrics"); code != http.StatusOK || !strings.Contains(body, "go_goroutines") {
 		t.Fatalf("/metrics %d", code)
@@ -127,7 +140,7 @@ func TestRunListenFailure(t *testing.T) {
 	}
 	defer ln.Close()
 	out := &syncBuffer{}
-	if code := run(context.Background(), nil, []string{"ANSP_PROCESS=" + process, "ANSP_HTTP_ADDR=" + ln.Addr().String()}, out); code != 1 {
+	if code := run(context.Background(), nil, []string{"ANSP_PROCESS=" + process, "ANSP_HTTP_ADDR=" + ln.Addr().String(), "ANSP_MTLS_MODE=off"}, out); code != 1 {
 		t.Fatalf("exit %d; log:\n%s", code, out.String())
 	}
 }

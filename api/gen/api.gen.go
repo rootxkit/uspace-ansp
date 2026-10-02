@@ -2046,6 +2046,8 @@ type MannedStreamFrame struct {
 // stale_after_s) or source_disabled (its adapter was switched off)
 // as the aircraft ages out, never dropped silently.
 type MannedTrack struct {
+	// AgeS Seconds since captured_at when manned-feed wrote the frame (B-13); absent on the adapter's internal subject.
+	AgeS         *float32 `json:"age_s,omitempty"`
 	AltPressureM *float32 `json:"alt_pressure_m"`
 	AltWgs84M    *float32 `json:"alt_wgs84_m"`
 	Callsign     *string  `json:"callsign,omitempty"`
@@ -4328,8 +4330,12 @@ type ClientInterface interface {
 	// Enables or disables a source by type (manned) and instance (an
 	// adapter id, or * for the type as a whole), with a reason; audited
 	// (02 §1 failure rule: every disable is an audited act by a
-	// person). Written in the same transaction as the KV put: 503 when
-	// the KV bucket cannot take it, and nothing changed.
+	// person). 503 when the source_control KV bucket cannot be reached,
+	// and nothing changed. The row is committed first and the whole
+	// state put to KV and pushed on ctl.sources after the commit; a put
+	// that fails after the commit leaves the switch set (the database is
+	// the record) and is repaired by the republish within 60 s (WP-6,
+	// docs/PLAN.md section 15 row 37).
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -4341,8 +4347,12 @@ type ClientInterface interface {
 	// Enables or disables a source by type (manned) and instance (an
 	// adapter id, or * for the type as a whole), with a reason; audited
 	// (02 §1 failure rule: every disable is an audited act by a
-	// person). Written in the same transaction as the KV put: 503 when
-	// the KV bucket cannot take it, and nothing changed.
+	// person). 503 when the source_control KV bucket cannot be reached,
+	// and nothing changed. The row is committed first and the whole
+	// state put to KV and pushed on ctl.sources after the commit; a put
+	// that fails after the commit leaves the switch set (the database is
+	// the record) and is repaired by the republish within 60 s (WP-6,
+	// docs/PLAN.md section 15 row 37).
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -5533,8 +5543,12 @@ func (c *Client) ListSources(ctx context.Context, reqEditors ...RequestEditorFn)
 // Enables or disables a source by type (manned) and instance (an
 // adapter id, or * for the type as a whole), with a reason; audited
 // (02 §1 failure rule: every disable is an audited act by a
-// person). Written in the same transaction as the KV put: 503 when
-// the KV bucket cannot take it, and nothing changed.
+// person). 503 when the source_control KV bucket cannot be reached,
+// and nothing changed. The row is committed first and the whole
+// state put to KV and pushed on ctl.sources after the commit; a put
+// that fails after the commit leaves the switch set (the database is
+// the record) and is repaired by the republish within 60 s (WP-6,
+// docs/PLAN.md section 15 row 37).
 //
 // Takes any type of body and a specified content type.
 //
@@ -5556,8 +5570,12 @@ func (c *Client) SetSourceControlWithBody(ctx context.Context, pType SetSourceCo
 // Enables or disables a source by type (manned) and instance (an
 // adapter id, or * for the type as a whole), with a reason; audited
 // (02 §1 failure rule: every disable is an audited act by a
-// person). Written in the same transaction as the KV put: 503 when
-// the KV bucket cannot take it, and nothing changed.
+// person). 503 when the source_control KV bucket cannot be reached,
+// and nothing changed. The row is committed first and the whole
+// state put to KV and pushed on ctl.sources after the commit; a put
+// that fails after the commit leaves the switch set (the database is
+// the record) and is repaired by the republish within 60 s (WP-6,
+// docs/PLAN.md section 15 row 37).
 //
 // Takes a body of the `application/json` content type.
 //
@@ -8113,8 +8131,12 @@ type ClientWithResponsesInterface interface {
 	// Enables or disables a source by type (manned) and instance (an
 	// adapter id, or * for the type as a whole), with a reason; audited
 	// (02 §1 failure rule: every disable is an audited act by a
-	// person). Written in the same transaction as the KV put: 503 when
-	// the KV bucket cannot take it, and nothing changed.
+	// person). 503 when the source_control KV bucket cannot be reached,
+	// and nothing changed. The row is committed first and the whole
+	// state put to KV and pushed on ctl.sources after the commit; a put
+	// that fails after the commit leaves the switch set (the database is
+	// the record) and is repaired by the republish within 60 s (WP-6,
+	// docs/PLAN.md section 15 row 37).
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -8126,8 +8148,12 @@ type ClientWithResponsesInterface interface {
 	// Enables or disables a source by type (manned) and instance (an
 	// adapter id, or * for the type as a whole), with a reason; audited
 	// (02 §1 failure rule: every disable is an audited act by a
-	// person). Written in the same transaction as the KV put: 503 when
-	// the KV bucket cannot take it, and nothing changed.
+	// person). 503 when the source_control KV bucket cannot be reached,
+	// and nothing changed. The row is committed first and the whole
+	// state put to KV and pushed on ctl.sources after the commit; a put
+	// that fails after the commit leaves the switch set (the database is
+	// the record) and is repaired by the republish within 60 s (WP-6,
+	// docs/PLAN.md section 15 row 37).
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -12626,8 +12652,12 @@ func (c *ClientWithResponses) ListSourcesWithResponse(ctx context.Context, reqEd
 // Enables or disables a source by type (manned) and instance (an
 // adapter id, or * for the type as a whole), with a reason; audited
 // (02 §1 failure rule: every disable is an audited act by a
-// person). Written in the same transaction as the KV put: 503 when
-// the KV bucket cannot take it, and nothing changed.
+// person). 503 when the source_control KV bucket cannot be reached,
+// and nothing changed. The row is committed first and the whole
+// state put to KV and pushed on ctl.sources after the commit; a put
+// that fails after the commit leaves the switch set (the database is
+// the record) and is repaired by the republish within 60 s (WP-6,
+// docs/PLAN.md section 15 row 37).
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -12645,8 +12675,12 @@ func (c *ClientWithResponses) SetSourceControlWithBodyWithResponse(ctx context.C
 // Enables or disables a source by type (manned) and instance (an
 // adapter id, or * for the type as a whole), with a reason; audited
 // (02 §1 failure rule: every disable is an audited act by a
-// person). Written in the same transaction as the KV put: 503 when
-// the KV bucket cannot take it, and nothing changed.
+// person). 503 when the source_control KV bucket cannot be reached,
+// and nothing changed. The row is committed first and the whole
+// state put to KV and pushed on ctl.sources after the commit; a put
+// that fails after the commit leaves the switch set (the database is
+// the record) and is repaired by the republish within 60 s (WP-6,
+// docs/PLAN.md section 15 row 37).
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //

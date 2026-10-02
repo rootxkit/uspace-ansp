@@ -108,4 +108,27 @@
 // on ANSP_WS_ALLOWED_ORIGINS, or a bearer; there is no ticket
 // (RequireUpgrade). A 4401 close (CloseReLogin) means "sign in again".
 // On logout, a 401 or exp the BFF clears both cookies.
+//
+// # Live sessions on manned-feed (docs/PLAN.md section 15 row 21)
+//
+// manned-feed never opens PostgreSQL, so it checks a console session
+// against the KV bucket sessions_live, which holds the live sessions
+// (key = jti, value {user_id, role, expires_at}; max age 12 h).
+// SessionProjector is api's writer: Accounts tells it after each commit
+// (a session started at the MFA step; ended by logout, admin disable or
+// reset, or idle), a failed put or delete is counted and never retried
+// inline, and Run rewrites the whole bucket from user_sessions (not
+// revoked, not expired, used within the idle timeout, on the database
+// clock) every LiveSessionResync, deleting every other key; a listing
+// cut at MaxLiveSessions deletes nothing. KVSessionChecker is the
+// feed's SessionChecker: a full read every LiveSessionResync and the
+// watch between reads. Absence refuses (a jti with no key, or past its
+// expires_at); while the bucket cannot be read for longer than one
+// resync (or the bus is down that long) every check is
+// ErrLiveSessionsUnavailable, which the guard answers on a cookie
+// upgrade with an accepted-then-closed 4401 (Guard.UpgradeReLogin) and
+// an open stream answers by closing with 4401. Machine bearers do not
+// depend on it. An open console stream reports its session on
+// ctl.sessions.seen at most once a minute, and SessionSeen moves its
+// last_seen_at: a supervisor watching the picture is not idle.
 package auth

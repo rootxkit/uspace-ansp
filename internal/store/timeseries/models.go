@@ -48,4 +48,5 @@ type MannedTrack struct {
 	Quality       json.RawMessage
 	Relevant      bool
 	PolicyVersion int64
+	MsgID         *string
 }

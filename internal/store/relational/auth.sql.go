@@ -252,6 +252,55 @@ func (q *Queries) InsertUser(ctx context.Context, arg InsertUserParams) (User, e
 	return i, err
 }
 
+const listLiveSessions = `-- name: ListLiveSessions :many
+SELECT jti, user_id, role, expires_at FROM user_sessions
+WHERE revoked_at IS NULL AND expires_at > clock_timestamp()
+  AND last_seen_at > clock_timestamp() - make_interval(secs => $1::double precision)
+ORDER BY jti
+LIMIT $2
+`
+
+type ListLiveSessionsParams struct {
+	IdleS    float64
+	PageSize int32
+}
+
+type ListLiveSessionsRow struct {
+	Jti       string
+	UserID    uuid.UUID
+	Role      string
+	ExpiresAt time.Time
+}
+
+// WP-6: the live sessions projected to KV sessions_live (docs/PLAN.md
+// section 15 row 21): not revoked, not expired and used within the idle
+// timeout, all on the database clock; bounded, the caller asks for one
+// more than it takes to know when it was cut.
+func (q *Queries) ListLiveSessions(ctx context.Context, arg ListLiveSessionsParams) ([]ListLiveSessionsRow, error) {
+	rows, err := q.db.Query(ctx, listLiveSessions, arg.IdleS, arg.PageSize)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListLiveSessionsRow{}
+	for rows.Next() {
+		var i ListLiveSessionsRow
+		if err := rows.Scan(
+			&i.Jti,
+			&i.UserID,
+			&i.Role,
+			&i.ExpiresAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listUsers = `-- name: ListUsers :many
 SELECT id, username, password_hash, role, status, oidc_subject, created_at, created_by, updated_at, updated_by, last_login_at FROM users ORDER BY username LIMIT $1
 `

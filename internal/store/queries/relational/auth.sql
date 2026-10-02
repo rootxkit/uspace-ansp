@@ -88,6 +88,17 @@ VALUES (sqlc.arg(jti), sqlc.arg(user_id), sqlc.arg(role), sqlc.arg(issued_at), s
 -- The session row and the database clock to judge it by.
 SELECT s.*, clock_timestamp()::timestamptz AS db_now FROM user_sessions s WHERE s.jti = sqlc.arg(jti);
 
+-- name: ListLiveSessions :many
+-- WP-6: the live sessions projected to KV sessions_live (docs/PLAN.md
+-- section 15 row 21): not revoked, not expired and used within the idle
+-- timeout, all on the database clock; bounded, the caller asks for one
+-- more than it takes to know when it was cut.
+SELECT jti, user_id, role, expires_at FROM user_sessions
+WHERE revoked_at IS NULL AND expires_at > clock_timestamp()
+  AND last_seen_at > clock_timestamp() - make_interval(secs => sqlc.arg(idle_s)::double precision)
+ORDER BY jti
+LIMIT sqlc.arg(page_size);
+
 -- name: TouchSession :exec
 UPDATE user_sessions SET last_seen_at = clock_timestamp()
 WHERE jti = sqlc.arg(jti) AND revoked_at IS NULL;

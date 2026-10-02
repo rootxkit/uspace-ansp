@@ -34,6 +34,8 @@ type authWiring struct {
 	guard    *auth.Guard
 	realIP   func(http.Handler) http.Handler
 	handlers *auth.Handlers
+	// accounts is nil while console sign-in is not configured.
+	accounts *auth.Accounts
 	checks   []obs.Check
 	run      []func(ctx context.Context)
 }
@@ -149,6 +151,7 @@ func wireAuth(ctx context.Context, cfg config.Config, db *store.Relational, reg 
 	}
 
 	w.handlers = &auth.Handlers{Accounts: accounts, Keys: keys}
+	w.accounts = accounts
 
 	for prefix, c := range map[string]*core.Counters{
 		"": guard.Counters(), "auth_accounts": accounts.Counters(), "auth_sessions": sessions.Counters(),

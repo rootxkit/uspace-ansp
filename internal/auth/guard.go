@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/coder/websocket"
 	coreauth "github.com/rootxkit/uspace-core/auth"
 	"github.com/rootxkit/uspace-core/core"
 
@@ -162,6 +163,12 @@ type Guard struct {
 	Seen *SeenRecorder
 	// Origins are ANSP_WS_ALLOWED_ORIGINS, for cookie upgrades.
 	Origins []string
+	// UpgradeReLogin, when set, answers a cookie upgrade whose session
+	// cannot be checked (the store or the live-session projection
+	// unreachable) by accepting it and closing it at once with
+	// CloseReLogin, which a browser can read, instead of 503, which it
+	// cannot (manned-feed, docs/PLAN.md section 15 row 21 (2)).
+	UpgradeReLogin bool
 
 	counters core.Counters
 }
@@ -339,6 +346,10 @@ func (g *Guard) RequireUpgrade(a Access) func(http.Handler) http.Handler {
 			}
 			p, err := g.fromCookie(r, a)
 			if err != nil {
+				if g.UpgradeReLogin && err.Status == http.StatusServiceUnavailable {
+					reLogin(w, r)
+					return
+				}
 				apierr.WriteError(w, r, err)
 				return
 			}
@@ -364,4 +375,14 @@ func (g *Guard) fromCookie(r *http.Request, a Access) (Principal, *apierr.Proble
 		return Principal{}, refusal(http.StatusUnauthorized, SlugUnauthenticated, "the "+CookieSession+" cookie does not hold a session of this system")
 	}
 	return g.session(r.Context(), c.Value, a)
+}
+
+// reLogin accepts the upgrade only to close it with CloseReLogin: the
+// session could not be checked, and the console signs in again.
+func reLogin(w http.ResponseWriter, r *http.Request) {
+	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true})
+	if err != nil {
+		return
+	}
+	_ = conn.Close(CloseReLogin, "the session cannot be checked now; sign in again")
 }

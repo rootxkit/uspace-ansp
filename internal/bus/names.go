@@ -21,6 +21,10 @@ const (
 	SubjectControlSources = "ctl.sources"
 	// SubjectControlPolicy is the push of the ansp_policy row.
 	SubjectControlPolicy = "ctl.policy"
+	// SubjectSessionsSeen carries the jti of a console session that an
+	// open manned-feed stream keeps in use, at most once a minute per
+	// stream; api moves its last_seen_at (docs/PLAN.md section 15 row 21).
+	SubjectSessionsSeen = "ctl.sessions.seen"
 )
 
 // JetStream streams.
@@ -36,7 +40,14 @@ const (
 	BucketCISCurrent    = "cis_current"
 	BucketSourceControl = "source_control"
 	BucketPolicy        = "policy"
+	// BucketSessionsLive holds the live console sessions by jti (api
+	// writes, manned-feed reads; docs/PLAN.md section 15 row 21).
+	BucketSessionsLive = "sessions_live"
 )
+
+// SessionsLiveMaxAge is the bucket's max age: the longest session
+// (auth.MaxSessionTTL), so a key the api never deleted still goes.
+const SessionsLiveMaxAge = 12 * time.Hour
 
 // Retention of the streams (docs/PLAN.md section 7).
 const (

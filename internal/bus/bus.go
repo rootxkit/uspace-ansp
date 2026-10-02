@@ -291,12 +291,14 @@ func StreamConfigs() []jetstream.StreamConfig {
 	}
 }
 
-// BucketConfigs are the three KV buckets of docs/PLAN.md section 7.
+// BucketConfigs are the KV buckets of docs/PLAN.md section 7 and the
+// live-session projection of section 15 row 21.
 func BucketConfigs() []jetstream.KeyValueConfig {
 	return []jetstream.KeyValueConfig{
 		{Bucket: BucketCISCurrent, Storage: jetstream.FileStorage},
 		{Bucket: BucketSourceControl, Storage: jetstream.FileStorage, History: 8},
 		{Bucket: BucketPolicy, Storage: jetstream.FileStorage, History: 8},
+		{Bucket: BucketSessionsLive, Storage: jetstream.FileStorage, History: 1, TTL: SessionsLiveMaxAge},
 	}
 }
 

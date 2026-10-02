@@ -95,3 +95,63 @@ func TestIntegrationEnsureStreams(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// The lazy KV against a real bucket: resolved on first use, every call
+// this system makes, and a missing bucket said rather than hidden.
+func TestIntegrationLazyKV(t *testing.T) {
+	b := integrationBus(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := b.EnsureStreams(ctx); err != nil {
+		t.Fatal(err)
+	}
+	kv := b.KeyValue(BucketSessionsLive)
+	_ = kv.Delete(ctx, "lazy") // a previous run's key
+	if _, err := kv.Get(ctx, "nokey"); !errors.Is(err, jetstream.ErrKeyNotFound) {
+		t.Fatalf("get: %v", err)
+	}
+	rev, err := kv.Create(ctx, "lazy", []byte("1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := kv.Update(ctx, "lazy", []byte("2"), rev); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := kv.Put(ctx, "lazy", []byte("3")); err != nil {
+		t.Fatal(err)
+	}
+	w, err := kv.WatchAll(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for e := range w.Updates() {
+		if e == nil {
+			break // the end of the initial values
+		}
+		if e.Key() == "lazy" && e.Operation() == jetstream.KeyValuePut && string(e.Value()) == "3" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("the watch did not hold the key")
+	}
+	_ = w.Stop()
+	l, err := kv.ListKeys(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := 0
+	for range l.Keys() {
+		n++
+	}
+	if n == 0 {
+		t.Fatal("no keys listed")
+	}
+	if err := kv.Delete(ctx, "lazy"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := b.KeyValue("no_such_bucket").Get(ctx, "k"); err == nil {
+		t.Fatal("a missing bucket said nothing")
+	}
+}

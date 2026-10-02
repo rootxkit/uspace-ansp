@@ -17,7 +17,7 @@ import (
 // with the timeseries database ready (E-01 pair).
 func TestIntegrationMigrateThenStart(t *testing.T) {
 	ts := storetest.Scratch(t, store.TreeTimeseries, false)
-	dbEnv := []string{"ANSP_PROCESS=" + process, "ANSP_TIMESERIES_DSN=" + ts}
+	dbEnv := []string{"ANSP_PROCESS=" + process, "ANSP_TIMESERIES_DSN=" + ts, "ANSP_MTLS_MODE=off"}
 	out := &syncBuffer{}
 	env := append([]string{"ANSP_HTTP_ADDR=" + freeAddr(t)}, dbEnv...)
 	if code := run(context.Background(), nil, env, out); code != 1 || !strings.Contains(out.String(), "the timeseries tree is at version 0") {
