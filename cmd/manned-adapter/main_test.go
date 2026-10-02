@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -88,18 +89,40 @@ func TestRunServesHealthWithoutNATSAndDrains(t *testing.T) {
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	code, body := get(t, "http://"+addr+"/readyz")
-	var rep struct {
-		Process string   `json:"process"`
-		Status  string   `json:"status"`
-		Summary []string `json:"summary"`
-	}
-	if err := json.Unmarshal([]byte(body), &rep); err != nil {
-		t.Fatal(err)
-	}
-	if code != http.StatusServiceUnavailable || rep.Process != process || rep.Status != "not_ready" ||
-		len(rep.Summary) != 2 || rep.Summary[0] != "nats: down (ANSP_NATS_URL is not set)" || rep.Summary[1] != "feed: ok" {
-		t.Fatalf("/readyz %d %s", code, body)
+	// /healthz answers as soon as the server listens, before the replay
+	// has opened its file, and the replay (90 s of synthetic data at
+	// 100x) ends after about 0.9 s and reconnects after its backoff: the
+	// feed line is "down (reconnecting since T)" outside those windows.
+	// So /readyz is polled until the feed is ok; every answer on the way
+	// must still be 503 with nats down and the feed either ok or
+	// reconnecting (a single read here was the flake of the WP-7 CI run,
+	// /readyz read while the feed had not yet connected).
+	var seen []string
+	for {
+		code, body := get(t, "http://"+addr+"/readyz")
+		seen = append(seen, fmt.Sprintf("%d %s", code, body))
+		var rep struct {
+			Process string   `json:"process"`
+			Status  string   `json:"status"`
+			Summary []string `json:"summary"`
+		}
+		if err := json.Unmarshal([]byte(body), &rep); err != nil {
+			t.Fatalf("/readyz %d %q: %v", code, body, err)
+		}
+		if code != http.StatusServiceUnavailable || rep.Process != process || rep.Status != "not_ready" ||
+			len(rep.Summary) != 2 || rep.Summary[0] != "nats: down (ANSP_NATS_URL is not set)" {
+			t.Fatalf("/readyz %d %s", code, body)
+		}
+		if rep.Summary[1] == "feed: ok" {
+			break
+		}
+		if !strings.HasPrefix(rep.Summary[1], "feed: down (reconnecting since ") {
+			t.Fatalf("/readyz feed line %q", rep.Summary[1])
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the feed never read ok; /readyz answers:\n%s\nlog:\n%s", strings.Join(seen, "\n"), out.String())
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 	for {
 		code, body := get(t, "http://"+addr+"/metrics")
