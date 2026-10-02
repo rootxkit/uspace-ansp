@@ -41,22 +41,23 @@ type apiServer struct {
 	gen.ServerInterface
 	auth *auth.Handlers
 	rs   *restrictionAPI
+	src  *sourcesAPI
 }
 
-func newAPIServer(h *auth.Handlers, rs *restrictionAPI) apiServer {
+func newAPIServer(h *auth.Handlers, rs *restrictionAPI, src *sourcesAPI) apiServer {
 	strict := gen.NewStrictHandlerWithOptions(gen.Unimplemented{}, nil, gen.StrictHTTPServerOptions{
 		RequestErrorHandlerFunc:  requestError,
 		ResponseErrorHandlerFunc: responseError,
 	})
-	return apiServer{ServerInterface: strict, auth: h, rs: rs}
+	return apiServer{ServerInterface: strict, auth: h, rs: rs, src: src}
 }
 
 // mountAPI registers every operation of api on mux through the
 // generated router, each behind its x-auth (auth.Routes), and returns
 // the routes or why they cannot be served.
-func mountAPI(mux *http.ServeMux, guard *auth.Guard, h *auth.Handlers, rs *restrictionAPI, middlewares ...func(http.Handler) http.Handler) (*auth.Routes, error) {
+func mountAPI(mux *http.ServeMux, guard *auth.Guard, h *auth.Handlers, rs *restrictionAPI, src *sourcesAPI, middlewares ...func(http.Handler) http.Handler) (*auth.Routes, error) {
 	rt := auth.NewRoutes(mux, process, guard, maxBodyBytes, operations(), middlewares...)
-	gen.HandlerWithOptions(newAPIServer(h, rs), gen.StdHTTPServerOptions{BaseRouter: rt, ErrorHandlerFunc: requestError})
+	gen.HandlerWithOptions(newAPIServer(h, rs, src), gen.StdHTTPServerOptions{BaseRouter: rt, ErrorHandlerFunc: requestError})
 	err := rt.Err()
 	return rt, err
 }

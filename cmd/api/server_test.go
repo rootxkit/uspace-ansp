@@ -37,7 +37,7 @@ func testServer(t *testing.T, h *auth.Handlers) (*auth.Routes, http.Handler) {
 		t.Fatal(err)
 	}
 	mux := http.NewServeMux()
-	rt, err := mountAPI(mux, &auth.Guard{Machine: scopeVerifier{}, MTLS: mtls}, h, nil)
+	rt, err := mountAPI(mux, &auth.Guard{Machine: scopeVerifier{}, MTLS: mtls}, h, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

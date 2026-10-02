@@ -41,6 +41,10 @@ type Row struct {
 	Reason     string    `json:"reason"`
 	Actor      string    `json:"actor"`
 	ChangedAt  time.Time `json:"changed_at"`
+	// Version is the row's own version (source_controls.version), for
+	// GET /v1/sources; the document carries only the highest, so it is
+	// not on the wire of KV and ctl.sources.
+	Version uint64 `json:"-"`
 }
 
 // Doc is the source-control state as it travels on KV and ctl.sources.
