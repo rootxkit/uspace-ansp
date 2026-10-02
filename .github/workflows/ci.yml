@@ -40,6 +40,7 @@ jobs:
       integration: ${{ github.event_name != 'pull_request' || steps.filter.outputs.integration == 'true' }}
       image: ${{ github.event_name != 'pull_request' || steps.filter.outputs.image == 'true' }}
       web: ${{ github.event_name != 'pull_request' || steps.filter.outputs.web == 'true' }}
+      contracts: ${{ github.event_name != 'pull_request' || steps.filter.outputs.contracts == 'true' }}
     steps:
       - uses: actions/checkout@v4
         if: github.event_name == 'pull_request'
@@ -56,6 +57,8 @@ jobs:
               - 'Makefile'
               - 'scripts/**'
               - 'api/**'
+              - 'schemas/**'
+              - 'docs/PLAN.md'
               - 'deploy/.env.example'
               - '.github/workflows/ci.yml'
             integration:
@@ -78,6 +81,12 @@ jobs:
             web:
               - 'web/**'
               - 'api/openapi.yaml'
+            contracts:
+              - 'api/**'
+              - 'schemas/**'
+              - 'scripts/check-contracts.sh'
+              - 'scripts/lint-api.sh'
+              - '.github/workflows/ci.yml'
 
   lint-docs:
     name: lint docs
@@ -207,6 +216,41 @@ jobs:
           name: integration-log
           path: integration.log
           if-no-files-found: ignore
+
+  # The contract (WP-3): api/openapi.yaml lints with the pinned
+  # @redocly/cli, and every pinned sibling copy (api/clients/, the lab
+  # schemas under schemas/common/) equals its source at the pinned commit
+  # (M11). Each check is also shown to fail on a broken input (E-01).
+  contracts:
+    name: contracts (OpenAPI lint, pinned copies)
+    needs: changes
+    if: needs.changes.outputs.contracts == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: lint api/openapi.yaml (@redocly/cli, pinned in scripts/lint-api.sh)
+        run: make lint-api
+      - name: the lint fails on a warning
+        run: |
+          { echo 'extends:'; echo '  - recommended'; } > "$RUNNER_TEMP/recommended.yaml"
+          if LINT_API_CONFIG="$RUNNER_TEMP/recommended.yaml" scripts/lint-api.sh > "$RUNNER_TEMP/lint.log" 2>&1; then
+            cat "$RUNNER_TEMP/lint.log"; echo "the lint passed with warnings"; exit 1
+          fi
+          tail -n 2 "$RUNNER_TEMP/lint.log"
+      - name: pinned copies equal their sources
+        run: make check-contracts
+      - name: a changed copy fails the check
+        run: |
+          echo '# local change' >> api/clients/cisp.yaml
+          if scripts/check-contracts.sh > "$RUNNER_TEMP/contracts.log" 2>&1; then
+            cat "$RUNNER_TEMP/contracts.log"; echo "a changed copy passed"; exit 1
+          fi
+          grep 'differs from' "$RUNNER_TEMP/contracts.log"
+          git checkout -- api/clients/cisp.yaml
 
   vectors:
     name: knowledge vectors

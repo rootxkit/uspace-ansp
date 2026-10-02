@@ -1,0 +1,26 @@
+# oapi-codegen v2.8.0 configuration for api/clients/cispclient: the Go
+# client and the models of the CISP's national API, from the pinned copy
+# ../cisp.yaml (../SOURCE; reconciliation M11). Only the calls this system
+# makes (docs/PLAN.md section 6, outbound; api/outbound.md) get client
+# methods; every model of the file is kept (skip-prune), so that the
+# webhook body cis/change/v1 (Change), cis/restriction/v1 (CisRestriction)
+# and cis/ussp_list/v1 (UsspList) are generated types, never hand-written.
+# Run through `make generate`; never edit the generated file.
+package: cispclient
+generate:
+  client: true
+  models: true
+output-options:
+  skip-prune: true
+  include-operation-ids:
+    - postPublisherHeartbeat
+    - createRestriction
+    - getRestriction
+    - patchRestriction
+    - createSubscription
+    - getSubscription
+    - getDataset
+    - headDataset
+    - listChanges
+compatibility:
+  always-prefix-enum-values: true
