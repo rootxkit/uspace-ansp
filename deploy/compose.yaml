@@ -121,7 +121,10 @@ services:
       nats:
         condition: service_started
 
-  # The replay adapter (WP-4); in WP-0 the stub. It opens no database.
+  # The replay adapter (WP-4): the synthetic converging pair of
+  # testdata/replay, looped, mounted read-only (replay data is never in
+  # the image). Replay runs only because it is allowed here (06 T11). It
+  # opens no database.
   manned-adapter:
     <<: *ansp
     entrypoint: ["/manned-adapter"]
@@ -132,8 +135,15 @@ services:
       ANSP_NATS_URL: nats://nats:4222
       ANSP_NATS_CREDS: /run/secrets/nats.nk
       ANSP_MTLS_MODE: "off"
+      ANSP_ADAPTER_KIND: replay
+      ANSP_ADAPTER_ID: replay
+      ANSP_ADAPTER_SOURCE_CLASS: ads_b
+      ANSP_ADAPTER_REPLAY_FILE: /replay/two-aircraft-converging.ndjson
+      ANSP_ADAPTER_REPLAY_ALLOWED: "true"
+      ANSP_ADAPTER_REPLAY_LOOP: "true"
     volumes:
       - ../local/nats/manned-adapter.nk:/run/secrets/nats.nk:ro
+      - ../testdata/replay:/replay:ro
     ports:
       - "127.0.0.1:58082:8080"
     depends_on:

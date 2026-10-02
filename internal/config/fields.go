@@ -82,6 +82,17 @@ func (f field) load(vals map[string]string) error {
 			return core.Fieldf(f.name, "%d is outside %d to %d", n, lo, hi)
 		}
 		*p = n
+	case *float64:
+		n, err := strconv.ParseFloat(raw, 64)
+		if err != nil || !core.IsFinite(n) {
+			return core.Fieldf(f.name, "%q is not a number", raw)
+		}
+		lo, _ := strconv.ParseFloat(f.tag("min"), 64)
+		hi, _ := strconv.ParseFloat(f.tag("max"), 64)
+		if n < lo || n > hi {
+			return core.Fieldf(f.name, "%s is outside %s to %s", raw, f.tag("min"), f.tag("max"))
+		}
+		*p = n
 	case *[]string:
 		*p = splitList(raw)
 	case *[]Issuer:
@@ -119,6 +130,8 @@ func (c Config) Redacted() map[string]string {
 			val = v
 		case int:
 			val = strconv.Itoa(v)
+		case float64:
+			val = strconv.FormatFloat(v, 'g', -1, 64)
 		case []string:
 			val = strings.Join(v, ",")
 		case []Issuer:
