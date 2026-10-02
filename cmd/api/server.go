@@ -42,22 +42,27 @@ type apiServer struct {
 	auth *auth.Handlers
 	rs   *restrictionAPI
 	src  *sourcesAPI
+	// cis is the CIS change-notification receiver (WP-7); nil while it
+	// is not configured, and the operation then answers 503.
+	cis http.Handler
 }
 
-func newAPIServer(h *auth.Handlers, rs *restrictionAPI, src *sourcesAPI) apiServer {
+func newAPIServer(h *auth.Handlers, rs *restrictionAPI, src *sourcesAPI, cisH http.Handler) apiServer {
 	strict := gen.NewStrictHandlerWithOptions(gen.Unimplemented{}, nil, gen.StrictHTTPServerOptions{
 		RequestErrorHandlerFunc:  requestError,
 		ResponseErrorHandlerFunc: responseError,
 	})
-	return apiServer{ServerInterface: strict, auth: h, rs: rs, src: src}
+	return apiServer{ServerInterface: strict, auth: h, rs: rs, src: src, cis: cisH}
 }
 
 // mountAPI registers every operation of api on mux through the
 // generated router, each behind its x-auth (auth.Routes), and returns
 // the routes or why they cannot be served.
-func mountAPI(mux *http.ServeMux, guard *auth.Guard, h *auth.Handlers, rs *restrictionAPI, src *sourcesAPI, middlewares ...func(http.Handler) http.Handler) (*auth.Routes, error) {
+func mountAPI(mux *http.ServeMux, guard *auth.Guard, h *auth.Handlers, rs *restrictionAPI, src *sourcesAPI, cisH http.Handler,
+	middlewares ...func(http.Handler) http.Handler,
+) (*auth.Routes, error) {
 	rt := auth.NewRoutes(mux, process, guard, maxBodyBytes, operations(), middlewares...)
-	gen.HandlerWithOptions(newAPIServer(h, rs, src), gen.StdHTTPServerOptions{BaseRouter: rt, ErrorHandlerFunc: requestError})
+	gen.HandlerWithOptions(newAPIServer(h, rs, src, cisH), gen.StdHTTPServerOptions{BaseRouter: rt, ErrorHandlerFunc: requestError})
 	err := rt.Err()
 	return rt, err
 }
@@ -114,6 +119,23 @@ func (s apiServer) DisableUser(w http.ResponseWriter, r *http.Request, _ gen.Use
 // GetJwks serves GET /.well-known/jwks.json (WP-2).
 func (s apiServer) GetJwks(w http.ResponseWriter, r *http.Request) {
 	s.signIn(w, r, func(h *auth.Handlers, w http.ResponseWriter, r *http.Request) { h.Keys.ServeHTTP(w, r) })
+}
+
+// cisUnavailableRetry is the Retry-After of the notification receiver
+// while it is not configured.
+const cisUnavailableRetry = 60 * time.Second
+
+// ReceiveCisNotification serves POST /v1/cis/notifications (WP-7). The
+// route fails closed: without a configured receiver (the issuers, the
+// audiences and the relational database that remembers delivery ids)
+// it answers 503, never 2xx, so the CISP keeps the delivery and retries.
+func (s apiServer) ReceiveCisNotification(w http.ResponseWriter, r *http.Request) {
+	if s.cis == nil {
+		apierr.WriteError(w, r, apierr.Unavailable(cisUnavailableRetry,
+			"CIS change notifications are not received on this instance (ANSP_CIS_NOTIFY_ISSUERS, ANSP_AUDIENCES, ANSP_PUBLIC_BASE_URL, ANSP_RELATIONAL_DSN)"))
+		return
+	}
+	s.cis.ServeHTTP(w, r)
 }
 
 // requestError answers a request the generated code could not bind or

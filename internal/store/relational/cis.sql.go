@@ -11,6 +11,32 @@ import (
 	"time"
 )
 
+const cISNotificationLive = `-- name: CISNotificationLive :one
+SELECT
+    EXISTS (SELECT 1 FROM cis_notifications_seen s
+            WHERE s.issuer = $1 AND s.jti = $2 AND s.expires_at > clock_timestamp()) AS seen,
+    (SELECT count(*) FROM cis_notifications_seen l WHERE l.expires_at > clock_timestamp())::bigint AS live
+`
+
+type CISNotificationLiveParams struct {
+	Issuer string
+	Jti    string
+}
+
+type CISNotificationLiveRow struct {
+	Seen bool
+	Live int64
+}
+
+// Whether the delivery id is remembered and not expired, and how many
+// delivery ids are.
+func (q *Queries) CISNotificationLive(ctx context.Context, arg CISNotificationLiveParams) (CISNotificationLiveRow, error) {
+	row := q.db.QueryRow(ctx, cISNotificationLive, arg.Issuer, arg.Jti)
+	var i CISNotificationLiveRow
+	err := row.Scan(&i.Seen, &i.Live)
+	return i, err
+}
+
 const listCISVersions = `-- name: ListCISVersions :many
 SELECT dataset, version, etag, fetched_at, body FROM cis_cache ORDER BY dataset LIMIT 10
 `
@@ -49,6 +75,30 @@ func (q *Queries) ListCISVersions(ctx context.Context) ([]ListCISVersionsRow, er
 	return items, nil
 }
 
+const rememberCISNotification = `-- name: RememberCISNotification :one
+INSERT INTO cis_notifications_seen (issuer, jti, seen_at, expires_at)
+VALUES ($1, $2, clock_timestamp(), clock_timestamp() + make_interval(secs => $3::float8))
+ON CONFLICT (issuer, jti) DO UPDATE SET seen_at = EXCLUDED.seen_at, expires_at = EXCLUDED.expires_at
+WHERE cis_notifications_seen.expires_at <= clock_timestamp()
+RETURNING expires_at
+`
+
+type RememberCISNotificationParams struct {
+	Issuer string
+	Jti    string
+	TtlS   float64
+}
+
+// Records the delivery id for ttl_s; an expired row of the same id is
+// reused. No row back means the id is live: a replay, or a concurrent
+// delivery of the same id that won.
+func (q *Queries) RememberCISNotification(ctx context.Context, arg RememberCISNotificationParams) (time.Time, error) {
+	row := q.db.QueryRow(ctx, rememberCISNotification, arg.Issuer, arg.Jti, arg.TtlS)
+	var expires_at time.Time
+	err := row.Scan(&expires_at)
+	return expires_at, err
+}
+
 const saveCISVersion = `-- name: SaveCISVersion :one
 
 INSERT INTO cis_cache (dataset, version, etag, fetched_at, installed_at, cis_updated_at, body)
@@ -70,8 +120,9 @@ type SaveCISVersionParams struct {
 	Body         json.RawMessage
 }
 
-// WP-7: cis_cache, the CIS projection. Every instant is the database
-// clock.
+// WP-7: cis_cache, the CIS projection, and cis_notifications_seen, the
+// replay guard of the CISP's change notifications. Every instant is the
+// database clock.
 // The dataset's row becomes this version unless it holds a higher one
 // (the WHERE runs under the row's lock); no row back means it does.
 func (q *Queries) SaveCISVersion(ctx context.Context, arg SaveCISVersionParams) (time.Time, error) {
@@ -85,6 +136,20 @@ func (q *Queries) SaveCISVersion(ctx context.Context, arg SaveCISVersionParams) 
 	var fetched_at time.Time
 	err := row.Scan(&fetched_at)
 	return fetched_at, err
+}
+
+const sweepCISNotifications = `-- name: SweepCISNotifications :execrows
+DELETE FROM cis_notifications_seen
+WHERE ctid IN (SELECT ctid FROM cis_notifications_seen WHERE expires_at <= clock_timestamp() LIMIT $1)
+`
+
+// Deletes at most max_rows expired delivery ids.
+func (q *Queries) SweepCISNotifications(ctx context.Context, maxRows int32) (int64, error) {
+	result, err := q.db.Exec(ctx, sweepCISNotifications, maxRows)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const touchCISVersion = `-- name: TouchCISVersion :one

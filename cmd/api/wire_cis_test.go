@@ -5,6 +5,8 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"strings"
 	"testing"
@@ -12,6 +14,7 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 
+	"github.com/rootxkit/uspace-ansp/internal/auth"
 	"github.com/rootxkit/uspace-ansp/internal/cis"
 	"github.com/rootxkit/uspace-ansp/internal/config"
 	"github.com/rootxkit/uspace-ansp/internal/obs"
@@ -40,6 +43,9 @@ func TestWireCISWithoutCISP(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if w.receiver != nil {
+		t.Fatal("a receiver without issuers")
+	}
 	if _, err := w.airspaces.Current(context.Background()); !errors.Is(err, restriction.ErrNoProjection) {
 		t.Fatalf("%v", err)
 	}
@@ -61,6 +67,9 @@ func TestWireCISConfigurations(t *testing.T) {
 	w, err := wireCIS(cfg, nil, nil, prometheus.NewRegistry(), discard())
 	if err != nil {
 		t.Fatal(err)
+	}
+	if w.receiver != nil {
+		t.Fatal("a receiver without the relational database")
 	}
 	names := map[string]bool{}
 	for _, c := range w.checks {
@@ -149,5 +158,28 @@ func TestCachedPolicy(t *testing.T) {
 	}
 	if (&cachedPolicy{}).get(context.Background()) != policy.Defaults() {
 		t.Fatal("no database: not the defaults")
+	}
+}
+
+// Presence twin of the fail-closed case in TestUnimplementedAndRefusals:
+// with a receiver mounted, POST /v1/cis/notifications reaches it without
+// a bearer (jws:cisp), within the body bound of the route.
+func TestCISReceiverMounted(t *testing.T) {
+	mtls, err := auth.NewMTLS(config.MTLSOff, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reached := false
+	mux := http.NewServeMux()
+	if _, err := mountAPI(mux, &auth.Guard{Machine: scopeVerifier{}, MTLS: mtls}, nil, nil, nil,
+		http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { reached = true; w.WriteHeader(http.StatusAccepted) })); err != nil {
+		t.Fatal(err)
+	}
+	r := httptest.NewRequest(http.MethodPost, cis.NotificationsPath, strings.NewReader("aGVhZGVy.cGF5bG9hZA.c2lnbmF0dXJl"))
+	r.Header.Set("Content-Type", cis.ContentTypeJOSE)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, r)
+	if w.Code != http.StatusAccepted || !reached {
+		t.Fatalf("%d %v", w.Code, reached)
 	}
 }

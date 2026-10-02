@@ -1,6 +1,7 @@
 package config
 
 import (
+	"net/url"
 	"slices"
 	"strings"
 	"time"
@@ -68,4 +69,30 @@ func (c Config) PublisherConfig() (auth.DetachedConfig, error) {
 		pubs[name] = auth.IssuerConfig{JWKSURL: jwks}
 	}
 	return auth.DetachedConfig{Publishers: pubs, MaxAge: time.Duration(c.CISPublisherSigMaxAgeS) * time.Second}, nil
+}
+
+// NotifyConfig is the uspace-core auth.CompactConfig of the CIS change
+// notification receiver: the issuers ANSP_CIS_NOTIFY_ISSUERS with their
+// JWKS URLs and the audiences ANSP_AUDIENCES (hosts, M18, M19), which
+// must hold the host of ANSP_PUBLIC_BASE_URL: the CISP signs aud as the
+// host of the callback_url this system registers there.
+func (c Config) NotifyConfig() (auth.CompactConfig, error) {
+	if len(c.CISNotifyIssuers) == 0 {
+		return auth.CompactConfig{}, core.Fieldf("ANSP_CIS_NOTIFY_ISSUERS", "required to receive CIS change notifications")
+	}
+	if len(c.Audiences) == 0 {
+		return auth.CompactConfig{}, core.Fieldf("ANSP_AUDIENCES", "required to receive CIS change notifications")
+	}
+	u, err := url.Parse(c.PublicBaseURL)
+	if err != nil || u.Hostname() == "" {
+		return auth.CompactConfig{}, core.Fieldf("ANSP_PUBLIC_BASE_URL", "required to receive CIS change notifications (the callback_url base)")
+	}
+	if !slices.ContainsFunc(c.Audiences, func(a string) bool { return strings.EqualFold(a, u.Hostname()) }) {
+		return auth.CompactConfig{}, core.Fieldf("ANSP_AUDIENCES", "does not hold %s, the host of ANSP_PUBLIC_BASE_URL the CISP signs as aud", u.Hostname())
+	}
+	allow := make(map[string]auth.IssuerConfig, len(c.CISNotifyIssuers))
+	for _, iss := range c.CISNotifyIssuers {
+		allow[iss.Issuer] = auth.IssuerConfig{JWKSURL: iss.JWKSURL}
+	}
+	return auth.CompactConfig{Issuers: allow, Audiences: append([]string(nil), c.Audiences...)}, nil
 }

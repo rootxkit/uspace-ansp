@@ -117,6 +117,13 @@ type CisCache struct {
 	Body         json.RawMessage
 }
 
+type CisNotificationsSeen struct {
+	Issuer    string
+	Jti       string
+	SeenAt    time.Time
+	ExpiresAt time.Time
+}
+
 type Event struct {
 	ID         int64
 	Ts         time.Time

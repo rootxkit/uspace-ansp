@@ -6,10 +6,13 @@ import (
 	"context"
 	"io"
 	"log/slog"
+	"net/http"
 	"os"
 	"sync"
 	"testing"
 	"time"
+
+	coreauth "github.com/rootxkit/uspace-core/auth"
 
 	"github.com/rootxkit/uspace-ansp/internal/bus"
 	"github.com/rootxkit/uspace-ansp/internal/cis"
@@ -18,8 +21,8 @@ import (
 )
 
 // cis_cache over the real database: a version is stored with the
-// database's fetched_at, a 304 moves it, and a lower version never
-// replaces a higher one.
+// database's fetched_at, a 304 moves it, a lower version never replaces
+// a higher one, and a delivery id is remembered once.
 func TestIntegrationCISRepo(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
@@ -55,11 +58,34 @@ func TestIntegrationCISRepo(t *testing.T) {
 	if _, rf := cis.ParseVersion(cis.USpaceAirspace, rows[0].Body, rows[0].ETag, 4); rf != nil {
 		t.Fatalf("the stored body no longer parses: %v", rf)
 	}
+
+	fresh, full, err := repo.RememberJTI(ctx, cispIssuer, "j1", time.Minute, 2)
+	if err != nil || !fresh || full {
+		t.Fatalf("first: %v %v %v", fresh, full, err)
+	}
+	if fresh, _, _ := repo.RememberJTI(ctx, cispIssuer, "j1", time.Minute, 2); fresh {
+		t.Fatal("a replay was fresh")
+	}
+	if fresh, _, _ := repo.RememberJTI(ctx, "https://other.example.invalid", "j1", time.Minute, 2); !fresh {
+		t.Fatal("the same id from another issuer is another delivery")
+	}
+	if _, full, _ := repo.RememberJTI(ctx, cispIssuer, "j3", time.Minute, 2); !full {
+		t.Fatal("past the bound")
+	}
+	// An expired id is reused (and swept).
+	if fresh, _, err := repo.RememberJTI(ctx, cispIssuer, "short", time.Millisecond, 10); err != nil || !fresh {
+		t.Fatal(err)
+	}
+	time.Sleep(20 * time.Millisecond)
+	if fresh, _, err := repo.RememberJTI(ctx, cispIssuer, "short", time.Minute, 10); err != nil || !fresh {
+		t.Fatalf("an expired id was not reusable: %v", err)
+	}
 }
 
-// Pull -> cis_cache -> KV cis_current -> the hot path's follower, over
-// the real database and NATS; the reconciliation reaches the follower
-// too, and a restarted projection serves cis_cache before its first pull.
+// CIS change notification -> pull -> cis_cache -> KV cis_current ->
+// the hot path's follower, over the real database and NATS; the
+// reconciliation reaches the follower too, and a restarted projection
+// serves cis_cache before its first pull.
 func TestIntegrationNotificationToFollower(t *testing.T) {
 	url := os.Getenv("ANSP_NATS_URL")
 	if url == "" {
@@ -97,6 +123,27 @@ func TestIntegrationNotificationToFollower(t *testing.T) {
 	wg.Go(func() { _ = fol.Run(pctx, kv) })
 	waitFor(t, 10*time.Second, "the follower to take the first pull", func() bool { return fol.Version() == "3" && len(fol.USSPs()) == 2 })
 	waitFor(t, 5*time.Second, "the subscription", func() bool { return p.SubscriptionID() != "" })
+
+	// The notification path, measured.
+	v, err := coreauth.NewCompactVerifier(ctx, coreauth.CompactConfig{
+		Issuers: map[string]coreauth.IssuerConfig{cispIssuer: {Keys: cispRing.JWKS()}}, Audiences: []string{ourHost},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rf := &receiverFixture{fixtureProjection: &fixtureProjection{stub: s, p: p}}
+	rf.rc = cis.NewReceiver(cis.ReceiverConfig{Verifier: v, Subscription: p.SubscriptionID, Store: repo, Guard: s.client(t), Trigger: p.Trigger})
+	s.publish(cis.USpaceAirspace, 4, fixture(t, cis.USpaceAirspace, 4), "publisher")
+	start := time.Now()
+	tok := rf.valid(t, cis.USpaceAirspace, 4, "publication", "")
+	if w := rf.post(tok, cis.ContentTypeJOSE); w.Code != http.StatusAccepted {
+		t.Fatalf("%d %s", w.Code, w.Body)
+	}
+	waitFor(t, 5*time.Second, "version 4 at the follower", func() bool { return fol.Version() == "4" })
+	t.Logf("notification to the follower over NATS KV: %v", time.Since(start))
+	if w := rf.post(tok, cis.ContentTypeJOSE); w.Code != http.StatusNoContent {
+		t.Fatalf("replay across the database: %d", w.Code)
+	}
 
 	// The reconciliation path: no notification, the next tick.
 	s.publish(cis.USpaceAirspace, 5, fixture(t, cis.USpaceAirspace, 5), "publisher")

@@ -17,8 +17,8 @@
 // republishes restr.v1 (WP-5, cmd/api/wire_restrictions.go); without it
 // they answer 503. It runs the CIS projection (WP-7,
 // cmd/api/wire_cis.go): the pulls of the CISP's datasets with their
-// reconciliation, the subscription, cis_cache, KV cis_current and the
-// readiness line cisp.
+// reconciliation, the subscription, cis_cache, KV cis_current, the
+// receiver of POST /v1/cis/notifications, and the readiness line cisp.
 package main
 
 import (
@@ -126,7 +126,7 @@ func run(ctx context.Context, args, environ []string, stdout io.Writer) int {
 		logger.Error("live sessions refused", slog.String("error", err.Error()))
 		return 2
 	}
-	if _, err := mountAPI(mux, aw.guard, aw.handlers, rw.api, sw.api, aw.realIP); err != nil {
+	if _, err := mountAPI(mux, aw.guard, aw.handlers, rw.api, sw.api, cw.receiver, aw.realIP); err != nil {
 		logger.Error("routes refused", slog.String("error", err.Error()))
 		return 2
 	}

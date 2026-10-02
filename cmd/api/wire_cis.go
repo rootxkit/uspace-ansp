@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"net/http"
 	"strings"
 	"sync"
 	"time"
@@ -38,6 +39,7 @@ const policyCacheFor = 10 * time.Second
 type cisWiring struct {
 	proj      *cis.Projection
 	airspaces restriction.Airspaces
+	receiver  http.Handler
 	checks    []obs.Check
 	run       []func(ctx context.Context)
 }
@@ -171,9 +173,34 @@ func wireCIS(cfg config.Config, db *store.Relational, b *bus.Bus, reg prometheus
 		return obs.StateDegraded, r.Line()
 	}})
 	w.run = append(w.run, w.proj.Run)
-	if notify {
-		logger.Warn("CIS change notifications are not received on this build: the route answers 503 and the reconciliation alone keeps the projection")
+	if !notify {
+		logger.Warn("CIS change notifications are not received (ANSP_CIS_NOTIFY_ISSUERS is not set): the reconciliation alone keeps the projection; the route answers 503")
+		return w, nil
 	}
+	if db == nil {
+		logger.Error("CIS change notifications are not received: the delivery ids need the relational database (ANSP_RELATIONAL_DSN); the route answers 503")
+		return w, nil
+	}
+	nc, err := cfg.NotifyConfig()
+	if err != nil {
+		return nil, err
+	}
+	keys := cis.NewLazyNotifyVerifier(nc, 0, counters)
+	w.checks = append(w.checks, keysCheck(depCISNotifyKeys, keys.Ready))
+	w.run = append(w.run, func(ctx context.Context) {
+		keys.Run(ctx)
+		if c := keys.Counters(); c != nil {
+			_ = obs.Counters(reg, "cis_notify_jws", c)
+		}
+	})
+	var guard cis.PullURLGuard
+	if client != nil {
+		guard = client
+	}
+	w.receiver = cis.NewReceiver(cis.ReceiverConfig{
+		Verifier: keys, Subscription: w.proj.SubscriptionID, Store: store.CISRepo{DB: db}, Guard: guard,
+		Trigger: w.proj.Trigger, Counters: counters, Logger: logger.With(slog.String("component", "cis_receiver")),
+	})
 	return w, nil
 }
 

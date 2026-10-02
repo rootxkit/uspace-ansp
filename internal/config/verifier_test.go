@@ -156,3 +156,32 @@ func TestPublisherConfig(t *testing.T) {
 		}
 	}
 }
+
+// NotifyConfig needs the issuers, the audiences and the public base URL,
+// whose host must be among the audiences (the CISP signs aud as it).
+func TestNotifyConfig(t *testing.T) {
+	ok := Config{
+		CISNotifyIssuers: []Issuer{{Issuer: "https://cisp.test", JWKSURL: "https://cisp.test/jwks"}},
+		Audiences:        []string{"ansp.test", "ansp"}, PublicBaseURL: "https://ansp.test",
+	}
+	cc, err := ok.NotifyConfig()
+	if err != nil || cc.Issuers["https://cisp.test"].JWKSURL != "https://cisp.test/jwks" || len(cc.Audiences) != 2 {
+		t.Fatalf("%+v %v", cc, err)
+	}
+	for field, mutate := range map[string]func(*Config){
+		"ANSP_CIS_NOTIFY_ISSUERS": func(c *Config) { c.CISNotifyIssuers = nil },
+		"ANSP_AUDIENCES":          func(c *Config) { c.Audiences = nil },
+		"ANSP_PUBLIC_BASE_URL":    func(c *Config) { c.PublicBaseURL = "" },
+	} {
+		c := ok
+		mutate(&c)
+		if _, err := c.NotifyConfig(); err == nil || !strings.Contains(err.Error(), field) {
+			t.Fatalf("%s: %v", field, err)
+		}
+	}
+	other := ok
+	other.Audiences = []string{"ansp"}
+	if _, err := other.NotifyConfig(); err == nil || !strings.Contains(err.Error(), "ansp.test") {
+		t.Fatalf("callback host not an audience: %v", err)
+	}
+}

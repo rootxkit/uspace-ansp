@@ -37,7 +37,7 @@ func testServer(t *testing.T, h *auth.Handlers) (*auth.Routes, http.Handler) {
 		t.Fatal(err)
 	}
 	mux := http.NewServeMux()
-	rt, err := mountAPI(mux, &auth.Guard{Machine: scopeVerifier{}, MTLS: mtls}, h, nil, nil)
+	rt, err := mountAPI(mux, &auth.Guard{Machine: scopeVerifier{}, MTLS: mtls}, h, nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -102,7 +102,7 @@ func TestUnimplementedAndRefusals(t *testing.T) {
 		{"restrictions without a database", "GET", "/v1/restrictions", "scopes:ansp.coordination", "", "", 503, apierr.SlugUnavailable},
 		{"restriction request without a database", "POST", "/v1/restriction-requests", "scopes:ansp.requests", "application/json", "{}", 503, apierr.SlugUnavailable},
 		{"stream without a database", "GET", "/v1/restrictions/stream", "scopes:ansp.coordination", "", "", 403, apierr.SlugForbidden},
-		{"signed body admitted to its handler", "POST", "/v1/cis/notifications", "", "application/jose", "aGVhZGVy.cGF5bG9hZA.c2lnbmF0dXJl", 501, apierr.SlugNotImplemented},
+		{"signed body without a receiver fails closed", "POST", "/v1/cis/notifications", "", "application/jose", "aGVhZGVy.cGF5bG9hZA.c2lnbmF0dXJl", 503, apierr.SlugUnavailable},
 		{"constraint details", "GET", "/uss/v1/constraints/2f8343be-6482-4d1b-a474-16847e01af1e", "scopes:utm.constraint_processing", "", "", 501, apierr.SlugNotImplemented},
 		// Absence: no credential, a missing scope, a session-only route
 		// for a machine, a route of another process.
