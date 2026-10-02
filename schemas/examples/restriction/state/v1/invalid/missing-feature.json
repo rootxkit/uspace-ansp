@@ -1,0 +1,18 @@
+{
+  "schema": "restriction/state/v1",
+  "msg_id": "01K6P0B9C8D7E6F5G4H3J2K1M0",
+  "producer": "ansp/api",
+  "ts": "2026-10-02T12:00:00.000Z",
+  "rx_ts": "2026-10-02T12:00:00.000Z",
+  "captured_at": "2026-10-02T12:00:00.000Z",
+  "time_source": "system",
+  "backlog": false,
+  "body": {
+    "restriction_id": "01K6P0A1B2C3D4E5F6G7H8J9KM",
+    "ansp_ref": "ansp-01:01K6P0A1B2C3D4E5F6G7H8J9KM",
+    "state": "active",
+    "starts_at": "2026-10-02T12:00:00.000Z",
+    "ends_at": "2026-10-02T16:00:00.000Z",
+    "ansp_version": 2
+  }
+}

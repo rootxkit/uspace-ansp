@@ -1,0 +1,73 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.uspace.ge/restriction/state/v1.json",
+  "title": "restriction/state/v1",
+  "description": "A dynamic restriction's state change (spec 04 §3.4, 02 F2; Reg. (EU) 2021/665 ATS.TR.237(b)), in the common envelope (04 §2): on the internal subject restr.v1.<state>.<restriction_id> and as a frame of GET /v1/restrictions/stream. Owned by uspace-ansp (decision record M14). ansp_version is the restriction's monotonic version, the name the CISP's cis/restriction/v1 carries (decision record M4; 04 §3.4 calls it version). feature is the ED-318 Feature as published (uspace-core/ed318 member names). deliveries, when present, is the outbox state of the version (D5, D6): the CISP publication, the DSS write, the subscriber notifications and the degraded direct path. The members of the body mirror the RestrictionStateBody component of api/openapi.yaml; a test holds them equal.",
+  "allOf": [{ "$ref": "https://schemas.uspace.ge/envelope/v1.json" }],
+  "properties": {
+    "schema": { "const": "restriction/state/v1" },
+    "body": { "$ref": "#/$defs/body" }
+  },
+  "$defs": {
+    "ulid": {
+      "type": "string",
+      "pattern": "^[0-7][0-9A-HJKMNP-TV-Z]{25}$"
+    },
+    "channel": {
+      "type": "object",
+      "required": ["state", "attempts"],
+      "properties": {
+        "state": { "enum": ["none", "queued", "sent", "failed", "abandoned"] },
+        "attempts": { "type": "integer", "minimum": 0 },
+        "last_attempt_at": { "type": "string", "format": "date-time" },
+        "last_status_code": { "type": "integer" },
+        "next_retry_at": { "type": "string", "format": "date-time" }
+      }
+    },
+    "body": {
+      "type": "object",
+      "required": ["restriction_id", "ansp_ref", "state", "starts_at", "ends_at", "ansp_version", "feature"],
+      "properties": {
+        "restriction_id": { "$ref": "#/$defs/ulid" },
+        "ansp_ref": {
+          "description": "The ANSP reference; with ansp_version the idempotency key towards the CISP and the DSS.",
+          "type": "string",
+          "minLength": 1
+        },
+        "state": { "enum": ["planned", "active", "ended", "cancelled"] },
+        "starts_at": { "type": "string", "format": "date-time" },
+        "ends_at": { "type": "string", "format": "date-time" },
+        "ansp_version": { "type": "integer", "minimum": 1 },
+        "feature": {
+          "description": "The ED-318 Feature of the restriction (D4): reason [DAR], variant COMMON, identifier DAR plus 4 base-36 characters.",
+          "type": "object",
+          "required": ["type", "geometry", "properties"],
+          "properties": {
+            "type": { "const": "Feature" },
+            "geometry": { "type": "object", "required": ["type"] },
+            "properties": {
+              "type": "object",
+              "required": ["identifier", "country", "type", "variant"],
+              "properties": {
+                "identifier": { "type": "string", "pattern": "^DAR[0-9A-Z]{4}$" },
+                "country": { "type": "string", "pattern": "^[A-Z]{3}$" },
+                "type": { "enum": ["PROHIBITED", "REQ_AUTHORIZATION"] },
+                "reason": { "type": "array", "contains": { "const": "DAR" } }
+              }
+            }
+          }
+        },
+        "deliveries": {
+          "type": "object",
+          "required": ["cisp", "dss", "uss_notify", "direct_degraded"],
+          "properties": {
+            "cisp": { "$ref": "#/$defs/channel" },
+            "dss": { "$ref": "#/$defs/channel" },
+            "uss_notify": { "$ref": "#/$defs/channel" },
+            "direct_degraded": { "$ref": "#/$defs/channel" }
+          }
+        }
+      }
+    }
+  }
+}
