@@ -88,11 +88,16 @@ func ParseRetryAfter(v string, maxWait time.Duration) time.Duration {
 	if v == "" || len(v) > 10 {
 		return 0
 	}
-	n, err := strconv.Atoi(v)
+	n, err := strconv.ParseInt(v, 10, 64)
 	if err != nil || n <= 0 {
 		return 0
 	}
-	return min(time.Duration(n)*time.Second, maxWait)
+	// Bounded before it is converted: seconds past the bound would
+	// overflow a Duration (found by FuzzParseRetryAfter).
+	if n > int64(maxWait/time.Second) {
+		return maxWait
+	}
+	return time.Duration(n) * time.Second
 }
 
 // do sends req with c and reads at most maxBytes of the answer.
