@@ -79,3 +79,21 @@ additively within `/v1`. One line per work package.
   pinned in `internal/manned/dump1090/SOURCE`, and the ASTERIX CAT021
   stub that refuses to start; `cmd/manned-adapter` with `ANSP_ADAPTER_*`;
   three synthetic replay files in `testdata/replay/`.
+- WP-5 restrictions: `internal/restriction` (the state machine plan,
+  activate at once or scheduled at `starts_at`, extend or a linked
+  re-issue past 24 h, end, cancel, expire, each versioned with a
+  `restriction_versions` row, a hash-chained event and a `restr.v1`
+  message republished from `bus_version` when the bus was down; the
+  validation of geometry, limits, window and reason with the F3548
+  `Cstr*` bounds, AGL refused with the D3 text; placement inside a
+  current USPACE feature of the CIS projection, 503 `cis_stale` without
+  one; the ED-318 feature, `DAR` plus 4 base-36, checked with
+  `ed318.Export` and `ed318.Parse`, changed by an extend only in its
+  period's `endDateTime` as the CISP requires; the F3548 volume in W84
+  through the geoid with the conservative envelope); migration `0030`
+  (activation schedule, bus version, Idempotency-Key, identifier
+  sequence, version state and window, request `client_ref`); the
+  restriction and restriction-request operations and the
+  `/v1/restrictions/stream` console WebSocket in `cmd/api` with the
+  ticker; `ANSP_GEOID_FILE` and `ANSP_AUTHORITY_*`;
+  `github.com/coder/websocket` (PLAN section 4).
