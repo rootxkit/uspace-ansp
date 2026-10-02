@@ -56,6 +56,16 @@ type Config struct {
 
 	RelationalDSN string `env:"ANSP_RELATIONAL_DSN" kind:"url" secret:"userinfo"`
 	TimeseriesDSN string `env:"ANSP_TIMESERIES_DSN" kind:"url" secret:"userinfo"`
+	// DBMaxConns bounds each process's pool per database.
+	DBMaxConns int `env:"ANSP_DB_MAX_CONNS" default:"10" min:"1" max:"100"`
+	// DBAcquireTimeoutS bounds the wait for a pooled connection: past it
+	// the call is refused, never left hanging (E-10).
+	DBAcquireTimeoutS int `env:"ANSP_DB_ACQUIRE_TIMEOUT_S" default:"5" min:"1" max:"60"`
+	// DBStatementTimeoutS bounds every statement and every lock wait.
+	DBStatementTimeoutS int `env:"ANSP_DB_STATEMENT_TIMEOUT_S" default:"5" min:"1" max:"300"`
+	// DBTxTimeoutS bounds a transaction that has no deadline of its own
+	// and an idle transaction on the server.
+	DBTxTimeoutS int `env:"ANSP_DB_TX_TIMEOUT_S" default:"15" min:"1" max:"600"`
 
 	// TokenIssuers are the issuers of the tokens this system accepts
 	// (the authority and, in the lab, the lab issuer), as iss=jwks_url.

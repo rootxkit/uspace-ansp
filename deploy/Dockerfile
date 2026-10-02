@@ -11,6 +11,8 @@ COPY go.mod go.sum ./
 RUN --mount=type=cache,target=/go/pkg/mod go mod download
 COPY cmd ./cmd
 COPY internal ./internal
+# The goose trees, embedded into the binaries (package migrations).
+COPY migrations ./migrations
 ARG VERSION=dev
 RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build \
     for p in api manned-adapter manned-feed; do \

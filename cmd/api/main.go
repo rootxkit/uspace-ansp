@@ -4,7 +4,9 @@
 // configuration, connects the bus, declares the streams and buckets
 // once connected, and serves /healthz, /readyz and /metrics until
 // SIGTERM, then drains. `api migrate <relational|timeseries>...` is the
-// one-shot migration subcommand (WP-1 fills it).
+// one-shot migration subcommand. With ANSP_RELATIONAL_DSN set it opens
+// the relational database as ansp_app and refuses to start on a schema
+// older than this build (M36).
 package main
 
 import (
@@ -19,6 +21,7 @@ import (
 	"github.com/rootxkit/uspace-ansp/internal/bus"
 	"github.com/rootxkit/uspace-ansp/internal/config"
 	"github.com/rootxkit/uspace-ansp/internal/obs"
+	"github.com/rootxkit/uspace-ansp/internal/store"
 )
 
 // version is set at build time (deploy/Dockerfile, -X main.version).
@@ -47,7 +50,7 @@ func run(ctx context.Context, args, environ []string, stdout io.Writer) int {
 	}
 	logger := obs.LoggerTo(stdout, cfg)
 	if len(args) > 0 {
-		return subcommand(logger, args)
+		return subcommand(ctx, logger, cfg, args)
 	}
 	logger.Info("starting", slog.String("version", version), slog.Any("config", cfg.Redacted()))
 
@@ -70,7 +73,19 @@ func run(ctx context.Context, args, environ []string, stdout io.Writer) int {
 	}()
 	go ensureStreams(ctx, b, logger)
 
-	srv := &obs.Server{Config: cfg, Logger: logger, Registry: obs.Metrics(), Checks: []obs.Check{b.Check()}}
+	checks := []obs.Check{b.Check()}
+	if cfg.RelationalDSN != "" {
+		db, err := openRelational(ctx, cfg)
+		if err != nil {
+			// M36: never start on a schema older than this build.
+			logger.Error("relational database refused", slog.String("error", err.Error()))
+			return 1
+		}
+		defer db.Close()
+		checks = append(checks, db.Check())
+	}
+
+	srv := &obs.Server{Config: cfg, Logger: logger, Registry: obs.Metrics(), Checks: checks}
 	if err := srv.Serve(ctx); err != nil {
 		logger.Error("serve", slog.String("error", err.Error()))
 		return 1
@@ -99,4 +114,22 @@ func ensureStreams(ctx context.Context, b *bus.Bus, logger *slog.Logger) {
 		case <-time.After(2 * time.Second):
 		}
 	}
+}
+
+// openRelational opens the relational database as {store.RoleRelational} and
+// refuses a schema below the newest migration this build embeds (M36).
+func openRelational(ctx context.Context, cfg config.Config) (*store.Relational, error) {
+	need, err := store.Latest(store.TreeRelational)
+	if err != nil {
+		return nil, err
+	}
+	db, err := store.OpenRelational(ctx, cfg.RelationalDSN, store.FromConfig(cfg, store.RoleRelational), nil)
+	if err != nil {
+		return nil, err
+	}
+	if err := db.RequireVersion(ctx, need); err != nil {
+		db.Close()
+		return nil, err
+	}
+	return db, nil
 }

@@ -47,6 +47,9 @@ func TestLoadDefaults(t *testing.T) {
 		c.ClientID != "ansp-01" || c.MTLSMode != MTLSRequired || c.LogLevel != "info" || c.Country != "GEO" {
 		t.Fatalf("defaults %+v", c)
 	}
+	if c.DBMaxConns != 10 || c.DBAcquireTimeoutS != 5 || c.DBStatementTimeoutS != 5 || c.DBTxTimeoutS != 15 {
+		t.Fatalf("database bounds %+v", c)
+	}
 	if c.NATSURL != "" || c.Audiences != nil || c.TokenIssuers != nil || c.ClientSecret != "" {
 		t.Fatalf("unset values %+v", c)
 	}
@@ -80,20 +83,23 @@ func TestLoadEveryVariable(t *testing.T) {
 		"ANSP_LOG_LEVEL":          "debug",
 		"ANSP_OTLP_ENDPOINT":      "http://otel:4318",
 		"ANSP_COUNTRY":            "GEO",
+		"ANSP_DB_MAX_CONNS":       "20",
+		"ANSP_DB_TX_TIMEOUT_S":    "30",
 	}), files)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if c.Process != ProcessMannedFeed || !slices.Equal(c.Audiences, []string{"ansp.example", "ansp.lab"}) ||
 		len(c.TokenIssuers) != 2 || c.TokenIssuers[1].JWKSURL != "https://lab.example/jwks" ||
-		c.CISNotifyIssuers[0].Issuer != "https://cisp.example" || c.ClientSecret != "s3cret" || c.MTLSMode != MTLSOff {
+		c.CISNotifyIssuers[0].Issuer != "https://cisp.example" || c.ClientSecret != "s3cret" || c.MTLSMode != MTLSOff ||
+		c.DBMaxConns != 20 || c.DBTxTimeoutS != 30 {
 		t.Fatalf("loaded %+v", c)
 	}
 	r := c.Redacted()
 	if r["ANSP_NATS_URL"] != "nats://***@nats:4222" ||
 		r["ANSP_RELATIONAL_DSN"] != "postgres://***@db:5432/ansp?sslmode=disable" ||
 		!strings.Contains(r["ANSP_TIMESERIES_DSN"], "password=***") ||
-		r["ANSP_CLIENT_SECRET_FILE"] != "/run/secrets/client" {
+		r["ANSP_CLIENT_SECRET_FILE"] != "/run/secrets/client" || r["ANSP_DB_MAX_CONNS"] != "20" {
 		t.Fatalf("redacted %v", r)
 	}
 	for k, v := range r {
@@ -133,6 +139,9 @@ func TestLoadRefusesNamingTheVariable(t *testing.T) {
 		{"system id", map[string]string{"ANSP_SYSTEM_ID": "a/b"}, []string{"ANSP_SYSTEM_ID"}},
 		{"client id", map[string]string{"ANSP_CLIENT_ID": "a b"}, []string{"ANSP_CLIENT_ID"}},
 		{"secret file missing", map[string]string{"ANSP_CLIENT_SECRET_FILE": "/nope"}, []string{"ANSP_CLIENT_SECRET_FILE"}},
+		{"pool size not a number", map[string]string{"ANSP_DB_MAX_CONNS": "ten"}, []string{"ANSP_DB_MAX_CONNS"}},
+		{"pool size zero", map[string]string{"ANSP_DB_MAX_CONNS": "0"}, []string{"ANSP_DB_MAX_CONNS"}},
+		{"statement timeout above the bound", map[string]string{"ANSP_DB_STATEMENT_TIMEOUT_S": "301"}, []string{"ANSP_DB_STATEMENT_TIMEOUT_S"}},
 		{"two at once", map[string]string{"ANSP_MTLS_MODE": "x", "ANSP_COUNTRY": "x"}, []string{"ANSP_MTLS_MODE", "ANSP_COUNTRY"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

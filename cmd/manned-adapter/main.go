@@ -3,8 +3,7 @@
 // B-16). In WP-0 it is a stub: it loads the configuration, connects the
 // bus and serves /healthz, /readyz and /metrics until SIGTERM, then
 // drains. It never opens PostgreSQL. WP-4 adds the adapters.
-// `manned-adapter migrate <relational|timeseries>...` exists in every
-// binary (WP-1 fills it).
+// `manned-adapter migrate ...` is refused: it has no database.
 package main
 
 import (
@@ -46,7 +45,7 @@ func run(ctx context.Context, args, environ []string, stdout io.Writer) int {
 	}
 	logger := obs.LoggerTo(stdout, cfg)
 	if len(args) > 0 {
-		return subcommand(logger, args)
+		return subcommand(ctx, logger, cfg, args)
 	}
 	logger.Info("starting", slog.String("version", version), slog.Any("config", cfg.Redacted()))
 

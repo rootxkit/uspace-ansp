@@ -21,3 +21,15 @@ additively within `/v1`. One line per work package.
   streams and buckets of `docs/PLAN.md` section 7; the layout test; the
   Makefile, the lean CI workflow, the Dockerfile and the development
   compose.
+- WP-1 store and migrations: the two goose trees (relational: PostGIS,
+  the hash-chained append-only `events`, `ansp_policy`, `source_controls`
+  with version and epoch, `restrictions`, `restriction_versions`,
+  `restriction_requests`, `adapters`; timeseries: the `manned_tracks`
+  hypertable with compression after 7 days and retention of 90 days,
+  `feed_products`), each with its own version table and an application
+  role without UPDATE or DELETE on the insert-only tables; the `migrate`
+  subcommand and the start-up schema check (M36); bounded pgx pools
+  (`ANSP_DB_*`), sqlc queries, the COPY writer of manned tracks;
+  `internal/audit` (record, verify a month, query) and `internal/policy`
+  (load, update through KV, follower with the compiled defaults);
+  `uspace-core` v1.2.0.

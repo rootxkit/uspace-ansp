@@ -139,10 +139,9 @@ func TestMigrateSubcommand(t *testing.T) {
 		code int
 		want string
 	}{
-		{[]string{"migrate", "relational", "timeseries"}, 0, "nothing applied"},
+		{[]string{"migrate", "relational", "timeseries"}, 2, "never opens PostgreSQL"},
 		{[]string{"migrate"}, 2, "usage"},
 		{[]string{"serve"}, 2, "usage"},
-		{[]string{"migrate", "events"}, 2, "unknown tree"},
 	} {
 		out := &syncBuffer{}
 		if code := run(context.Background(), tc.args, env, out); code != tc.code || !strings.Contains(out.String(), tc.want) {
