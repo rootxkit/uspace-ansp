@@ -1,0 +1,105 @@
+{
+  "schema": "restriction/state/v1",
+  "msg_id": "01K6P0B9C8D7E6F5G4H3J2K1M1",
+  "producer": "ansp/api",
+  "ts": "2026-10-02T12:00:00.000Z",
+  "rx_ts": "2026-10-02T12:00:00.000Z",
+  "captured_at": "2026-10-02T12:00:00.000Z",
+  "time_source": "system",
+  "backlog": false,
+  "body": {
+    "restriction_id": "01K6P0A1B2C3D4E5F6G7H8J9KM",
+    "ansp_ref": "ansp-01:01K6P0A1B2C3D4E5F6G7H8J9KM",
+    "state": "active",
+    "starts_at": "2026-10-02T12:00:00.000Z",
+    "ends_at": "2026-10-02T16:00:00.000Z",
+    "ansp_version": 2,
+    "feature": {
+      "type": "Feature",
+      "id": "DAR7K2Q",
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [
+              44.78,
+              41.7
+            ],
+            [
+              44.82,
+              41.7
+            ],
+            [
+              44.82,
+              41.73
+            ],
+            [
+              44.78,
+              41.73
+            ],
+            [
+              44.78,
+              41.7
+            ]
+          ]
+        ],
+        "layer": {
+          "upper": 1200,
+          "upperReference": "AMSL",
+          "lower": 0,
+          "lowerReference": "AMSL",
+          "uom": "m"
+        }
+      },
+      "properties": {
+        "identifier": "DAR7K2Q",
+        "country": "GEO",
+        "type": "PROHIBITED",
+        "variant": "COMMON",
+        "reason": [
+          "DAR"
+        ],
+        "limitedApplicability": [
+          {
+            "startDateTime": "2026-10-02T12:00:00.000Z",
+            "endDateTime": "2026-10-02T16:00:00.000Z"
+          }
+        ],
+        "zoneAuthority": [
+          {
+            "name": [
+              {
+                "text": "Test ANSP",
+                "lang": "en-GB"
+              }
+            ],
+            "purpose": "AUTHORIZATION"
+          }
+        ]
+      }
+    },
+    "deliveries": {
+      "cisp": {
+        "state": "sent",
+        "attempts": 1,
+        "last_attempt_at": "2026-10-02T12:00:00.180Z",
+        "last_status_code": 201
+      },
+      "dss": {
+        "state": "failed",
+        "attempts": 2,
+        "last_attempt_at": "2026-10-02T12:00:02.000Z",
+        "last_status_code": 503,
+        "next_retry_at": "2026-10-02T12:00:04.000Z"
+      },
+      "uss_notify": {
+        "state": "none",
+        "attempts": 0
+      },
+      "direct_degraded": {
+        "state": "none",
+        "attempts": 0
+      }
+    }
+  }
+}

@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -14,10 +13,11 @@ import (
 	"time"
 
 	coreauth "github.com/rootxkit/uspace-core/auth"
-	"github.com/rootxkit/uspace-core/core"
 
 	"github.com/rootxkit/uspace-ansp/internal/config"
 	"github.com/rootxkit/uspace-ansp/internal/obs"
+
+	"github.com/rootxkit/uspace-ansp/internal/apierr"
 )
 
 // call runs one request through mw and returns the recorder and the
@@ -40,9 +40,9 @@ func call(t testing.TB, mw func(http.Handler) http.Handler, method, path string,
 	return rec, seen
 }
 
-func problemOf(t testing.TB, rec *httptest.ResponseRecorder) ProblemBody {
+func problemOf(t testing.TB, rec *httptest.ResponseRecorder) apierr.Problem {
 	t.Helper()
-	var p ProblemBody
+	var p apierr.Problem
 	if err := json.Unmarshal(rec.Body.Bytes(), &p); err != nil {
 		t.Fatalf("not a problem: %s", rec.Body.String())
 	}
@@ -495,28 +495,5 @@ func TestUnverifiedIssuer(t *testing.T) {
 	}
 	if unverifiedIssuer("a.eyJpc3MiOiJodHRwczovL3gifQ.c") != "https://x" {
 		t.Fatal("iss not read")
-	}
-}
-
-func TestWriteErrorShapes(t *testing.T) {
-	r := httptest.NewRequest(http.MethodGet, "/v1/x?secret=1", nil)
-	rec := httptest.NewRecorder()
-	WriteError(rec, r, errors.Join(core.Fieldf("a", "b"), core.Fieldf("c", "d")))
-	if p := problemOf(t, rec); rec.Code != http.StatusBadRequest || len(p.Errors) != 2 || p.Instance != "/v1/x" {
-		t.Fatalf("%+v", p)
-	}
-	rec = httptest.NewRecorder()
-	WriteError(rec, r, errors.New("pq: relation users does not exist"))
-	if p := problemOf(t, rec); rec.Code != http.StatusInternalServerError || strings.Contains(rec.Body.String(), "relation") || p.Errors == nil {
-		t.Fatalf("%s", rec.Body.String())
-	}
-	fields := make([]FieldReason, MaxProblemErrors+5)
-	rec = httptest.NewRecorder()
-	WriteProblem(rec, r, http.StatusTooManyRequests, SlugRateLimited, "x", fields, 1500*time.Millisecond)
-	if p := problemOf(t, rec); !p.Truncated || len(p.Errors) != MaxProblemErrors || rec.Header().Get("Retry-After") != "2" {
-		t.Fatalf("%+v %v", p, rec.Header())
-	}
-	if (&ProblemBody{Type: "x"}).Slug() != "" || (&Error{Slug: "s", Detail: "d"}).Error() != "s: d" {
-		t.Fatal("slug")
 	}
 }

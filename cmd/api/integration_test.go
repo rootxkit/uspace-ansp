@@ -121,7 +121,8 @@ func TestIntegrationMigrateThenStart(t *testing.T) {
 // With the session and secrets keys and a bootstrap admin the api
 // serves the sign-in: the JWKS, login with the enrolment, the code, the
 // session read back by /v1/auth/me, and a refusal without a session
-// (E-01); /readyz still lists the relational database ok.
+// (E-01); an unserved operation of the contract answers 501 behind its
+// x-auth.
 func TestIntegrationConsoleSignIn(t *testing.T) {
 	rel := storetest.Scratch(t, store.TreeRelational, true)
 	sk, sec, pwFile := authFiles(t)
@@ -150,7 +151,7 @@ func TestIntegrationConsoleSignIn(t *testing.T) {
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-	if !strings.Contains(out.String(), "the first admin was created") || !strings.Contains(out.String(), "console sign-in mounted") {
+	if !strings.Contains(out.String(), "the first admin was created") || !strings.Contains(out.String(), "console sign-in configured") {
 		t.Fatalf("log:\n%s", out.String())
 	}
 	post := func(path, token string, body any) (int, map[string]any) {
@@ -191,6 +192,21 @@ func TestIntegrationConsoleSignIn(t *testing.T) {
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("me %d", resp.StatusCode)
+	}
+	// An operation of the contract no work package serves yet is
+	// mounted behind its x-auth: the session reaches it and it says 501.
+	req, _ = http.NewRequest(http.MethodGet, base+"/v1/adapters", nil)
+	req.Header.Set("Authorization", "Bearer "+mr["token"].(string))
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNotImplemented {
+		t.Fatalf("adapters with a session: %d", resp.StatusCode)
+	}
+	if code, _ := get(t, base+"/v1/adapters"); code != http.StatusUnauthorized {
+		t.Fatalf("adapters without a session: %d", code)
 	}
 	if code, _ := get(t, base+"/v1/auth/me"); code != http.StatusUnauthorized {
 		t.Fatalf("me without a session: %d", code)

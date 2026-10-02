@@ -1,0 +1,19 @@
+# @redocly/cli lint configuration for api/openapi.yaml, run pinned by
+# scripts/lint-api.sh (npx @redocly/cli@2.57.0). The recommended rules,
+# less four whose findings are deliberate here:
+#   no-unused-components: the example components are reused through YAML
+#     anchors, which the linter does not count as references, and
+#     ConsoleSubscribeFrame is named by x-client-frame (the client's
+#     WebSocket frame has no HTTP body to reference it from);
+#   operation-2xx-response: a WebSocket upgrade succeeds with 101;
+#   operation-4xx-response: the public health and key endpoints refuse
+#     nothing;
+#   no-required-schema-properties-undefined: the if/then of
+#     coordination/annex_v/v1 requires a property the outer schema defines.
+extends:
+  - recommended
+rules:
+  no-unused-components: off
+  operation-2xx-response: off
+  operation-4xx-response: off
+  no-required-schema-properties-undefined: off

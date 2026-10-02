@@ -22,6 +22,8 @@ import (
 	"github.com/rootxkit/uspace-ansp/internal/store"
 	"github.com/rootxkit/uspace-ansp/internal/store/relational"
 	"github.com/rootxkit/uspace-ansp/internal/store/storetest"
+
+	"github.com/rootxkit/uspace-ansp/internal/apierr"
 )
 
 const authPW = "correct horse battery"
@@ -157,7 +159,7 @@ func TestIntegrationAuthSignIn(t *testing.T) {
 }
 
 func isStatus(err error, status int) bool {
-	var e *auth.Error
+	var e *apierr.Problem
 	return errors.As(err, &e) && e.Status == status
 }
 

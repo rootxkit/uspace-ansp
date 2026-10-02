@@ -7,18 +7,36 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/rootxkit/uspace-ansp/internal/apierr"
 )
 
-// server is the auth operations mounted through Routes, behind RealIP.
+// authOps is the auth operations as the contract lists them (a test
+// holds AccessTable and api/openapi.yaml equal).
+func authOps() []Operation {
+	var ops []Operation
+	for pattern, a := range AccessTable() {
+		ops = append(ops, Operation{ID: pattern, Pattern: pattern, Process: "api", Auth: a.String()})
+	}
+	return ops
+}
+
+// server is the auth operations mounted through Routes, behind RealIP,
+// as cmd/api mounts them on the generated router.
 func (w *world) server(t testing.TB) http.Handler {
 	t.Helper()
-	mux := http.NewServeMux()
-	rt := NewRoutes(mux, AccessTable(), w.guard)
-	(&Handlers{Accounts: w.accounts, Keys: w.keys}).Mount(rt)
-	must(t, rt.Err())
 	proxies, err := ParseTrustedProxies([]string{"10.0.0.0/8"})
 	must(t, err)
-	return RealIP(proxies)(mux)
+	rt := NewRoutes(http.NewServeMux(), "api", w.guard, 1<<20, authOps(), RealIP(proxies))
+	h := &Handlers{Accounts: w.accounts, Keys: w.keys}
+	for pattern, serve := range map[string]http.HandlerFunc{
+		OpLogin: h.Login, OpMFA: h.VerifyMFA, OpLogout: h.Logout, OpMe: h.Me, OpUsers: h.Users,
+		OpAddUser: h.AddUser, OpResetMFA: h.ResetMFA, OpDisable: h.Disable, OpJWKS: h.Keys.ServeHTTP,
+	} {
+		rt.Handle(pattern, serve)
+	}
+	must(t, rt.Err())
+	return rt
 }
 
 func do(t testing.TB, h http.Handler, method, path, token string, body any) *httptest.ResponseRecorder {
@@ -151,11 +169,11 @@ func TestHTTPRefusals(t *testing.T) {
 	} {
 		for _, path := range []string{"/v1/auth/login", "/v1/auth/mfa"} {
 			rec := do(t, h, http.MethodPost, path, "", body)
-			want := http.StatusBadRequest
+			want, slug := http.StatusBadRequest, SlugInvalidRequest
 			if name == "too large" {
-				want = http.StatusRequestEntityTooLarge
+				want, slug = http.StatusRequestEntityTooLarge, apierr.SlugBodyTooLarge
 			}
-			if p := problemOf(t, rec); rec.Code != want || p.Slug() != SlugInvalidRequest {
+			if p := problemOf(t, rec); rec.Code != want || p.Slug() != slug {
 				t.Fatalf("%s %s: %d %s", name, path, rec.Code, rec.Body.String())
 			}
 		}
@@ -198,32 +216,6 @@ func TestHTTPStoreDown(t *testing.T) {
 	}
 	if rec := do(t, h, http.MethodPost, "/v1/auth/mfa", "", map[string]string{"mfa_token": "x", "code": "123456"}); rec.Code != http.StatusInternalServerError {
 		t.Fatal(rec.Code)
-	}
-}
-
-// Routes fails closed: a route without an entry is not served, an
-// invalid entry is refused, an entry no route used is reported.
-func TestRoutesFailClosed(t *testing.T) {
-	w := newWorld(t)
-	mux := http.NewServeMux()
-	rt := NewRoutes(mux, map[string]Access{"GET /a": {}, "GET /unused": {Public: true}}, w.guard)
-	rt.Handle("GET /a", http.NotFoundHandler())
-	rt.Handle("GET /b", http.NotFoundHandler())
-	err := rt.Err()
-	for _, want := range []string{"GET /a: access", "GET /b has no access entry", "access entry GET /unused matches no route"} {
-		if err == nil || !strings.Contains(err.Error(), want) {
-			t.Fatalf("missing %q in %v", want, err)
-		}
-	}
-	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/b", nil))
-	if rec.Code != http.StatusNotFound {
-		t.Fatal("an unlisted route was served")
-	}
-	for op, a := range AccessTable() {
-		if err := a.Validate(); err != nil {
-			t.Fatalf("%s: %v", op, err)
-		}
 	}
 }
 

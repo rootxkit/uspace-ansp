@@ -1,0 +1,16 @@
+# The uspace-lab common schemas this system consumes (the envelope,
+# problem/v1, source/status/v1, the console frames, and
+# track/telemetry/v1, which console/snapshot/v1 references), copied
+# unmodified under common/ at the lab's own paths until the lab
+# aggregate replaces them. scripts/check-contracts.sh fetches each at its
+# commit and fails on any difference. A bump is a `build:` commit of its
+# own. (This file is not common/SOURCE: on a case-insensitive file
+# system that name is the directory common/source/.)
+# <copy, relative to schemas/> <owner/repo> <commit> <path in that repo>
+common/console/snapshot/v1/schema.json rootxkit/uspace-lab e62f076c3e7dea7b6150d145b03960340b4a1d78 schemas/common/console/snapshot/v1/schema.json
+common/console/status/v1/schema.json rootxkit/uspace-lab e62f076c3e7dea7b6150d145b03960340b4a1d78 schemas/common/console/status/v1/schema.json
+common/console/subscribe/v1/schema.json rootxkit/uspace-lab e62f076c3e7dea7b6150d145b03960340b4a1d78 schemas/common/console/subscribe/v1/schema.json
+common/envelope/v1/schema.json rootxkit/uspace-lab e62f076c3e7dea7b6150d145b03960340b4a1d78 schemas/common/envelope/v1/schema.json
+common/problem/v1/schema.json rootxkit/uspace-lab e62f076c3e7dea7b6150d145b03960340b4a1d78 schemas/common/problem/v1/schema.json
+common/source/status/v1/schema.json rootxkit/uspace-lab e62f076c3e7dea7b6150d145b03960340b4a1d78 schemas/common/source/status/v1/schema.json
+common/track/telemetry/v1/schema.json rootxkit/uspace-lab e62f076c3e7dea7b6150d145b03960340b4a1d78 schemas/common/track/telemetry/v1/schema.json
