@@ -12,6 +12,8 @@ import (
 	"github.com/rootxkit/uspace-core/core"
 
 	"github.com/rootxkit/uspace-ansp/internal/config"
+
+	"github.com/rootxkit/uspace-ansp/internal/apierr"
 )
 
 // HeaderClientCertSubject is the header Caddy sets from a verified
@@ -124,7 +126,7 @@ func (m *MTLS) Mode() string { return m.mode }
 func (m *MTLS) Counters() *core.Counters { return &m.counters }
 
 // Check binds r's certificate subject to sub and returns the subject
-// ("" when off). A refusal is an *Error (403) that names neither the
+// ("" when off). A refusal is an *apierr.Problem (403) that names neither the
 // expected subject nor the received one.
 func (m *MTLS) Check(r *http.Request, sub string) (string, error) {
 	if m.mode == config.MTLSOff {
@@ -140,19 +142,19 @@ func (m *MTLS) Check(r *http.Request, sub string) (string, error) {
 	if len(vals) != 1 || strings.TrimSpace(vals[0]) == "" {
 		m.counters.Inc(CounterMTLSAbsent)
 		return "", refusal(http.StatusForbidden, SlugMTLSRequired, "this route requires a client certificate (mTLS)",
-			FieldReason{Field: HeaderClientCertSubject, Reason: "absent"})
+			apierr.FieldProblem{Field: HeaderClientCertSubject, Reason: "absent"})
 	}
 	want, ok := m.bindings[sub]
 	if !ok {
 		m.counters.Inc(CounterMTLSUnbound)
 		return "", refusal(http.StatusForbidden, SlugMTLSMismatch, "no client certificate is bound to this client",
-			FieldReason{Field: "sub", Reason: "no binding"})
+			apierr.FieldProblem{Field: "sub", Reason: "no binding"})
 	}
 	got := strings.TrimSpace(vals[0])
 	if got != want {
 		m.counters.Inc(CounterMTLSMismatch)
 		return "", refusal(http.StatusForbidden, SlugMTLSMismatch, "the client certificate is not the one bound to this client",
-			FieldReason{Field: HeaderClientCertSubject, Reason: "does not match the binding of sub"})
+			apierr.FieldProblem{Field: HeaderClientCertSubject, Reason: "does not match the binding of sub"})
 	}
 	m.counters.Inc(CounterMTLSAccepted)
 	return got, nil

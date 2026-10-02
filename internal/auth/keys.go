@@ -19,6 +19,8 @@ import (
 
 	coreauth "github.com/rootxkit/uspace-core/auth"
 	"github.com/rootxkit/uspace-core/core"
+
+	"github.com/rootxkit/uspace-ansp/internal/apierr"
 )
 
 // MaxKeyFileBytes bounds a key file read at start.
@@ -196,7 +198,7 @@ func (p *PublicKeys) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	body, err := p.JSON()
 	if err != nil {
 		p.counters.Inc(CounterJWKSRenderFailed)
-		WriteProblem(w, r, http.StatusInternalServerError, SlugInternal, "the key set could not be rendered", nil, 0)
+		apierr.WriteError(w, r, refusal(http.StatusInternalServerError, SlugInternal, "the key set could not be rendered"))
 		return
 	}
 	w.Header().Set("Content-Type", "application/jwk-set+json")

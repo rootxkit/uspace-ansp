@@ -6,8 +6,12 @@
 // SIGTERM, then drains. `api migrate <relational|timeseries>...` is the
 // one-shot migration subcommand. With ANSP_RELATIONAL_DSN set it opens
 // the relational database as ansp_app and refuses to start on a schema
-// older than this build (M36). With ANSP_SESSION_KEY_FILE set it serves
-// console sign-in, the user operations and the JWKS (WP-2, cmd/api/auth.go).
+// older than this build (M36). Every operation of api/openapi.yaml is
+// mounted through the generated router behind its x-auth (WP-3,
+// cmd/api/server.go); those no work package serves yet answer 501. With
+// ANSP_SESSION_KEY_FILE set it serves console sign-in, the user
+// operations and the JWKS (WP-2, cmd/api/auth.go); without it they
+// answer 503.
 package main
 
 import (
@@ -90,9 +94,14 @@ func run(ctx context.Context, args, environ []string, stdout io.Writer) int {
 
 	reg := obs.Metrics()
 	mux := http.NewServeMux()
-	aw, err := wireAuth(ctx, cfg, db, mux, reg, logger)
+	aw, err := wireAuth(ctx, cfg, db, reg, logger)
 	if err != nil {
 		logger.Error("auth refused", slog.String("error", err.Error()))
+		return 2
+	}
+	// Every operation of api/openapi.yaml, behind its x-auth (WP-3).
+	if _, err := mountAPI(mux, aw.guard, aw.handlers, aw.realIP); err != nil {
+		logger.Error("routes refused", slog.String("error", err.Error()))
 		return 2
 	}
 	checks = append(checks, aw.checks...)

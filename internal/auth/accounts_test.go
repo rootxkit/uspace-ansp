@@ -10,15 +10,17 @@ import (
 	"time"
 
 	coreauth "github.com/rootxkit/uspace-core/auth"
+
+	"github.com/rootxkit/uspace-ansp/internal/apierr"
 )
 
 const pw = "correct horse battery"
 
-func asError(t testing.TB, err error) *Error {
+func asError(t testing.TB, err error) *apierr.Problem {
 	t.Helper()
-	var e *Error
+	var e *apierr.Problem
 	if !errors.As(err, &e) {
-		t.Fatalf("not an *Error: %v", err)
+		t.Fatalf("not an *apierr.Problem: %v", err)
 	}
 	return e
 }
@@ -110,11 +112,11 @@ func TestMFARightWrongReplayed(t *testing.T) {
 		wrong = "111111"
 	}
 	_, err = w.accounts.VerifyMFA(ctx, lr.MFAToken, wrong, RequestInfo{})
-	if e := asError(t, err); e.Status != http.StatusUnauthorized || e.Slug != SlugMFARefused {
+	if e := asError(t, err); e.Status != http.StatusUnauthorized || e.Slug() != SlugMFARefused {
 		t.Fatalf("%+v", e)
 	}
 	_, err = w.accounts.VerifyMFA(ctx, lr.MFAToken, w.code(t, secret), RequestInfo{})
-	if e := asError(t, err); e.Slug != SlugMFARefused {
+	if e := asError(t, err); e.Slug() != SlugMFARefused {
 		t.Fatalf("replayed code accepted: %v", err)
 	}
 	got := reasons(nil, w, EventMFARefused)
@@ -135,7 +137,7 @@ func TestMFARightWrongReplayed(t *testing.T) {
 		t.Fatalf("next step: %v", err)
 	}
 	// The challenge is spent, and success cleared the lockout.
-	if _, err := w.accounts.VerifyMFA(ctx, lr.MFAToken, w.code(t, secret), RequestInfo{}); asError(t, err).Slug != SlugMFARefused {
+	if _, err := w.accounts.VerifyMFA(ctx, lr.MFAToken, w.code(t, secret), RequestInfo{}); asError(t, err).Slug() != SlugMFARefused {
 		t.Fatal("used challenge accepted")
 	}
 	w.store.mu.Lock()
@@ -154,10 +156,10 @@ func TestMFAChallengeRefusals(t *testing.T) {
 	w.accounts.cfg.LockoutAfter = 100 // the challenge's own bound first
 	w.addUser(t, "sup1", pw, RoleWatchSupervisor)
 	ctx := context.Background()
-	if _, err := w.accounts.VerifyMFA(ctx, "", "123456", RequestInfo{}); asError(t, err).Slug != SlugMFARefused {
+	if _, err := w.accounts.VerifyMFA(ctx, "", "123456", RequestInfo{}); asError(t, err).Slug() != SlugMFARefused {
 		t.Fatal("empty token")
 	}
-	if _, err := w.accounts.VerifyMFA(ctx, "unknown", "123456", RequestInfo{}); asError(t, err).Slug != SlugMFARefused {
+	if _, err := w.accounts.VerifyMFA(ctx, "unknown", "123456", RequestInfo{}); asError(t, err).Slug() != SlugMFARefused {
 		t.Fatal("unknown token")
 	}
 	lr, err := w.accounts.Login(ctx, "sup1", pw, RequestInfo{})
@@ -237,12 +239,12 @@ func TestLoginLockout(t *testing.T) {
 	for _, user := range []string{"sup1", "nobody"} {
 		for i := range 3 {
 			_, err := w.accounts.Login(ctx, user, "wrong password!", RequestInfo{})
-			if e := asError(t, err); e.Status != http.StatusUnauthorized || e.Slug != SlugInvalidCredentials {
+			if e := asError(t, err); e.Status != http.StatusUnauthorized || e.Slug() != SlugInvalidCredentials {
 				t.Fatalf("%s failure %d: %+v", user, i, e)
 			}
 		}
 		_, err := w.accounts.Login(ctx, user, pw, RequestInfo{})
-		if e := asError(t, err); e.Status != http.StatusTooManyRequests || e.Slug != SlugAccountLocked || e.RetryAfter != 15*time.Minute {
+		if e := asError(t, err); e.Status != http.StatusTooManyRequests || e.Slug() != SlugAccountLocked || e.RetryAfter != 15*time.Minute {
 			t.Fatalf("%s locked: %+v", user, e)
 		}
 	}
@@ -275,7 +277,7 @@ func TestMFAFailuresLock(t *testing.T) {
 		_, _ = w.accounts.VerifyMFA(ctx, lr.MFAToken, "abcdef", RequestInfo{})
 	}
 	_, err = w.accounts.VerifyMFA(ctx, lr.MFAToken, w.code(t, lr.Enrolment.Secret), RequestInfo{})
-	if e := asError(t, err); e.Status != http.StatusTooManyRequests || e.Slug != SlugAccountLocked {
+	if e := asError(t, err); e.Status != http.StatusTooManyRequests || e.Slug() != SlugAccountLocked {
 		t.Fatalf("%+v", e)
 	}
 }
@@ -294,10 +296,10 @@ func TestLoginRateLimits(t *testing.T) {
 		}
 	}
 	_, err := w.accounts.Login(ctx, "sup1", pw, ri)
-	if e := asError(t, err); e.Status != http.StatusTooManyRequests || e.Slug != SlugRateLimited || e.RetryAfter != 30*time.Second {
+	if e := asError(t, err); e.Status != http.StatusTooManyRequests || e.Slug() != SlugRateLimited || e.RetryAfter != 30*time.Second {
 		t.Fatalf("%+v", e)
 	}
-	if _, err := w.accounts.VerifyMFA(ctx, "x", "123456", ri); asError(t, err).Slug != SlugRateLimited {
+	if _, err := w.accounts.VerifyMFA(ctx, "x", "123456", ri); asError(t, err).Slug() != SlugRateLimited {
 		t.Fatal("MFA step not limited by address")
 	}
 	if _, err := w.accounts.Login(ctx, "sup1", pw, RequestInfo{RemoteIP: "198.51.100.8"}); err != nil {
@@ -309,7 +311,7 @@ func TestLoginRateLimits(t *testing.T) {
 	}
 	w.accounts.userLimiter = NewRateLimiter(1, 100, nil, w.clock.Now)
 	_, _ = w.accounts.Login(ctx, "sup1", pw, RequestInfo{RemoteIP: "203.0.113.1"})
-	if _, err := w.accounts.Login(ctx, "SUP1", pw, RequestInfo{RemoteIP: "203.0.113.2"}); asError(t, err).Slug != SlugRateLimited {
+	if _, err := w.accounts.Login(ctx, "SUP1", pw, RequestInfo{RemoteIP: "203.0.113.2"}); asError(t, err).Slug() != SlugRateLimited {
 		t.Fatal("per-username limit")
 	}
 	got := reasons(nil, w, EventLoginRefused)
@@ -325,7 +327,7 @@ func TestLoginInvalidInput(t *testing.T) {
 	ctx := context.Background()
 	for _, in := range [][2]string{{"x", pw}, {"sup1", strings.Repeat("p", MaxSecretBytes+1)}, {"", ""}} {
 		_, err := w.accounts.Login(ctx, in[0], in[1], RequestInfo{})
-		if e := asError(t, err); e.Slug != SlugInvalidCredentials {
+		if e := asError(t, err); e.Slug() != SlugInvalidCredentials {
 			t.Fatalf("%v: %+v", in, e)
 		}
 	}
@@ -343,7 +345,7 @@ func TestDisabledUserCannotSignIn(t *testing.T) {
 	w.addUser(t, "admin1", pw, RoleAdmin)
 	_, err := w.accounts.Disable(context.Background(), Principal{}, u.ID)
 	must(t, err)
-	if _, err := w.accounts.Login(context.Background(), "sup1", pw, RequestInfo{}); asError(t, err).Slug != SlugInvalidCredentials {
+	if _, err := w.accounts.Login(context.Background(), "sup1", pw, RequestInfo{}); asError(t, err).Slug() != SlugInvalidCredentials {
 		t.Fatal("disabled account signed in")
 	}
 	if !slices.Contains(reasons(nil, w, EventLoginRefused), "user_disabled") {
@@ -549,13 +551,13 @@ func TestAdminOperations(t *testing.T) {
 	adminP := Principal{Session: true, Role: RoleAdmin, Claims: coreauth.Claims{Subject: admin.ID}}
 
 	_, err := w.accounts.CreateUser(ctx, adminP, "x", "short", "pilot")
-	if fields := fieldsOf(err); len(fields) != 3 {
+	if fields := apierr.FromError(err).Errors; len(fields) != 3 {
 		t.Fatalf("validation: %v", fields)
 	}
-	if _, err := w.accounts.CreateUser(ctx, adminP, "ok-user", "\xff\xfe invalid utf8 ..", RoleViewer); len(fieldsOf(err)) != 1 {
+	if _, err := w.accounts.CreateUser(ctx, adminP, "ok-user", "\xff\xfe invalid utf8 ..", RoleViewer); len(apierr.FromError(err).Errors) != 1 {
 		t.Fatal("invalid UTF-8 password")
 	}
-	if _, err := w.accounts.CreateUser(ctx, adminP, "ok-user", strings.Repeat("p", MaxSecretBytes+1), RoleViewer); len(fieldsOf(err)) != 1 {
+	if _, err := w.accounts.CreateUser(ctx, adminP, "ok-user", strings.Repeat("p", MaxSecretBytes+1), RoleViewer); len(apierr.FromError(err).Errors) != 1 {
 		t.Fatal("long password")
 	}
 	v, err := w.accounts.CreateUser(ctx, adminP, "sup1", pw, RoleWatchSupervisor)
@@ -663,10 +665,10 @@ func TestSweep(t *testing.T) {
 func TestRefusalNotSaved(t *testing.T) {
 	w := newWorld(t)
 	w.store.fail["record"] = errDown
-	if _, err := w.accounts.Login(context.Background(), "x", "y", RequestInfo{}); asError(t, err).Slug != SlugInvalidCredentials {
+	if _, err := w.accounts.Login(context.Background(), "x", "y", RequestInfo{}); asError(t, err).Slug() != SlugInvalidCredentials {
 		t.Fatal(err)
 	}
-	if _, err := w.accounts.Login(context.Background(), "nobody", pw, RequestInfo{}); asError(t, err).Slug != SlugInvalidCredentials {
+	if _, err := w.accounts.Login(context.Background(), "nobody", pw, RequestInfo{}); asError(t, err).Slug() != SlugInvalidCredentials {
 		t.Fatal(err)
 	}
 	if w.accounts.Counters().Get(CounterRefusalNotSaved) != 2 {

@@ -20,6 +20,8 @@ import (
 
 	"github.com/rootxkit/uspace-ansp/internal/audit"
 	"github.com/rootxkit/uspace-ansp/internal/config"
+
+	"github.com/rootxkit/uspace-ansp/internal/apierr"
 )
 
 // Defaults and bounds of the accounts service.
@@ -406,7 +408,7 @@ func mfaUnavailable() error {
 }
 
 func wrapUnlessRefusal(what string, err error) error {
-	var e *Error
+	var e *apierr.Problem
 	if errors.As(err, &e) {
 		return e
 	}
@@ -822,7 +824,7 @@ func (s *Accounts) CreateUser(ctx context.Context, actor Principal, username, pa
 		}
 		out, err = tx.InsertUser(ctx, User{Username: norm, PasswordHash: hash, Role: role, Status: StatusActive}, aid, now)
 		if errors.Is(err, ErrConflict) {
-			return refusal(http.StatusConflict, SlugConflict, "the username is taken", FieldReason{Field: "username", Reason: "taken"})
+			return refusal(http.StatusConflict, SlugConflict, "the username is taken", apierr.FieldProblem{Field: "username", Reason: "taken"})
 		}
 		if err != nil {
 			return err

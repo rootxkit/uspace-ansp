@@ -10,6 +10,8 @@ import (
 
 	coreauth "github.com/rootxkit/uspace-core/auth"
 	"github.com/rootxkit/uspace-core/core"
+
+	"github.com/rootxkit/uspace-ansp/internal/apierr"
 )
 
 // Counters of the Guard (counter names, not credentials).
@@ -31,24 +33,35 @@ const (
 )
 
 // Access is what one operation requires of its caller (the x-auth of
-// its OpenAPI entry): Public, or a machine token granting every one of
-// Scopes, and/or a session whose role is one of Roles (AnyRole: any
-// console role). MTLS binds the client certificate of a machine caller
-// (the /v1/manned-traffic/* and /v1/coordination/* groups). An Access
-// that is neither public nor restricted grants nothing: Validate
-// refuses it, and Routes does not serve its route.
+// its OpenAPI entry, ParseAccess): Public, or a machine token granting
+// every one of Scopes, and/or a session whose role is one of Roles
+// (AnyRole: any console role). MTLS binds the client certificate of a
+// machine caller (the /v1/manned-traffic/* and /v1/coordination/*
+// groups). JWS names the signer group of an operation whose body is a
+// signed object verified by its handler (jws:cisp, the CIS change
+// notifications): the guard admits the request to that handler, which
+// refuses it unless the signature verifies. An Access that is neither
+// public, signed nor restricted grants nothing: Validate refuses it,
+// and Routes does not serve its route.
 type Access struct {
 	Public  bool
 	Scopes  []string
 	Roles   []string
 	AnyRole bool
 	MTLS    bool
+	JWS     string
 }
 
 // Validate refuses an Access that grants nothing or contradicts itself.
 func (a Access) Validate() error {
 	restricted := len(a.Scopes) > 0 || len(a.Roles) > 0 || a.AnyRole
 	switch {
+	case a.JWS != "" && (a.Public || restricted || a.MTLS):
+		return errors.New("a signed body and another rule at once")
+	case a.JWS != "" && !slugLike(a.JWS):
+		return fmt.Errorf("%q is not a signer group", a.JWS)
+	case a.JWS != "":
+		return nil
 	case a.Public && (restricted || a.MTLS):
 		return errors.New("public and restricted at once")
 	case !a.Public && !restricted:
@@ -71,10 +84,13 @@ func (a Access) Validate() error {
 func (a Access) admitsMachines() bool { return len(a.Scopes) > 0 }
 func (a Access) admitsSessions() bool { return a.AnyRole || len(a.Roles) > 0 }
 
-// String renders a for logs and errors.
+// String renders a as the x-auth grammar ParseAccess reads.
 func (a Access) String() string {
 	if a.Public {
 		return "public"
+	}
+	if a.JWS != "" {
+		return "jws:" + a.JWS
 	}
 	var parts []string
 	if len(a.Scopes) > 0 {
@@ -173,10 +189,11 @@ func (g *Guard) Require(a Access) func(http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if invalid != nil {
 				g.counters.Inc(CounterMisconfigured)
-				WriteProblem(w, r, http.StatusInternalServerError, SlugInternal, "this route has no valid access rule", nil, 0)
+				apierr.WriteError(w, r, refusal(http.StatusInternalServerError, SlugInternal, "this route has no valid access rule"))
 				return
 			}
-			if a.Public {
+			if a.Public || a.JWS != "" {
+				// A signed body is the handler's to verify (Access).
 				next.ServeHTTP(w, r)
 				return
 			}
@@ -184,8 +201,8 @@ func (g *Guard) Require(a Access) func(http.Handler) http.Handler {
 			if err != nil {
 				g.counters.Inc(CounterNoCredential)
 				w.Header().Set("WWW-Authenticate", `Bearer`)
-				WriteProblem(w, r, http.StatusUnauthorized, SlugUnauthenticated, err.Error(),
-					[]FieldReason{{Field: "Authorization", Reason: err.Error()}}, 0)
+				apierr.WriteError(w, r, refusal(http.StatusUnauthorized, SlugUnauthenticated, err.Error(),
+					apierr.FieldProblem{Field: "Authorization", Reason: err.Error()}))
 				return
 			}
 			p, aerr := g.authenticate(r, token, a)
@@ -193,7 +210,7 @@ func (g *Guard) Require(a Access) func(http.Handler) http.Handler {
 				if aerr.Status == http.StatusUnauthorized {
 					w.Header().Set("WWW-Authenticate", `Bearer error="invalid_token"`)
 				}
-				WriteError(w, r, aerr)
+				apierr.WriteError(w, r, aerr)
 				return
 			}
 			next.ServeHTTP(w, r.WithContext(WithPrincipal(r.Context(), p)))
@@ -219,26 +236,26 @@ func bearer(r *http.Request) (string, error) {
 }
 
 // authenticate judges token against a.
-func (g *Guard) authenticate(r *http.Request, token string, a Access) (Principal, *Error) {
+func (g *Guard) authenticate(r *http.Request, token string, a Access) (Principal, *apierr.Problem) {
 	if g.Sessions != nil && unverifiedIssuer(token) == g.Sessions.Issuer() {
 		return g.session(r.Context(), token, a)
 	}
 	return g.machine(r, token, a)
 }
 
-func tokenRefusal(err error) *Error {
+func tokenRefusal(err error) *apierr.Problem {
 	var te *coreauth.TokenError
 	if errors.As(err, &te) {
-		return refusal(http.StatusUnauthorized, te.Counter, "the token is refused", FieldReason{Field: te.Claim, Reason: te.Reason})
+		return refusal(http.StatusUnauthorized, te.Counter, "the token is refused", apierr.FieldProblem{Field: te.Claim, Reason: te.Reason})
 	}
 	return refusal(http.StatusUnauthorized, SlugUnauthenticated, "the token is refused")
 }
 
-func (g *Guard) machine(r *http.Request, token string, a Access) (Principal, *Error) {
+func (g *Guard) machine(r *http.Request, token string, a Access) (Principal, *apierr.Problem) {
 	if g.Machine == nil {
 		g.counters.Inc(CounterNoMachineVerifier)
 		return Principal{}, refusal(http.StatusUnauthorized, coreauth.CounterRejectedIssuer, "this process accepts no ecosystem token",
-			FieldReason{Field: "iss", Reason: "no ecosystem issuer is configured"})
+			apierr.FieldProblem{Field: "iss", Reason: "no ecosystem issuer is configured"})
 	}
 	cl, err := g.Machine.Verify(r.Context(), token)
 	if err != nil {
@@ -253,7 +270,7 @@ func (g *Guard) machine(r *http.Request, token string, a Access) (Principal, *Er
 		if !cl.HasScope(s) {
 			g.counters.Inc(CounterScopeRefused)
 			return Principal{}, refusal(http.StatusForbidden, SlugForbidden, "the token does not grant a scope this operation requires",
-				FieldReason{Field: "scope", Reason: "missing " + s})
+				apierr.FieldProblem{Field: "scope", Reason: "missing " + s})
 		}
 	}
 	p := Principal{Claims: cl}
@@ -265,7 +282,7 @@ func (g *Guard) machine(r *http.Request, token string, a Access) (Principal, *Er
 		subject, err := g.MTLS.Check(r, cl.Subject)
 		if err != nil {
 			g.counters.Inc(CounterMTLSRefused)
-			var e *Error
+			var e *apierr.Problem
 			errors.As(err, &e)
 			return Principal{}, e
 		}
@@ -278,7 +295,7 @@ func (g *Guard) machine(r *http.Request, token string, a Access) (Principal, *Er
 	return p, nil
 }
 
-func (g *Guard) session(ctx context.Context, token string, a Access) (Principal, *Error) {
+func (g *Guard) session(ctx context.Context, token string, a Access) (Principal, *apierr.Problem) {
 	cl, err := g.Sessions.Verify(ctx, token)
 	var te *coreauth.TokenError
 	switch {
@@ -298,7 +315,7 @@ func (g *Guard) session(ctx context.Context, token string, a Access) (Principal,
 	if !a.admitsSessions() || (!a.AnyRole && !slices.Contains(a.Roles, role)) {
 		g.counters.Inc(CounterRoleRefused)
 		return Principal{}, refusal(http.StatusForbidden, SlugForbidden, "the session's role may not perform this operation",
-			FieldReason{Field: "roles", Reason: "requires " + a.String()})
+			apierr.FieldProblem{Field: "roles", Reason: "requires " + a.String()})
 	}
 	g.counters.Inc(CounterSessionAccepted)
 	return Principal{Claims: cl, Session: true, Role: role}, nil
@@ -316,13 +333,13 @@ func (g *Guard) RequireUpgrade(a Access) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		bearerNext := byBearer(next)
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if len(r.Header.Values("Authorization")) > 0 || a.Public || a.Validate() != nil {
+			if len(r.Header.Values("Authorization")) > 0 || a.Public || a.JWS != "" || a.Validate() != nil {
 				bearerNext.ServeHTTP(w, r)
 				return
 			}
 			p, err := g.fromCookie(r, a)
 			if err != nil {
-				WriteError(w, r, err)
+				apierr.WriteError(w, r, err)
 				return
 			}
 			next.ServeHTTP(w, r.WithContext(WithPrincipal(r.Context(), p)))
@@ -330,12 +347,12 @@ func (g *Guard) RequireUpgrade(a Access) func(http.Handler) http.Handler {
 	}
 }
 
-func (g *Guard) fromCookie(r *http.Request, a Access) (Principal, *Error) {
+func (g *Guard) fromCookie(r *http.Request, a Access) (Principal, *apierr.Problem) {
 	origin := r.Header.Get("Origin")
 	if origin == "" || !slices.Contains(g.Origins, origin) {
 		g.counters.Inc(CounterOriginRefused)
 		return Principal{}, refusal(http.StatusForbidden, SlugForbidden, "the Origin of this upgrade is not allowed",
-			FieldReason{Field: "Origin", Reason: "not on the allow-list"})
+			apierr.FieldProblem{Field: "Origin", Reason: "not on the allow-list"})
 	}
 	c, err := r.Cookie(CookieSession)
 	if err != nil || c.Value == "" {

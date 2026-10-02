@@ -12,6 +12,8 @@ import (
 
 	coreauth "github.com/rootxkit/uspace-core/auth"
 	"github.com/rootxkit/uspace-core/vectors"
+
+	"github.com/rootxkit/uspace-ansp/internal/apierr"
 )
 
 type jwtFixtures struct {
@@ -90,7 +92,7 @@ func TestVectorsJWTVerify(t *testing.T) {
 			t.Fatal("the answer echoes the token")
 		}
 		if !exp.Accepted {
-			var p ProblemBody
+			var p apierr.Problem
 			must(t, json.Unmarshal(rec.Body.Bytes(), &p))
 			if rec.Code != http.StatusUnauthorized || p.Slug() != exp.Reason || len(p.Errors) != 1 || p.Errors[0].Field != exp.Claim {
 				t.Fatalf("got %d %s, want 401 %s on %s", rec.Code, rec.Body.String(), exp.Reason, exp.Claim)
@@ -104,7 +106,7 @@ func TestVectorsJWTVerify(t *testing.T) {
 			return
 		}
 		if exp.RequireScopeOK != nil && !*exp.RequireScopeOK {
-			var p ProblemBody
+			var p apierr.Problem
 			must(t, json.Unmarshal(rec.Body.Bytes(), &p))
 			if rec.Code != http.StatusForbidden || p.Slug() != SlugForbidden || g.Counters().Get(CounterScopeRefused) != 1 || seen != nil {
 				t.Fatalf("got %d %s, want 403 for the missing scope %s", rec.Code, rec.Body.String(), scope)

@@ -25,23 +25,28 @@ import (
 // are deleted.
 const sweepEvery = 10 * time.Minute
 
-// authWiring is the accounts side of api (WP-2): the routes of
-// internal/auth on mux, the readiness checks, and the background work
+// authWiring is the accounts side of api (WP-2): the guard every route
+// is served behind, the client-address middleware (trusted proxies
+// only), the sign-in, user and key handlers (nil while console sign-in
+// is not configured), the readiness checks, and the background work
 // (the sweep, the clients-seen recorder).
 type authWiring struct {
-	checks []obs.Check
-	run    []func(ctx context.Context)
+	guard    *auth.Guard
+	realIP   func(http.Handler) http.Handler
+	handlers *auth.Handlers
+	checks   []obs.Check
+	run      []func(ctx context.Context)
 }
 
-// wireAuth mounts console sign-in, the user operations and the JWKS
-// when ANSP_SESSION_KEY_FILE is set (it needs the relational database,
-// ANSP_SECRETS_KEY_FILE, ANSP_PUBLIC_BASE_URL and ANSP_AUDIENCES), and
-// builds the machine verifier when ANSP_TOKEN_ISSUERS is set (start-up
-// fails while an issuer's JWKS cannot be fetched). Without either it
-// mounts nothing and says so. ANSP_MTLS_MODE=required without
-// bindings refuses the start in every case (buildMTLS).
-func wireAuth(ctx context.Context, cfg config.Config, db *store.Relational, mux *http.ServeMux, reg prometheus.Registerer, logger *slog.Logger) (*authWiring, error) {
-	w := &authWiring{}
+// wireAuth builds the guard, and the console sign-in, user and key
+// handlers when ANSP_SESSION_KEY_FILE is set (it needs the relational
+// database, ANSP_SECRETS_KEY_FILE, ANSP_PUBLIC_BASE_URL and
+// ANSP_AUDIENCES), and the machine verifier when ANSP_TOKEN_ISSUERS is
+// set (start-up fails while an issuer's JWKS cannot be fetched).
+// Without either, the guard refuses every token and the sign-in
+// operations answer 503, and the log says so. ANSP_MTLS_MODE=required
+// without bindings refuses the start in every case (buildMTLS).
+func wireAuth(ctx context.Context, cfg config.Config, db *store.Relational, reg prometheus.Registerer, logger *slog.Logger) (*authWiring, error) {
 	proxies, err := auth.ParseTrustedProxies(cfg.TrustedProxies)
 	if err != nil {
 		return nil, err
@@ -51,6 +56,7 @@ func wireAuth(ctx context.Context, cfg config.Config, db *store.Relational, mux 
 		return nil, err
 	}
 	guard := &auth.Guard{Origins: cfg.WSAllowedOrigins, MTLS: mtls}
+	w := &authWiring{guard: guard, realIP: auth.RealIP(proxies)}
 	if len(cfg.TokenIssuers) > 0 {
 		m, err := auth.NewMachineVerifier(ctx, cfg)
 		if err != nil {
@@ -72,7 +78,7 @@ func wireAuth(ctx context.Context, cfg config.Config, db *store.Relational, mux 
 		}
 	}
 	if cfg.SessionKeyFile == "" {
-		logger.Warn("console sign-in is not mounted: ANSP_SESSION_KEY_FILE is not set")
+		logger.Warn("console sign-in is not configured: ANSP_SESSION_KEY_FILE is not set; the sign-in operations answer 503")
 		return w, obs.Counters(reg, "", guard.Counters())
 	}
 	if db == nil {
@@ -142,16 +148,7 @@ func wireAuth(ctx context.Context, cfg config.Config, db *store.Relational, mux 
 		}
 	}
 
-	inner := http.NewServeMux()
-	rt := auth.NewRoutes(inner, auth.AccessTable(), guard)
-	(&auth.Handlers{Accounts: accounts, Keys: keys}).Mount(rt)
-	if err := rt.Err(); err != nil {
-		return nil, fmt.Errorf("routes: %w", err)
-	}
-	h := auth.RealIP(proxies)(inner)
-	for pattern := range auth.AccessTable() {
-		mux.Handle(pattern, h)
-	}
+	w.handlers = &auth.Handlers{Accounts: accounts, Keys: keys}
 
 	for prefix, c := range map[string]*core.Counters{
 		"": guard.Counters(), "auth_accounts": accounts.Counters(), "auth_sessions": sessions.Counters(),
@@ -166,7 +163,7 @@ func wireAuth(ctx context.Context, cfg config.Config, db *store.Relational, mux 
 			logger.Warn("session sweep failed; it runs again next interval", slog.String("error", err.Error()))
 		})
 	})
-	logger.Info("console sign-in mounted", slog.String("issuer", issuer), slog.String("kid", ring.ActiveKID()))
+	logger.Info("console sign-in configured", slog.String("issuer", issuer), slog.String("kid", ring.ActiveKID()))
 	return w, nil
 }
 
