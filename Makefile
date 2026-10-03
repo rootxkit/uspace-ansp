@@ -30,7 +30,7 @@ IMAGE   ?= ghcr.io/rootxkit/uspace-ansp
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 
 .PHONY: all build vet fmt fmt-check tools staticcheck lint tidy test race cover \
-        integration vectors generate generate-check lint-api check-contracts fuzz-smoke bench lint-docs vulncheck \
+        integration dss-live vectors generate generate-check lint-api check-contracts fuzz-smoke bench lint-docs vulncheck \
         secrets web-install web-lint web-build web-types image compose-up \
         compose-down ci clean
 
@@ -99,6 +99,13 @@ integration:
 	echo "integration: $$n top-level tests passed, $$f failed"; \
 	if [ "$$rc" -ne 0 ]; then echo "integration: go test exited $$rc"; exit "$$rc"; fi; \
 	if [ "$$n" -eq 0 ]; then echo "integration: zero tests ran"; exit 1; fi
+
+# The DSS path of WP-9 against a real InterUSS DSS. uspace-lab has no
+# DSS compose yet, so this says it is skipped (E-04, PLAN section 15 row
+# 41 (8)); the same path runs in make integration against the in-test
+# DSS of internal/dss/dsstest.
+dss-live:
+	@echo "dss-live: SKIPPED, uspace-lab publishes no DSS compose yet; make integration runs the DSS path against internal/dss/dsstest"
 
 # This repository's RunOwned vector tests (none before WP-4), then
 # uspace-core's own vectors at the pinned version with this module's

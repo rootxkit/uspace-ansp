@@ -46,6 +46,21 @@ type fakeRestriction struct {
 	versions  []VersionInfo // index version-1
 	state     string
 	published *int64
+	// The DSS standing (WP-9) and each version's constraint document.
+	dss         fakeDSS
+	constraints []json.RawMessage
+}
+
+// fakeDSS is a restriction's DSS columns.
+type fakeDSS struct {
+	constraintID string
+	ovn          *string
+	dssVersion   *int64
+	state        string
+	since        *time.Time
+	reference    json.RawMessage
+	putVersion   *int64
+	writes       []DSSWrite
 }
 
 // fakeRepo is an in-memory Repo with the store's rules (leases, order
@@ -59,6 +74,8 @@ type fakeRepo struct {
 	alarms       []*Alarm
 	restrictions map[string]*fakeRestriction
 	audits       []audit.Event
+	// notifications are the dss_notifications rows, with their status.
+	notifications []fakeNotification
 	// failNext makes the next call of the named method fail.
 	failNext map[string]error
 	txCount  int
@@ -123,17 +140,19 @@ func (f *fakeRepo) Tx(ctx context.Context, fn func(ctx context.Context, tx Tx) e
 }
 
 type fakeSnapshot struct {
-	rows         map[string]fakeRow
-	order        []string
-	attempts     map[string][]fakeAttempt
-	alarms       []Alarm
-	published    map[string]*int64
-	auditsLength int
+	rows          map[string]fakeRow
+	order         []string
+	attempts      map[string][]fakeAttempt
+	alarms        []Alarm
+	published     map[string]*int64
+	dss           map[string]fakeDSS
+	notifications []fakeNotification
+	auditsLength  int
 }
 
 func (f *fakeRepo) snapshot() fakeSnapshot {
 	s := fakeSnapshot{rows: map[string]fakeRow{}, order: slices.Clone(f.order), attempts: map[string][]fakeAttempt{},
-		published: map[string]*int64{}, auditsLength: len(f.audits)}
+		published: map[string]*int64{}, dss: map[string]fakeDSS{}, notifications: slices.Clone(f.notifications), auditsLength: len(f.audits)}
 	for k, v := range f.rows {
 		s.rows[k] = *v
 	}
@@ -145,6 +164,9 @@ func (f *fakeRepo) snapshot() fakeSnapshot {
 	}
 	for k, r := range f.restrictions {
 		s.published[k] = r.published
+		d := r.dss
+		d.writes = slices.Clone(d.writes)
+		s.dss[k] = d
 	}
 	return s
 }
@@ -163,7 +185,9 @@ func (f *fakeRepo) restore(s fakeSnapshot) {
 	}
 	for k, p := range s.published {
 		f.restrictions[k].published = p
+		f.restrictions[k].dss = s.dss[k]
 	}
+	f.notifications = s.notifications
 	f.audits = f.audits[:s.auditsLength]
 }
 
@@ -172,7 +196,8 @@ func (f *fakeRepo) blockedUntil(r *fakeRow) (time.Time, bool) {
 	found := false
 	for _, id := range f.order {
 		p := f.rows[id]
-		if p.Kind == r.Kind && p.RestrictionID == r.RestrictionID && p.Target == r.Target && p.AnspVersion < r.AnspVersion && p.State == StateQueued {
+		sameChannel := p.Kind == r.Kind || (IsDSSKind(p.Kind) && IsDSSKind(r.Kind))
+		if sameChannel && p.RestrictionID == r.RestrictionID && p.Target == r.Target && p.AnspVersion < r.AnspVersion && p.State == StateQueued {
 			t := p.NextRetryAt
 			if p.leaseToken != "" && p.leaseUntil.After(t) {
 				t = p.leaseUntil
@@ -327,6 +352,7 @@ func (f *fakeRepo) Version(_ context.Context, rid string, version int64) (Versio
 	}
 	v := r.versions[version-1]
 	v.CurrentState, v.CurrentVersion, v.PublishedVersion = r.state, int64(len(r.versions)), r.published
+	v.DSS = r.dss.status()
 	return v, nil
 }
 
@@ -640,7 +666,7 @@ func (t *fakeTx) AcknowledgeAlarm(_ context.Context, id, by, reason string) (Ala
 		}
 		now := f.clock.Now()
 		a.AcknowledgedAt, a.AcknowledgedBy, a.AckReason = &now, by, reason
-		if a.Kind != AlarmCISPNotPublished {
+		if a.Kind != AlarmCISPNotPublished && a.Kind != AlarmNotifyLate {
 			a.ClearedAt, a.ClearReason = &now, "acknowledged"
 		}
 		return *a, nil

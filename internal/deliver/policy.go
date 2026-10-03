@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/rootxkit/uspace-core/core"
+	"github.com/rootxkit/uspace-core/f3548"
 )
 
 // Policy is the outbox's limits and timings, in this one place
@@ -49,6 +50,24 @@ type Policy struct {
 	// MaxBatch bounds the rows one scan, monitor or reconciliation pass
 	// handles; the rest wait for the next.
 	MaxBatch int
+	// NotifyLatency is F3548 CstrPublishedNotificationLatencySeconds: a
+	// subscriber notification still queued this long after the DSS
+	// answered raises uss_notify_late (WP-9).
+	NotifyLatency time.Duration
+	// NotifyWindow bounds a subscriber notification's retries in time
+	// (the subscriber reads the details itself after a missed index).
+	NotifyWindow time.Duration
+	// MaxSubscribers bounds the subscriptions one DSS answer may name; an
+	// answer past it is refused whole and alarmed (E-10).
+	MaxSubscribers int
+	// MaxDSSResponseBytes bounds a DSS answer read (f3548.MaxMessageBytes).
+	MaxDSSResponseBytes int
+	// DetailsRetention is how long the details of an ended constraint
+	// are served (F3548 ExternalDataMaxRetentionTimeHours).
+	DetailsRetention time.Duration
+	// DSSPingEvery is how often the DSS's reachability is read while
+	// nothing is written (the readiness line).
+	DSSPingEvery time.Duration
 }
 
 // DefaultPolicy is the outbox's defaults.
@@ -59,6 +78,12 @@ func DefaultPolicy() Policy {
 		ScanEvery: 5 * time.Second, PublishGrace: 2 * time.Second, StuckGrace: 30 * time.Second,
 		InFlight: 8, MaxResponseBytes: 1 << 20, ExcerptBytes: 1024, MaxBodyBytes: 256 << 10,
 		MaxActiveRefs: 1000, MaxTargets: 201, AlarmEvery: time.Second, MaxBatch: 100,
+		NotifyLatency:       f3548.CstrPublishedNotificationLatencySeconds * time.Second,
+		NotifyWindow:        5 * time.Minute,
+		MaxSubscribers:      10000,
+		MaxDSSResponseBytes: f3548.MaxMessageBytes,
+		DetailsRetention:    f3548.ExternalDataMaxRetentionTimeHours * time.Hour,
+		DSSPingEvery:        30 * time.Second,
 	}
 }
 
@@ -80,8 +105,11 @@ func (p Policy) Validate() error {
 	if p.InFlight < 1 || p.MaxBatch < 1 || p.MaxTargets < 1 || p.MaxActiveRefs < 1 {
 		errs = append(errs, core.Fieldf("bounds", "must be at least 1"))
 	}
-	if p.MaxResponseBytes < 1 || p.ExcerptBytes < 16 || p.MaxBodyBytes < 1 {
+	if p.MaxResponseBytes < 1 || p.ExcerptBytes < 16 || p.MaxBodyBytes < 1 || p.MaxDSSResponseBytes < 1 {
 		errs = append(errs, core.Fieldf("sizes", "must be positive (an excerpt at least 16 bytes)"))
+	}
+	if p.NotifyLatency <= 0 || p.NotifyWindow < p.BackoffMin || p.DetailsRetention <= 0 || p.DSSPingEvery <= 0 || p.MaxSubscribers < 1 {
+		errs = append(errs, core.Fieldf("dss", "latency, window, retention and ping period must be positive, the subscriber bound at least 1"))
 	}
 	return errors.Join(errs...)
 }
@@ -99,12 +127,16 @@ func (p Policy) Backoff(n int) time.Duration {
 // MaxAttempts is how many attempts fit in Window with Backoff between
 // them: the count bound of every job (max_deliver by policy). It is at
 // least 1 and at most 100000.
-func (p Policy) MaxAttempts() int {
+func (p Policy) MaxAttempts() int { return p.MaxAttemptsIn(p.Window) }
+
+// MaxAttemptsIn is how many attempts fit in window with Backoff between
+// them, at least 1 and at most 100000.
+func (p Policy) MaxAttemptsIn(window time.Duration) int {
 	var spent time.Duration
 	n := 1
 	for n < 100000 {
 		spent += p.Backoff(n)
-		if spent > p.Window {
+		if spent > window {
 			break
 		}
 		n++

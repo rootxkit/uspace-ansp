@@ -57,6 +57,8 @@ func (m *Monitor) log() *slog.Logger {
 // MonitorReport is what one Tick did.
 type MonitorReport struct {
 	Raised, Advanced, Cleared, DirectQueued int
+	// LateRaised and LateCleared are the uss_notify_late alarms.
+	LateRaised, LateCleared int
 }
 
 // AlarmDetail is the alarm's text (C-12: "not yet published to the CISP
@@ -92,7 +94,81 @@ func (m *Monitor) Tick(ctx context.Context) (MonitorReport, error) {
 			errs = append(errs, fmt.Errorf("restriction %s: %w", c.RestrictionID, err))
 		}
 	}
+	errs = append(errs, m.late(ctx, &rep))
 	return rep, errors.Join(errs...)
+}
+
+// late raises uss_notify_late for each subscriber notification still
+// queued NotifyLatency after the DSS answered (C-12: retried, never
+// "lost"), and clears the alarms whose notification is settled: sent,
+// superseded by a newer one, or failed or abandoned (whose own alarm
+// then stands until a person acknowledges it).
+func (m *Monitor) late(ctx context.Context, rep *MonitorReport) error {
+	var errs []error
+	late, err := m.Repo.LateNotifications(ctx, m.Policy.NotifyLatency, m.Policy.MaxBatch)
+	if err != nil {
+		errs = append(errs, err)
+	}
+	for _, l := range late {
+		var al Alarm
+		var raised bool
+		err := m.Repo.Tx(ctx, func(ctx context.Context, tx Tx) error {
+			now, err := tx.Now(ctx)
+			if err != nil {
+				return err
+			}
+			al, raised, err = tx.RaiseAlarm(ctx, Alarm{ID: restriction.NewULID(now), Kind: AlarmNotifyLate, RestrictionID: l.RestrictionID,
+				AnspVersion: l.AnspVersion, DeliveryID: l.DeliveryID, Since: l.QueuedAt, Detail: clip(LateDetail(l, m.Policy.NotifyLatency), 1000)})
+			return err
+		})
+		if err != nil {
+			errs = append(errs, fmt.Errorf("notification %s: %w", l.DeliveryID, err))
+			continue
+		}
+		if raised {
+			rep.LateRaised++
+			m.count(CounterNotifyLate)
+			m.count(CounterAlarmsRaised)
+			m.log().Error("deliver: uss_notify_late: "+al.Detail, slog.String("delivery_id", l.DeliveryID),
+				slog.String("restriction_id", l.RestrictionID), slog.String("alarm_id", al.ID))
+			m.Events.Alarm(ctx, al, "raised")
+		}
+	}
+	cl, err := m.Repo.ClearableLate(ctx, m.Policy.MaxBatch)
+	if err != nil {
+		errs = append(errs, err)
+	}
+	for _, c := range cl {
+		reason := "delivered"
+		switch c.State {
+		case StateCancelled:
+			reason = "superseded"
+		case StateFailed:
+			reason = "delivery_failed"
+		case StateAbandoned:
+			reason = "delivery_abandoned"
+		case StateSent, StateQueued:
+		}
+		var al Alarm
+		var ok bool
+		err := m.Repo.Tx(ctx, func(ctx context.Context, tx Tx) error {
+			var err error
+			al, ok, err = tx.ClearAlarm(ctx, c.AlarmID, reason)
+			return err
+		})
+		if err != nil {
+			errs = append(errs, fmt.Errorf("alarm %s: %w", c.AlarmID, err))
+			continue
+		}
+		if ok {
+			rep.LateCleared++
+			m.count(CounterAlarmsCleared)
+			m.log().Info("deliver: uss_notify_late cleared", slog.String("alarm_id", al.ID), slog.String("delivery_id", c.DeliveryID),
+				slog.String("clear_reason", reason), slog.Float64("duration_s", al.ClearedAt.Sub(al.Since).Seconds()))
+			m.Events.Alarm(ctx, al, "cleared")
+		}
+	}
+	return errors.Join(errs...)
 }
 
 // raise opens (or moves to the new version) the alarm of o and queues

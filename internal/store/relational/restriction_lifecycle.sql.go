@@ -116,7 +116,7 @@ SELECT r.id, r.ansp_ref, r.identifier, r.uspace_airspace_id, r.zone_type,
        r.state, r.ansp_version, r.created_by, r.activated_by, r.ended_by, r.cancelled_by,
        r.created_at, r.activated_at, r.ended_at_actual, r.request_id, r.published_version,
        r.dss_constraint_id, r.dss_version, r.supersedes_id, r.activate_at, r.cis_version,
-       v.feature, v."constraint"
+       v.feature, v."constraint", r.dss_state, r.dss_pending_since, r.dss_reference, r.dss_put_version
 FROM restrictions r
 JOIN restriction_versions v ON v.restriction_id = r.id AND v.version = r.ansp_version
 WHERE ($1::restriction_state IS NULL OR r.state = $1::restriction_state)
@@ -175,6 +175,10 @@ type ListRestrictionsRow struct {
 	CisVersion       *string
 	Feature          json.RawMessage
 	Constraint       json.RawMessage
+	DssState         string
+	DssPendingSince  *time.Time
+	DssReference     json.RawMessage
+	DssPutVersion    *int64
 }
 
 func (q *Queries) ListRestrictions(ctx context.Context, arg ListRestrictionsParams) ([]ListRestrictionsRow, error) {
@@ -227,6 +231,10 @@ func (q *Queries) ListRestrictions(ctx context.Context, arg ListRestrictionsPara
 			&i.CisVersion,
 			&i.Feature,
 			&i.Constraint,
+			&i.DssState,
+			&i.DssPendingSince,
+			&i.DssReference,
+			&i.DssPutVersion,
 		); err != nil {
 			return nil, err
 		}
@@ -245,7 +253,7 @@ SELECT r.id, r.ansp_ref, r.identifier, r.uspace_airspace_id, r.zone_type,
        r.state, r.ansp_version, r.created_by, r.activated_by, r.ended_by, r.cancelled_by,
        r.created_at, r.activated_at, r.ended_at_actual, r.request_id, r.published_version,
        r.dss_constraint_id, r.dss_version, r.supersedes_id, r.activate_at, r.cis_version,
-       v.feature, v."constraint"
+       v.feature, v."constraint", r.dss_state, r.dss_pending_since, r.dss_reference, r.dss_put_version
 FROM restrictions r
 JOIN restriction_versions v ON v.restriction_id = r.id AND v.version = r.ansp_version
 WHERE r.id = $1
@@ -285,6 +293,10 @@ type LockRestrictionRow struct {
 	CisVersion       *string
 	Feature          json.RawMessage
 	Constraint       json.RawMessage
+	DssState         string
+	DssPendingSince  *time.Time
+	DssReference     json.RawMessage
+	DssPutVersion    *int64
 }
 
 func (q *Queries) LockRestriction(ctx context.Context, id string) (LockRestrictionRow, error) {
@@ -323,6 +335,10 @@ func (q *Queries) LockRestriction(ctx context.Context, id string) (LockRestricti
 		&i.CisVersion,
 		&i.Feature,
 		&i.Constraint,
+		&i.DssState,
+		&i.DssPendingSince,
+		&i.DssReference,
+		&i.DssPutVersion,
 	)
 	return i, err
 }
@@ -555,7 +571,7 @@ SELECT r.id, r.ansp_ref, r.identifier, r.uspace_airspace_id, r.zone_type,
        r.state, r.ansp_version, r.created_by, r.activated_by, r.ended_by, r.cancelled_by,
        r.created_at, r.activated_at, r.ended_at_actual, r.request_id, r.published_version,
        r.dss_constraint_id, r.dss_version, r.supersedes_id, r.activate_at, r.cis_version,
-       v.feature, v."constraint"
+       v.feature, v."constraint", r.dss_state, r.dss_pending_since, r.dss_reference, r.dss_put_version
 FROM restrictions r
 JOIN restriction_versions v ON v.restriction_id = r.id AND v.version = r.ansp_version
 WHERE r.id = $1
@@ -594,6 +610,10 @@ type RestrictionFullRow struct {
 	CisVersion       *string
 	Feature          json.RawMessage
 	Constraint       json.RawMessage
+	DssState         string
+	DssPendingSince  *time.Time
+	DssReference     json.RawMessage
+	DssPutVersion    *int64
 }
 
 func (q *Queries) RestrictionFull(ctx context.Context, id string) (RestrictionFullRow, error) {
@@ -632,6 +652,10 @@ func (q *Queries) RestrictionFull(ctx context.Context, id string) (RestrictionFu
 		&i.CisVersion,
 		&i.Feature,
 		&i.Constraint,
+		&i.DssState,
+		&i.DssPendingSince,
+		&i.DssReference,
+		&i.DssPutVersion,
 	)
 	return i, err
 }
@@ -693,9 +717,12 @@ func (q *Queries) RestrictionSuccessor(ctx context.Context, id *string) ([]strin
 }
 
 const restrictionVersion = `-- name: RestrictionVersion :one
-SELECT v.restriction_id, v.version, v.feature, v."constraint", v.changed_by, v.changed_at, v.change_reason,
-       v.state, v.starts_at, v.ends_at, v.msg_id, r.ansp_ref
+SELECT v.restriction_id, v.version, v.feature,
+       (CASE WHEN w.reference IS NULL THEN v."constraint"
+             ELSE COALESCE(v."constraint", '{}'::jsonb) || jsonb_build_object('reference', w.reference) END)::jsonb AS "constraint",
+       v.changed_by, v.changed_at, v.change_reason, v.state, v.starts_at, v.ends_at, v.msg_id, r.ansp_ref
 FROM restriction_versions v JOIN restrictions r ON r.id = v.restriction_id
+LEFT JOIN dss_constraint_writes w ON w.restriction_id = v.restriction_id AND w.ansp_version = v.version AND w.op = 'put'
 WHERE v.restriction_id = $1 AND v.version = $2
 `
 
@@ -719,6 +746,8 @@ type RestrictionVersionRow struct {
 	AnspRef       string
 }
 
+// constraint carries the reference the DSS accepted for this version
+// (WP-9), when it did.
 func (q *Queries) RestrictionVersion(ctx context.Context, arg RestrictionVersionParams) (RestrictionVersionRow, error) {
 	row := q.db.QueryRow(ctx, restrictionVersion, arg.RestrictionID, arg.Version)
 	var i RestrictionVersionRow

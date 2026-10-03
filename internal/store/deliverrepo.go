@@ -206,10 +206,29 @@ func (r DeliverRepo) Version(ctx context.Context, restrictionID string, version 
 			CurrentState: string(row.CurrentState), CurrentVersion: row.CurrentVersion, PublishedVersion: row.PublishedVersion,
 			Version: row.Version, State: string(row.State), StartsAt: row.StartsAt, EndsAt: row.EndsAt,
 			Feature: json.RawMessage(row.Feature), ChangedAt: row.ChangedAt, PrevState: row.PrevState,
+			DSS: dssStatus(row.DssState, row.DssPendingSince, row.DssPutVersion, row.DssVersion),
 		}
 		return nil
 	})
 	return out, err
+}
+
+// dssStatus is a restriction's standing in the DSS on the wire.
+func dssStatus(state string, since *time.Time, putVersion, dssVersion *int64) deliver.DSSStatus {
+	out := deliver.DSSStatus{State: state, AnspVersion: putVersion, DSSVersion: dssVersion}
+	if out.State == "" {
+		out.State = deliver.DSSNone
+	}
+	if since != nil {
+		s := restriction.Stamp(*since)
+		out.Since = &s
+	}
+	return out
+}
+
+// DSSStatusOf is a restriction's standing in the DSS on the wire.
+func DSSStatusOf(r restriction.Restriction) deliver.DSSStatus {
+	return dssStatus(r.DSSState, r.DSSPendingSince, r.DSSPutVersion, r.DSSVersion)
 }
 
 // Overdue is the active restrictions unpublished for longer than after.

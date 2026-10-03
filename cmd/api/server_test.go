@@ -103,7 +103,10 @@ func TestUnimplementedAndRefusals(t *testing.T) {
 		{"restriction request without a database", "POST", "/v1/restriction-requests", "scopes:ansp.requests", "application/json", "{}", 503, apierr.SlugUnavailable},
 		{"stream without a database", "GET", "/v1/restrictions/stream", "scopes:ansp.coordination", "", "", 403, apierr.SlugForbidden},
 		{"signed body without a receiver fails closed", "POST", "/v1/cis/notifications", "", "application/jose", "aGVhZGVy.cGF5bG9hZA.c2lnbmF0dXJl", 503, apierr.SlugUnavailable},
-		{"constraint details", "GET", "/uss/v1/constraints/2f8343be-6482-4d1b-a474-16847e01af1e", "scopes:utm.constraint_processing", "", "", 501, apierr.SlugNotImplemented},
+		// WP-9 serves the constraint details; without the store the route
+		// fails closed (cmd/api/constraints_test.go runs it with one).
+		{"constraint details without a store", "GET", "/uss/v1/constraints/2f8343be-6482-4d1b-a474-16847e01af1e", "scopes:utm.constraint_processing", "", "", 503, apierr.SlugUnavailable},
+		{"constraint details without the scope", "GET", "/uss/v1/constraints/2f8343be-6482-4d1b-a474-16847e01af1e", "scopes:utm.constraint_management", "", "", 403, apierr.SlugForbidden},
 		// Absence: no credential, a missing scope, a session-only route
 		// for a machine, a route of another process.
 		{"no credential", "GET", "/v1/restrictions", "", "", "", 401, apierr.SlugUnauthenticated},

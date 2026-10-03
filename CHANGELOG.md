@@ -155,3 +155,19 @@ additively within `/v1`. One line per work package.
   /v1/delivery-alarms/{id}/acknowledge`, `published` and `alarm` on
   `restriction/state/v1`, the deliveries summary on every restriction,
   and `api/outbound.md` (PLAN section 15 rows 39, 40).
+- WP-9 dss-constraints: `internal/dss` (the F3548 constraint manager:
+  the DSS client for `PUT`, `DELETE` and `GET
+  /dss/v1/constraint_references/...` with `ovn` handling and typed
+  errors, answers bounded and checked, at most 10 000 subscriptions
+  each; the subscriber notifier; the paths table held equal to the
+  pinned `utm.yaml`; the details of `GET /uss/v1/constraints/{entityid}`
+  as the DSS last accepted them, kept for the retention after the end;
+  `dsstest`, an in-test DSS with the ovn semantics), the outbox's
+  `dss_put` on an activation or extension and `dss_delete` on an end or
+  expiry with one re-read of a stale `ovn`, and one `uss_notify` per
+  subscriber the DSS names, queued with the write and sent at once
+  (`uss_notify_late` past 5 s), the readiness line `dss`, `dss` on
+  `restriction/state/v1` and the Restriction, the written reference in
+  `constraint_reference` and in each version's `constraint`, relational
+  migration `0060` (`dss_constraint_writes`, `dss_notifications`, the
+  restriction's DSS standing) (PLAN section 15 row 41).

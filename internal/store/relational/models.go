@@ -322,6 +322,33 @@ type DeliveryAttempt struct {
 	ResponseExcerpt *string
 }
 
+type DssConstraintWrite struct {
+	RestrictionID string
+	AnspVersion   int64
+	Op            string
+	DeliveryID    string
+	ConstraintID  uuid.UUID
+	Ovn           *string
+	DssVersion    *int64
+	Reference     json.RawMessage
+	Subscribers   int32
+	WrittenAt     time.Time
+}
+
+type DssNotification struct {
+	DeliveryID        string
+	SubscriptionID    uuid.UUID
+	NotificationIndex int32
+	RestrictionID     string
+	AnspVersion       int64
+	ConstraintID      uuid.UUID
+	Subscriber        string
+	Op                string
+	DssAnsweredAt     time.Time
+	SentAt            *time.Time
+	Status            string
+}
+
 type Event struct {
 	ID         int64
 	Ts         time.Time
@@ -406,6 +433,11 @@ type Restriction struct {
 	IdempotencyKey    *string
 	IdempotencySha256 *string
 	CisVersion        *string
+	DssState          string
+	DssPendingSince   *time.Time
+	DssReference      json.RawMessage
+	DssPutVersion     *int64
+	DssWrittenAt      *time.Time
 }
 
 type RestrictionIdentifierKey struct {

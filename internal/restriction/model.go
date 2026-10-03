@@ -154,6 +154,14 @@ type Restriction struct {
 	PublishedVersion *int64
 	DSSConstraintID  string
 	DSSVersion       *int64
+	// DSSState is the restriction's standing in the DSS (WP-9: none,
+	// pending, written, deleted, failed), DSSPendingSince set while
+	// pending or failed, DSSReference the ConstraintReference the DSS
+	// last accepted a put of DSSPutVersion with.
+	DSSState        string
+	DSSPendingSince *time.Time
+	DSSReference    json.RawMessage
+	DSSPutVersion   *int64
 	// CISVersion is the CIS projection the restriction was placed
 	// against, CISAgeS that projection's age now (database clock).
 	CISVersion *string

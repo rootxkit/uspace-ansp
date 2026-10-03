@@ -30,6 +30,7 @@ import (
 	"github.com/rootxkit/uspace-ansp/internal/bus"
 	"github.com/rootxkit/uspace-ansp/internal/config"
 	"github.com/rootxkit/uspace-ansp/internal/deliver"
+	"github.com/rootxkit/uspace-ansp/internal/dss/dsstest"
 	"github.com/rootxkit/uspace-ansp/internal/obs"
 	"github.com/rootxkit/uspace-ansp/internal/restriction"
 	"github.com/rootxkit/uspace-ansp/internal/store"
@@ -164,6 +165,10 @@ type deliverStack struct {
 	dw        *deliverWiring
 	restr     chan map[string]any
 	logs      *syncBuffer
+	// dss is the in-test DSS (ovn semantics, WP-9) naming subs, the two
+	// in-test subscribers.
+	dss  *dsstest.DSS
+	subs []*dsstest.USS
 }
 
 func newDeliverStack(t *testing.T) *deliverStack {
@@ -195,6 +200,12 @@ func newDeliverStack(t *testing.T) *deliverStack {
 	})
 	s.ussps = []*peer{newPeer(t, false), newPeer(t, false)}
 	s.authority = newPeer(t, false)
+	s.subs = []*dsstest.USS{dsstest.NewUSS(), dsstest.NewUSS()}
+	s.dss = dsstest.New(dsstest.Subscriber{BaseURL: s.subs[0].URL(), Subscriptions: []string{"78ea3fe8-71c2-4f5c-9b44-9c02f5563c6f"}},
+		dsstest.Subscriber{BaseURL: s.subs[1].URL(), Subscriptions: []string{"88ea3fe8-71c2-4f5c-9b44-9c02f5563c6f"}})
+	t.Cleanup(s.dss.Close)
+	t.Cleanup(s.subs[0].Close)
+	t.Cleanup(s.subs[1].Close)
 	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = r.ParseForm()
 		w.Header().Set("Content-Type", "application/json")
@@ -208,7 +219,7 @@ func newDeliverStack(t *testing.T) *deliverStack {
 		"ANSP_AUTHORITY_NAME=Test ANSP", "ANSP_CISP_URL=" + s.cisp.srv.URL, "ANSP_TOKEN_URL=" + tokenSrv.URL + "/oauth/token",
 		"ANSP_CLIENT_SECRET_FILE=" + secretFile, "ANSP_DELIVERY_KEY_FILE=" + deliveryKey,
 		"ANSP_CISP_CLIENT_CERT_FILE=" + clientCert, "ANSP_CISP_CLIENT_KEY_FILE=" + clientKey,
-		"ANSP_AUTHORITY_URL=" + s.authority.srv.URL}
+		"ANSP_AUTHORITY_URL=" + s.authority.srv.URL, "ANSP_DSS_URL=" + s.dss.URL()}
 	if creds := os.Getenv("ANSP_NATS_CREDS"); creds != "" {
 		env = append(env, "ANSP_NATS_CREDS="+creds)
 	}

@@ -76,7 +76,9 @@ func TestOutboxScan(t *testing.T) {
 
 // The restriction service's hook: a version's job is written in the
 // version's transaction and published after the commit; an expiry
-// queues nothing; a transaction the outbox cannot write in refuses.
+// queues no CISP publication (the CISP expires it on its own clock) but
+// the DSS delete (WP-9), and the restriction's DSS standing is pending;
+// a transaction the outbox cannot write in refuses.
 func TestRestrictionHook(t *testing.T) {
 	h := newHarness(t, nil)
 	h.repo.addVersion(version(1, "planned"))
@@ -93,8 +95,14 @@ func TestRestrictionHook(t *testing.T) {
 		}
 		return hook.Versioned(ctx, nil, restriction.Version{RestrictionID: testRID, AnspRef: testRef, Version: 2}, restriction.OpExpire)
 	})
-	if err != nil || len(h.repo.order) != 1 || h.repo.row(h.repo.order[0]).Op != OpCreate {
+	if err != nil || len(h.repo.order) != 2 || h.repo.row(h.repo.order[0]).Op != OpCreate {
 		t.Fatalf("rows %v %v", h.repo.order, err)
+	}
+	if del := h.repo.row(h.repo.order[1]); del.Kind != KindDSSDelete || del.Target != TargetDSS || del.Op != OpDSSDelete || del.AnspVersion != 2 {
+		t.Fatalf("the expiry's job %+v", del.Delivery)
+	}
+	if d := h.repo.dssOf(testRID); d.state != DSSPending || d.since == nil {
+		t.Fatalf("the DSS standing after the expiry %+v", d)
 	}
 	hook.Committed(context.Background(), []restriction.Version{v})
 	if len(h.bus.all()) != 1 {

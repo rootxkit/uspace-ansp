@@ -33,6 +33,10 @@ type Worker struct {
 	Repo   Repo
 	CISP   *CISP
 	Direct *Direct
+	// DSS sends the F3548 jobs (WP-9); Outbox queues the subscriber
+	// notifications a DSS write names, in the write's transaction.
+	DSS    *DSS
+	Outbox *Outbox
 	Events *Events
 	Policy Policy
 	Logger *slog.Logger
@@ -150,23 +154,28 @@ func (w *Worker) Handle(ctx context.Context, m Msg) {
 	if d.Attempt > d.MaxAttempts || c.Now.After(d.WindowEndsAt) {
 		a.State, a.Outcome, a.Error = StateAbandoned, "abandoned",
 			fmt.Sprintf("not sent: %d attempts of at most %d, or the window ended at %s", d.Attempt-1, d.MaxAttempts, restriction.Stamp(d.WindowEndsAt))
-		w.finish(ctx, m, log, d, a, c.Now)
+		w.finish(ctx, m, log, d, a, c.Now, nil)
 		return
 	}
 	start := w.clock()
-	resp, cancel, err := w.send(ctx, &d, token)
+	out, err := w.send(ctx, &d, token)
 	a.Duration = w.clock().Sub(start)
 	switch {
 	case err != nil:
 		// A local failure (the version cannot be read, a body cannot be
 		// built): never a request; failed with the reason and an alarm.
 		a.State, a.Outcome, a.Error = StateFailed, "failed", clip(err.Error(), 1000)
-	case cancel != "":
-		a.State, a.Outcome, a.CancelReason = StateCancelled, "cancelled", cancel
+	case out.cancel != "":
+		a.State, a.Outcome, a.CancelReason = StateCancelled, "cancelled", out.cancel
 	default:
+		resp := out.resp
 		w.count(CounterAttempts)
 		a.StatusCode, a.Excerpt, a.Error = statusPtr(resp.Status), clip(resp.Excerpt, 2000), clip(resp.Err, 1000)
-		switch Judge(resp) {
+		v := Judge(resp)
+		if out.verdict != nil {
+			v = *out.verdict
+		}
+		switch v {
 		case Sent:
 			a.State, a.Outcome = StateSent, "sent"
 		case Permanent:
@@ -181,7 +190,10 @@ func (w *Worker) Handle(ctx context.Context, m Msg) {
 			}
 		}
 	}
-	w.finish(ctx, m, log, d, a, c.Now)
+	if a.State != StateSent {
+		out.write = nil
+	}
+	w.finish(ctx, m, log, d, a, c.Now, out.write)
 }
 
 func statusPtr(s int) *int {
@@ -191,63 +203,79 @@ func statusPtr(s int) *int {
 	return &s
 }
 
-// send prepares the request at the first attempt and sends it. cancel,
-// when set, says the job is not sent and why.
-func (w *Worker) send(ctx context.Context, d *Delivery, token string) (Response, string, error) {
+// send prepares the request at the first attempt and sends it.
+func (w *Worker) send(ctx context.Context, d *Delivery, token string) (sent, error) {
 	switch d.Kind {
 	case KindCISPPublish:
 		if d.Method == "" {
 			v, err := w.Repo.Version(ctx, d.RestrictionID, d.AnspVersion)
 			if err != nil {
-				return Response{}, "", fmt.Errorf("the version cannot be read: %w", err)
+				return sent{}, fmt.Errorf("the version cannot be read: %w", err)
 			}
 			pub, err := BuildPublication(v, d.Op)
 			if err != nil {
-				return Response{}, "", err
+				return sent{}, err
 			}
 			if pub.Cancel != "" {
-				return Response{}, pub.Cancel, nil
+				return sent{cancel: pub.Cancel}, nil
 			}
 			if len(pub.Body) > w.Policy.MaxBodyBytes {
-				return Response{}, "", fmt.Errorf("the publication is %d bytes; the CISP takes at most %d", len(pub.Body), w.Policy.MaxBodyBytes)
+				return sent{}, fmt.Errorf("the publication is %d bytes; the CISP takes at most %d", len(pub.Body), w.Policy.MaxBodyBytes)
 			}
 			p, err := w.Repo.Prepare(ctx, d.ID, token, pub.Method, pub.Path, pub.Body)
 			if err != nil {
-				return Response{}, "", fmt.Errorf("the request cannot be recorded: %w", err)
+				return sent{}, fmt.Errorf("the request cannot be recorded: %w", err)
 			}
 			*d = p
 		}
 		if w.CISP == nil {
-			return Response{Err: "no CISP configured (ANSP_CISP_URL)"}, "", nil
+			return sent{resp: Response{Err: "no CISP configured (ANSP_CISP_URL)"}}, nil
 		}
-		return w.CISP.Publish(ctx, d.Method, d.URL, d.Body, d.IdempotencyKey), "", nil
+		return sent{resp: w.CISP.Publish(ctx, d.Method, d.URL, d.Body, d.IdempotencyKey)}, nil
 	case KindDirect:
 		if d.Method == "" {
 			p, err := w.Repo.Prepare(ctx, d.ID, token, "POST", strings.TrimRight(d.Target, "/")+PathNotifications, d.Body)
 			if err != nil {
-				return Response{}, "", fmt.Errorf("the request cannot be recorded: %w", err)
+				return sent{}, fmt.Errorf("the request cannot be recorded: %w", err)
 			}
 			*d = p
 		}
 		if w.Direct == nil {
-			return Response{Err: "no degraded direct path configured"}, "", nil
+			return sent{resp: Response{Err: "no degraded direct path configured"}}, nil
 		}
-		return w.Direct.Send(ctx, d.Target, d.RestrictionID, d.ID, d.Body), "", nil
-	case KindCISPHeartbeat, KindDSSPut, KindDSSDelete, KindUSSNotify, KindOccurrence:
+		return sent{resp: w.Direct.Send(ctx, d.Target, d.RestrictionID, d.ID, d.Body)}, nil
+	case KindDSSPut, KindDSSDelete, KindUSSNotify:
+		if w.DSS == nil {
+			return sent{resp: Response{Err: "no DSS channel in this process"}}, nil
+		}
+	case KindCISPHeartbeat, KindOccurrence:
 	}
-	return Response{}, "", fmt.Errorf("no sender for kind %s in this build", d.Kind)
+	switch d.Kind {
+	case KindDSSPut:
+		return w.DSS.put(ctx, w.Repo, d, token, w.Policy.MaxBodyBytes)
+	case KindDSSDelete:
+		return w.DSS.del(ctx, w.Repo, d, token)
+	case KindUSSNotify:
+		return w.DSS.notify(ctx, w.Repo, d, token, w.Policy.MaxBodyBytes)
+	case KindCISPPublish, KindDirect, KindCISPHeartbeat, KindOccurrence:
+	}
+	return sent{}, fmt.Errorf("no sender for kind %s in this build", d.Kind)
 }
 
 // finish records a in one transaction with what it implies (the CISP's
 // confirmation, the direct path superseded, the alarm cleared or a
-// failure alarm raised), then answers the message and tells the bus.
-func (w *Worker) finish(ctx context.Context, m Msg, log *slog.Logger, d Delivery, a Attempt, now time.Time) {
+// failure alarm raised; for a DSS write what the DSS accepted and one
+// uss_notify job per subscriber it named, an older notification to the
+// same subscriber superseded; for a notification its rows settled), then
+// answers the message and tells the bus.
+func (w *Worker) finish(ctx context.Context, m Msg, log *slog.Logger, d Delivery, a Attempt, now time.Time, write *DSSWrite) {
 	var held bool
-	var cancelled []Cancelled
+	var cancelled, superseded []Cancelled
 	var raised, cleared *Alarm
 	var ps PublishedState
+	var notifies []string
 	err := w.Repo.Tx(ctx, func(ctx context.Context, tx Tx) error {
-		cancelled, raised, cleared = nil, nil, nil
+		cancelled, superseded, raised, cleared, notifies = nil, nil, nil, nil, nil
 		var err error
 		if held, err = tx.Finish(ctx, a); err != nil || !held {
 			return err
@@ -282,6 +310,20 @@ func (w *Worker) finish(ctx context.Context, m Msg, log *slog.Logger, d Delivery
 			}
 			if ok {
 				raised = &al
+			}
+		}
+		switch {
+		case IsDSSKind(d.Kind) && write != nil:
+			if notifies, superseded, err = w.recordWrite(ctx, tx, *write, now); err != nil {
+				return err
+			}
+		case IsDSSKind(d.Kind) && a.State != StateQueued:
+			if err := tx.SettleDSS(ctx, d.RestrictionID, a.State == StateFailed || a.State == StateAbandoned); err != nil {
+				return err
+			}
+		case d.Kind == KindUSSNotify && a.State != StateQueued:
+			if err := tx.SettleNotifications(ctx, d.ID, a.State); err != nil {
+				return err
 			}
 		}
 		return nil
@@ -334,6 +376,14 @@ func (w *Worker) finish(ctx context.Context, m Msg, log *slog.Logger, d Delivery
 		log.Info("deliver: a degraded direct delivery still queued is cancelled: the CISP published the version",
 			slog.String("cancelled_delivery_id", c.ID), slog.String("cancel_reason", CancelSupersededByCISP), slog.String("cancelled_target", c.Target))
 	}
+	for _, c := range superseded {
+		w.count(CounterCancelled)
+		w.count(CounterNotifySuperseded)
+		log.Info("deliver: an older subscriber notification still queued is superseded by the newer version's",
+			slog.String("cancelled_delivery_id", c.ID), slog.String("cancel_reason", CancelSupersededByNewer),
+			slog.String("cancelled_target", c.Target), slog.Int64("cancelled_ansp_version", c.AnspVersion))
+	}
+	w.afterDSS(ctx, log, d, a, write, notifies)
 	if a.State == StateSent && d.Kind == KindCISPPublish {
 		w.Events.Published(ctx, d.RestrictionID, d.AnspVersion)
 	}
@@ -346,6 +396,87 @@ func (w *Worker) finish(ctx context.Context, m Msg, log *slog.Logger, d Delivery
 	if raised != nil {
 		w.count(CounterAlarmsRaised)
 		w.Events.Alarm(ctx, *raised, "raised")
+	}
+}
+
+// recordWrite records a DSS write and queues one uss_notify per
+// subscriber the DSS named (their bodies are built at their first
+// attempt, outside any transaction), superseding an older notification
+// still queued to the same subscriber. It returns the new jobs' ids.
+func (w *Worker) recordWrite(ctx context.Context, tx Tx, write DSSWrite, now time.Time) ([]string, []Cancelled, error) {
+	if err := tx.RecordDSSWrite(ctx, write); err != nil {
+		return nil, nil, err
+	}
+	if write.Reference == nil || w.Outbox == nil {
+		return nil, nil, nil
+	}
+	var ids []string
+	var superseded []Cancelled
+	for _, sub := range write.Subscribers {
+		id := restriction.NewULID(now)
+		_, ok, err := w.Outbox.Enqueue(ctx, tx, Job{ID: id, Kind: KindUSSNotify, RestrictionID: write.RestrictionID, AnspRef: write.AnspRef,
+			AnspVersion: write.AnspVersion, Op: write.Op, Target: sub.USSBaseURL, Window: w.Policy.NotifyWindow})
+		if err != nil {
+			return nil, nil, err
+		}
+		if !ok {
+			continue
+		}
+		ids = append(ids, id)
+		for _, s := range sub.Subscriptions {
+			if err := tx.InsertNotification(ctx, Notification{DeliveryID: id, SubscriptionID: s.SubscriptionId,
+				NotificationIndex: s.NotificationIndex, RestrictionID: write.RestrictionID, AnspVersion: write.AnspVersion,
+				ConstraintID: write.ConstraintID, Subscriber: sub.USSBaseURL, Op: write.Op}); err != nil {
+				return nil, nil, err
+			}
+		}
+		older, err := tx.CancelQueuedTo(ctx, KindUSSNotify, write.RestrictionID, sub.USSBaseURL, write.AnspVersion, CancelSupersededByNewer)
+		if err != nil {
+			return nil, nil, err
+		}
+		for _, c := range older {
+			if err := tx.SettleNotifications(ctx, c.ID, StateCancelled); err != nil {
+				return nil, nil, err
+			}
+		}
+		superseded = append(superseded, older...)
+	}
+	return ids, superseded, nil
+}
+
+// afterDSS publishes the notifications a DSS write queued (at once: the
+// subscribers are owed them within NotifyLatency of the DSS's answer),
+// logs the write and tells restr.v1: dss written or deleted, or pending
+// since T at the first failed attempt of a DSS write.
+func (w *Worker) afterDSS(ctx context.Context, log *slog.Logger, d Delivery, a Attempt, write *DSSWrite, notifies []string) {
+	switch {
+	case write != nil:
+		n := len(notifies)
+		for range n {
+			w.count(CounterNotifyQueued)
+		}
+		if write.Op == OpDSSPut {
+			w.count(CounterDSSWritten)
+		} else {
+			w.count(CounterDSSDeleted)
+		}
+		attrs := []any{slog.String("dss_op", write.Op), slog.String("constraint_id", write.ConstraintID), slog.Int("subscribers", n)}
+		if write.Reference != nil {
+			attrs = append(attrs, slog.Int("dss_version", int(write.Reference.Version)))
+		}
+		log.Info("dss: the DSS accepted the constraint reference; its subscribers are notified", attrs...)
+		if w.Outbox != nil && n > 0 {
+			ps := make([]Pending, 0, n)
+			for _, id := range notifies {
+				ps = append(ps, Pending{ID: id, Kind: KindUSSNotify})
+			}
+			w.Outbox.PublishAll(ctx, ps)
+		}
+		w.Events.DSS(ctx, d.RestrictionID, "dss_"+write.Op+"."+d.ID)
+	case IsDSSKind(d.Kind) && a.State == StateQueued && d.Attempt == 1:
+		w.Events.DSS(ctx, d.RestrictionID, "dss_pending."+d.ID)
+	case d.Kind == KindUSSNotify && a.State == StateSent:
+		w.count(CounterNotifySent)
 	}
 }
 

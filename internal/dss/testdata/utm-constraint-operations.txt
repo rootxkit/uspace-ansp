@@ -1,0 +1,16 @@
+# The constraint operations of ASTM F3548-21 as the pinned utm.yaml
+# declares them: operationId, method, path, the scopes of its security
+# requirement, the success status. Extracted (not written by hand) from
+#   spec_url = https://raw.githubusercontent.com/interuss/astm-utm-protocol/1d3d8fbe75414e23d7e19ce35955770bea5e413f/utm.yaml
+#   spec_sha256 = 63482b2a665ecd836b269028a13b19adfde7a5c32b01301c168d87ca3313dd15
+# (uspace-core v1.3.0 f3548/SOURCE) with python3 + PyYAML:
+#   for each path below, for each operation: operationId, method,
+#   path, the security scopes joined by ",", the 2xx codes joined by ","
+# paths_test.go holds internal/dss.Operations equal to these lines and
+# the two pins above equal to uspace-core's f3548/SOURCE.
+getConstraintReference GET /dss/v1/constraint_references/{entityid} utm.constraint_management,utm.constraint_processing 200
+createConstraintReference PUT /dss/v1/constraint_references/{entityid} utm.constraint_management 201
+updateConstraintReference PUT /dss/v1/constraint_references/{entityid}/{ovn} utm.constraint_management 200
+deleteConstraintReference DELETE /dss/v1/constraint_references/{entityid}/{ovn} utm.constraint_management 200
+notifyConstraintDetailsChanged POST /uss/v1/constraints utm.constraint_management 204
+getConstraintDetails GET /uss/v1/constraints/{entityid} utm.constraint_processing 200

@@ -95,6 +95,10 @@ type Job struct {
 	// record); otherwise the worker fixes it at the first attempt.
 	Body          []byte
 	PolicyVersion int64
+	// Window, when set, bounds the job's retries in time instead of the
+	// policy's Window (a subscriber notification's NotifyWindow); the
+	// count bound is what fits in it.
+	Window time.Duration
 }
 
 // SubjectRef is "<restriction_id>.<version>".
@@ -201,6 +205,8 @@ type VersionInfo struct {
 	ChangedAt        time.Time
 	// PrevState is the state of the version before, "" for the first.
 	PrevState string
+	// DSS is the restriction's standing in the DSS now (WP-9).
+	DSS DSSStatus
 }
 
 // OpOfVersion is the transition that made v, read from its state and
@@ -353,6 +359,17 @@ type Repo interface {
 	Alarm(ctx context.Context, id string) (Alarm, error)
 	Channels(ctx context.Context, restrictionID string, version int64) ([]ChannelRow, error)
 	Attempts(ctx context.Context, id string) (int, error)
+	// DSSInfo is what a DSS job of the version reads (WP-9).
+	DSSInfo(ctx context.Context, restrictionID string, version int64) (DSSInfo, error)
+	// Notification is what a uss_notify job reports.
+	Notification(ctx context.Context, deliveryID string) (NotificationJob, error)
+	// LateNotifications is the uss_notify jobs queued longer than
+	// latency without an alarm; ClearableLate the open uss_notify_late
+	// alarms whose job is settled.
+	LateNotifications(ctx context.Context, latency time.Duration, limit int) ([]Late, error)
+	ClearableLate(ctx context.Context, limit int) ([]LateClearable, error)
+	// DSSBacklog is the DSS writes queued and the oldest's queued_at.
+	DSSBacklog(ctx context.Context) (int, *time.Time, error)
 }
 
 // Tx is one transaction of the outbox.
@@ -380,6 +397,22 @@ type Tx interface {
 	// attempts and a new window; false when there is none.
 	Requeue(ctx context.Context, kind Kind, restrictionID string, version int64, extra int, window time.Duration) (Pending, bool, error)
 	Audit(ctx context.Context, ev audit.Event) error
+	// SettleDSS sets the restriction's dss_state from what is queued and
+	// written: pending (since the first time it was) while a DSS write is
+	// queued, failed when failed is true, else written, deleted or none.
+	SettleDSS(ctx context.Context, restrictionID string, failed bool) error
+	// RecordDSSWrite records what the DSS accepted (dss_constraint_writes,
+	// and the restriction's ovn, version and reference), then settles.
+	RecordDSSWrite(ctx context.Context, w DSSWrite) error
+	InsertNotification(ctx context.Context, n Notification) error
+	// SettleNotifications sets the dss_notifications rows of a uss_notify
+	// job to its final state (sent_at when sent).
+	SettleNotifications(ctx context.Context, deliveryID string, state State) error
+	// CancelQueuedTo cancels the queued jobs of kind for the restriction
+	// to target older than version.
+	CancelQueuedTo(ctx context.Context, kind Kind, restrictionID, target string, below int64, reason string) ([]Cancelled, error)
+	// ClearAlarm clears an open alarm by id; false when it is not open.
+	ClearAlarm(ctx context.Context, id, reason string) (Alarm, bool, error)
 }
 
 // ErrNotFound is a delivery or alarm that does not exist.

@@ -15,7 +15,8 @@ RETURNING id;
 
 -- name: ClaimDelivery :one
 -- Leases a queued, due row whose earlier versions to the same target
--- are settled, for one attempt.
+-- are settled, for one attempt. The DSS writes of a restriction (put and
+-- delete) are one channel: a delete waits for the put before it (WP-9).
 UPDATE deliveries d SET
     lease_token = sqlc.arg(token), lease_until = clock_timestamp() + make_interval(secs => sqlc.arg(lease_s)::float8),
     attempt = d.attempt + 1, last_attempt_at = clock_timestamp()
@@ -24,7 +25,8 @@ WHERE d.id = sqlc.arg(id) AND d.state = 'queued'
   AND d.next_retry_at <= clock_timestamp()
   AND NOT EXISTS (
       SELECT 1 FROM deliveries p
-      WHERE p.kind = d.kind AND p.restriction_id = d.restriction_id AND p.target = d.target
+      WHERE (p.kind = d.kind OR (p.kind IN ('dss_put', 'dss_delete') AND d.kind IN ('dss_put', 'dss_delete')))
+        AND p.restriction_id = d.restriction_id AND p.target = d.target
         AND p.ansp_version < d.ansp_version AND p.state = 'queued')
 RETURNING d.id, d.kind, d.subject_ref, d.restriction_id, d.ansp_version, d.op, d.target, d.idempotency_key, d.state,
           d.attempt, d.max_attempts, d.queued_at, d.window_ends_at, d.next_retry_at, d.bus_seq, d.last_attempt_at,
@@ -38,7 +40,8 @@ SELECT d.state, d.lease_until, d.next_retry_at, clock_timestamp()::timestamptz A
        -- the epoch when nothing earlier is queued
        COALESCE((SELECT min(GREATEST(p.next_retry_at, COALESCE(p.lease_until, p.next_retry_at)))
         FROM deliveries p
-        WHERE p.kind = d.kind AND p.restriction_id = d.restriction_id AND p.target = d.target
+        WHERE (p.kind = d.kind OR (p.kind IN ('dss_put', 'dss_delete') AND d.kind IN ('dss_put', 'dss_delete')))
+          AND p.restriction_id = d.restriction_id AND p.target = d.target
           AND p.ansp_version < d.ansp_version AND p.state = 'queued'), 'epoch'::timestamptz)::timestamptz AS blocked_until
 FROM deliveries d WHERE d.id = sqlc.arg(id);
 
@@ -110,6 +113,7 @@ RETURNING id;
 -- state of the version before it.
 SELECT r.id, r.ansp_ref, r.identifier, r.uspace_airspace_id, r.state AS current_state, r.ansp_version AS current_version,
        r.published_version, v.version, v.state, v.starts_at, v.ends_at, v.feature::text AS feature, v.changed_at,
+       r.dss_state, r.dss_pending_since, r.dss_put_version, r.dss_version,
        COALESCE((SELECT p.state::text FROM restriction_versions p
                  WHERE p.restriction_id = r.id AND p.version = v.version - 1), '')::text AS prev_state
 FROM restrictions r
@@ -180,11 +184,12 @@ RETURNING *;
 
 -- name: AcknowledgeAlarm :one
 -- A person's acknowledgement: it closes a failed or abandoned delivery's
--- alarm; a cisp_not_published alarm stays open until what resolves it.
+-- alarm; a cisp_not_published or uss_notify_late alarm stays open until
+-- what resolves it.
 UPDATE delivery_alarms SET
     acknowledged_by = sqlc.arg(by), acknowledged_at = clock_timestamp(), ack_reason = sqlc.arg(reason),
-    cleared_at = CASE WHEN kind = 'cisp_not_published' THEN cleared_at ELSE clock_timestamp() END,
-    clear_reason = CASE WHEN kind = 'cisp_not_published' THEN clear_reason ELSE 'acknowledged' END
+    cleared_at = CASE WHEN kind IN ('cisp_not_published', 'uss_notify_late') THEN cleared_at ELSE clock_timestamp() END,
+    clear_reason = CASE WHEN kind IN ('cisp_not_published', 'uss_notify_late') THEN clear_reason ELSE 'acknowledged' END
 WHERE id = sqlc.arg(id) AND acknowledged_at IS NULL AND cleared_at IS NULL
 RETURNING *;
 
