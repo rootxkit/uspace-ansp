@@ -234,6 +234,18 @@ func (t fakeTx) NoticeBySenderRef(_ context.Context, sender, ref string) (Notice
 	return Notice{}, ErrNotFound
 }
 
+func (t fakeTx) CountSenderNotices(_ context.Context, sender string, since time.Time) (int64, error) {
+	t.r.mu.Lock()
+	defer t.r.mu.Unlock()
+	var n int64
+	for _, x := range t.r.notices { //nolint:gocritic // a test fake copies freely
+		if x.SenderClientID == sender && (!x.ReceivedAt.Before(since) || (x.AckRequired && !x.Acknowledged)) {
+			n++
+		}
+	}
+	return n, nil
+}
+
 func (t fakeTx) Intersecting(_ context.Context, boxes []Box, limit int) ([]string, error) {
 	t.r.mu.Lock()
 	defer t.r.mu.Unlock()

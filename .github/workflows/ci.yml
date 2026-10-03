@@ -9,8 +9,11 @@ on:
     tags: ["v*"]
   pull_request:
 
-permissions:
-  contents: read
+# Nothing by default; each job names what it needs (read only: no job
+# here pushes, signs or writes). Every third-party action is pinned to a
+# full commit SHA with its version in a comment; a moved tag cannot
+# change what runs.
+permissions: {}
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -42,9 +45,11 @@ jobs:
       web: ${{ github.event_name != 'pull_request' || steps.filter.outputs.web == 'true' }}
       contracts: ${{ github.event_name != 'pull_request' || steps.filter.outputs.contracts == 'true' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         if: github.event_name == 'pull_request'
-      - uses: dorny/paths-filter@v3
+        with:
+          persist-credentials: false
+      - uses: dorny/paths-filter@0e4a8c6effa4802afeda77dc8d303f8176d7dfad # v3.0.4
         id: filter
         if: github.event_name == 'pull_request'
         with:
@@ -60,11 +65,17 @@ jobs:
               - 'schemas/**'
               - 'docs/PLAN.md'
               - 'deploy/.env.example'
+              # Read by the tests and embedded in the binaries: a change to
+              # only these must still run the tests that read them.
+              - 'testdata/**'
+              - '**/testdata/**'
+              - 'migrations/**'
               - '.github/workflows/ci.yml'
             integration:
               - 'internal/**'
               - 'cmd/**'
               - 'migrations/**'
+              - 'testdata/**'
               - 'go.mod'
               - 'go.sum'
               - 'Makefile'
@@ -81,6 +92,7 @@ jobs:
             web:
               - 'web/**'
               - 'api/openapi.yaml'
+              - '.github/workflows/ci.yml'
             contracts:
               - 'api/**'
               - 'schemas/**'
@@ -91,22 +103,30 @@ jobs:
 
   lint-docs:
     name: lint docs
+    permissions:
+      contents: read
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
       - name: Markdown line endings, whitespace, attribution and relative links
         run: make lint-docs
 
   build-vet-lint:
     name: build, vet, lint
+    permissions:
+      contents: read
     needs: changes
     if: needs.changes.outputs.go == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version-file: go.mod
           cache: true
@@ -125,20 +145,24 @@ jobs:
       # With the integration tag: the untagged files and the integration
       # tests in one run.
       - name: golangci-lint
-        uses: golangci/golangci-lint-action@v8
+        uses: golangci/golangci-lint-action@4afd733a84b1f43292c63897423277bb7f4313a9 # v8.0.0
         with:
           version: v2.14.0
           args: --build-tags integration
 
   test-race:
     name: test with the race detector
+    permissions:
+      contents: read
     needs: changes
     if: needs.changes.outputs.go == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version-file: go.mod
           cache: true
@@ -151,13 +175,17 @@ jobs:
 
   generate-check:
     name: generated code is current
+    permissions:
+      contents: read
     needs: changes
     if: needs.changes.outputs.go == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version-file: go.mod
           cache: true
@@ -166,6 +194,8 @@ jobs:
 
   integration:
     name: integration (TimescaleDB + PostGIS, NATS)
+    permissions:
+      contents: read
     needs: changes
     if: needs.changes.outputs.integration == 'true'
     runs-on: ubuntu-latest
@@ -190,8 +220,10 @@ jobs:
       ANSP_TIMESERIES_DSN: postgres://postgres:ci-superuser-only-in-this-job@127.0.0.1:5432/ansp_ts?sslmode=disable
       ANSP_NATS_URL: nats://127.0.0.1:4222
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version-file: go.mod
           cache: true
@@ -211,7 +243,7 @@ jobs:
         run: ANSP_PROCESS=api go run ./cmd/api migrate relational timeseries
       - name: make integration (fails when zero tests ran)
         run: make integration
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: always()
         with:
           name: integration-log
@@ -224,13 +256,17 @@ jobs:
   # (M11). Each check is also shown to fail on a broken input (E-01).
   contracts:
     name: contracts (OpenAPI lint, pinned copies)
+    permissions:
+      contents: read
     needs: changes
     if: needs.changes.outputs.contracts == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
       - name: lint api/openapi.yaml (@redocly/cli, pinned in scripts/lint-api.sh)
@@ -255,19 +291,27 @@ jobs:
 
   vectors:
     name: knowledge vectors
+    permissions:
+      contents: read
     needs: changes
     if: needs.changes.outputs.go == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version-file: go.mod
           cache: true
       - name: this repository's RunOwned vectors, then uspace-core's at the pinned version
         run: |
-          go test -count=1 -run Vectors ./...
+          go test -count=1 -run Vectors -v ./... > own-vectors.log 2>&1 || { cat own-vectors.log; exit 1; }
+          passed="$(grep -c '^--- PASS' own-vectors.log || true)"
+          failed="$(grep -c '^--- FAIL' own-vectors.log || true)"
+          echo "this repository's vectors: ${passed} passed, ${failed} failed" | tee -a "$GITHUB_STEP_SUMMARY"
+          if [ "$passed" -eq 0 ] || [ "$failed" -ne 0 ]; then cat own-vectors.log; exit 1; fi
           go test -count=1 -run Vectors -v github.com/rootxkit/uspace-core/... > core-vectors.log 2>&1 || { cat core-vectors.log; exit 1; }
           passed="$(grep -c '^--- PASS' core-vectors.log || true)"
           failed="$(grep -c '^--- FAIL' core-vectors.log || true)"
@@ -276,13 +320,17 @@ jobs:
 
   fuzz-bench:
     name: fuzz smoke and bench
+    permissions:
+      contents: read
     needs: changes
     if: needs.changes.outputs.go == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version-file: go.mod
           cache: true
@@ -295,6 +343,8 @@ jobs:
 
   web:
     name: web
+    permissions:
+      contents: read
     needs: changes
     if: needs.changes.outputs.web == 'true'
     runs-on: ubuntu-latest
@@ -302,16 +352,18 @@ jobs:
     # web/ arrives with WP-11; until then every step after the checkout
     # is skipped and the job says why.
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
       - name: no web/ yet
         if: hashFiles('web/package.json') == ''
         run: |
           echo "web - no web/package.json yet (WP-11), nothing to check" | tee -a "$GITHUB_STEP_SUMMARY"
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
         if: hashFiles('web/package.json') != ''
         with:
           package_json_file: web/package.json
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         if: hashFiles('web/package.json') != ''
         with:
           node-version: 22
@@ -332,13 +384,17 @@ jobs:
 
   govulncheck:
     name: govulncheck
+    permissions:
+      contents: read
     needs: changes
     if: needs.changes.outputs.go == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version-file: go.mod
           cache: true
@@ -349,31 +405,47 @@ jobs:
   # Never filtered: a secret in a docs file is still a leak.
   gitleaks:
     name: gitleaks
+    permissions:
+      contents: read
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
+          persist-credentials: false
           fetch-depth: 0
-      - uses: gitleaks/gitleaks-action@v2
+      # The pinned binary, checked against its pinned SHA-256, with no
+      # token in its environment (it needs none). Pinned like
+      # GITLEAKS_VERSION in the Makefile; change both together.
+      - name: gitleaks (pinned binary)
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Pinned (and in the Makefile); change both together.
           GITLEAKS_VERSION: "8.24.3"
+          GITLEAKS_SHA256: 9991e0b2903da4c8f6122b5c3186448b927a5da4deef1fe45271c3793f4ee29c
+        run: |
+          tarball="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          url="https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/$tarball"
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/$tarball" "$url"
+          echo "${GITLEAKS_SHA256}  $RUNNER_TEMP/$tarball" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/$tarball" -C "$RUNNER_TEMP" gitleaks
+          "$RUNNER_TEMP/gitleaks" git --no-banner --redact --verbose .
 
   # The Go image is built, never pushed, in WP-0. WP-13 adds the push to
   # GHCR on main and tags, cosign, the SBOM and the web image.
   image:
     name: image (build only)
+    permissions:
+      contents: read
     needs: changes
     if: needs.changes.outputs.image == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
-      - uses: docker/setup-buildx-action@v3
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
       - name: Go image (api, manned-adapter, manned-feed)
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
         with:
           context: .
           file: deploy/Dockerfile

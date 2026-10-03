@@ -201,7 +201,13 @@ func wireDeliver(cfg config.Config, db *store.Relational, b *bus.Bus, keys *auth
 	if cfg.PublicBaseURL == "" {
 		dssLogger.Error("no ANSP_PUBLIC_BASE_URL: a constraint reference has no uss_base_url; the DSS writes wait")
 	}
-	notifier := &dss.Notifier{HTTP: deliver.NewHTTPClient(pol.HTTPTimeout, nil, roots), ExcerptBytes: pol.ExcerptBytes, MaxResponseBytes: int(pol.MaxResponseBytes)}
+	notifier := &dss.Notifier{HTTP: deliver.NewHTTPClient(pol.HTTPTimeout, nil, roots), ExcerptBytes: pol.ExcerptBytes, MaxResponseBytes: int(pol.MaxResponseBytes),
+		AllowPrivate: cfg.DSSNotifyPrivateAllowed == "true"}
+	if notifier.AllowPrivate {
+		dssLogger.Error("ANSP_DSS_NOTIFY_PRIVATE_ALLOWED=true: subscriber notifications may go to http and to private addresses (the lab only)")
+	} else {
+		dss.GuardTransport(notifier.HTTP)
+	}
 	if tokens != nil {
 		notifier.Tokens = tokens
 	}

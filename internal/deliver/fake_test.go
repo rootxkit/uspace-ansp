@@ -79,6 +79,9 @@ type fakeRepo struct {
 	// failNext makes the next call of the named method fail.
 	failNext map[string]error
 	txCount  int
+	// loseLease makes the next Finish find the lease taken by another
+	// attempt (the row is left as it is).
+	loseLease bool
 }
 
 func newFakeRepo(clock *fakeClock) *fakeRepo {
@@ -560,6 +563,10 @@ func (t *fakeTx) Finish(_ context.Context, a Attempt) (bool, error) {
 		return false, err
 	}
 	f.attempts[a.ID] = append(f.attempts[a.ID], fakeAttempt{Attempt: a, At: f.clock.Now()})
+	if f.loseLease {
+		f.loseLease = false
+		return false, nil
+	}
 	r, ok := f.rows[a.ID]
 	if !ok || r.leaseToken != a.Token || r.State != StateQueued {
 		return false, nil

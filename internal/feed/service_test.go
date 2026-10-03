@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -362,11 +363,50 @@ func TestASlowClientsDropsAreCountedAndToldNeverBlocking(t *testing.T) {
 func TestEnqueueDropsTheOldest(t *testing.T) {
 	c := &client{max: 2, notify: make(chan struct{}, 1)}
 	for _, f := range []string{"a", "b", "c"} {
-		c.enqueue([]byte(f))
+		c.enqueue([]byte(f), true)
 	}
 	q := c.take()
-	if len(q) != 2 || string(q[0]) != "b" || string(q[1]) != "c" || c.droppedFrames() != 1 {
-		t.Fatalf("queue %q dropped %d", q, c.droppedFrames())
+	if len(q) != 2 || string(q[0].frame) != "b" || string(q[1].frame) != "c" || c.droppedFrames() != 1 {
+		t.Fatalf("queue %v dropped %d", q, c.droppedFrames())
+	}
+}
+
+// The product counts the track frames written to the client, not those
+// queued: a frame dropped from a slow client's queue, or cleared by a
+// resubscription, was never served (ansp audit S-5). Twin: what is
+// written is counted, relevant or not.
+func TestProductCountsWrittenFramesOnly(t *testing.T) {
+	f := newFixture(t, Config{StatusPeriod: time.Hour}, picture.NoCIS{})
+	c := &client{max: 2, notify: make(chan struct{}, 1), manned: true, all: true}
+	f.svc.mu.Lock()
+	f.svc.clients[c] = struct{}{}
+	f.svc.mu.Unlock()
+	now := f.clock.Now()
+	for i, relevant := range []bool{true, false, true} { // the first is dropped
+		e := picture.Entry{Track: sample(fmt.Sprintf("4ca7b%d", i), "adsb-tbs", 41.72, 44.80, now), State: picture.StateLive,
+			Relevance: picture.Relevance{Relevant: relevant}}
+		f.svc.broadcast(&e, now)
+	}
+	if c.droppedFrames() != 1 {
+		t.Fatalf("dropped %d", c.droppedFrames())
+	}
+	if sent, relevant := c.takeProduct(); sent != 0 || relevant != 0 {
+		t.Fatalf("queued frames counted as sent: %d %d", sent, relevant)
+	}
+	for _, q := range c.take() {
+		c.written(q)
+	}
+	if sent, relevant := c.takeProduct(); sent != 2 || relevant != 1 {
+		t.Fatalf("sent %d relevant %d, want 2 1", sent, relevant)
+	}
+	e := picture.Entry{Track: sample("4ca7b9", "adsb-tbs", 41.72, 44.80, now), State: picture.StateLive}
+	f.svc.broadcast(&e, now)
+	c.subscribe(Subscribe{Layers: []string{"manned"}})
+	if q := c.take(); len(q) != 0 {
+		t.Fatal("a resubscription kept the queue")
+	}
+	if sent, _ := c.takeProduct(); sent != 0 {
+		t.Fatalf("a frame cleared by a resubscription counted: %d", sent)
 	}
 }
 

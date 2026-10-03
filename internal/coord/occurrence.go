@@ -289,6 +289,9 @@ func (o *Occurrences) Create(ctx context.Context, actor Actor, in OccurrenceInpu
 		if err != nil {
 			return err
 		}
+		if rf := o.checkTimes(in, now); rf != nil {
+			return rf
+		}
 		ref, err := tx.NextOccurrenceRef(ctx)
 		if err != nil {
 			return err
@@ -318,11 +321,33 @@ func (o *Occurrences) Create(ctx context.Context, actor Actor, in OccurrenceInpu
 				"deadline_at": restriction.Stamp(out.DeadlineAt), "delivery_id": deliveryID, "has_reporter_ref": in.PersonRef != ""}})
 	})
 	if err != nil {
+		var rf *Refusal
+		if errors.As(err, &rf) {
+			o.counters.Inc(CounterOccurrencesRefused)
+		}
 		return Queued{}, err
 	}
 	o.counters.Inc(CounterOccurrencesQueued)
 	o.Outbox.PublishAll(ctx, []deliver.Pending{{ID: out.DeliveryID, Kind: deliver.KindOccurrence}})
 	return Queued{ID: out.ID, ReportRef: out.ReportRef, State: "queued", DeadlineAt: restriction.Stamp(out.DeadlineAt)}, nil
+}
+
+// checkTimes refuses a became_aware_at after now plus the clock skew
+// and an occurred_at older than OccurrenceMaxAge, now being the
+// database clock: the 72 h deadline and its alarm follow
+// became_aware_at, so neither a client's clock nor a typo may move them
+// (ansp audit S-11).
+func (o *Occurrences) checkTimes(in OccurrenceInput, now time.Time) *Refusal {
+	var f *core.FieldError
+	switch {
+	case in.BecameAwareAt.After(now.Add(o.Policy.OccurrenceClockSkew)):
+		f = core.Fieldf("became_aware_at", "is after now (%s) by more than %s", restriction.Stamp(now), o.Policy.OccurrenceClockSkew)
+	case in.OccurredAt.Before(now.Add(-o.Policy.OccurrenceMaxAge)):
+		f = core.Fieldf("occurred_at", "is more than %.0f days before now (%s)", o.Policy.OccurrenceMaxAge.Hours()/24, restriction.Stamp(now))
+	default:
+		return nil
+	}
+	return &Refusal{Status: http.StatusBadRequest, Slug: SlugInvalid, Detail: "the report is refused; nothing was stored", Fields: []*core.FieldError{f}}
 }
 
 func nonNilSlice[T any](s []T) []T {
@@ -360,14 +385,10 @@ type OccurrenceMessage struct {
 	ReportedAt    string          `json:"reported_at"`
 }
 
-// redacted stands for the reporter's reference in what the authority
-// answered, should it echo it.
-const redacted = "[reporter reference]"
-
 // SendOccurrence is one attempt of an occurrence job: the report read
 // by its delivery, the reporter reference opened, the occurrence/v1 body
-// posted to the authority. The reference never leaves in the answer's
-// excerpt or error.
+// posted to the authority. No excerpt of the answer is returned, so the
+// reference never reaches the delivery log.
 func (o *Occurrences) SendOccurrence(ctx context.Context, d deliver.Delivery) deliver.Response {
 	rec, err := o.Repo.OccurrenceByDelivery(ctx, d.ID)
 	if err != nil {
@@ -395,10 +416,11 @@ func (o *Occurrences) SendOccurrence(ctx context.Context, d deliver.Delivery) de
 		return deliver.Response{Err: "no authority configured (ANSP_AUTHORITY_URL)"}
 	}
 	resp := o.Authority.Post(ctx, deliver.PathOccurrences, body)
-	if person != "" {
-		resp.Excerpt = strings.ReplaceAll(resp.Excerpt, person, redacted)
-		resp.Err = strings.ReplaceAll(resp.Err, person, redacted)
-	}
+	// Nothing the authority answered is kept, only its status code: an
+	// echo of the reporter reference, escaped, encoded or cut, would
+	// survive any redaction (ansp audit S-7). resp.Err is this system's
+	// own transport reason and never carries what the peer sent.
+	resp.Excerpt = ""
 	return resp
 }
 

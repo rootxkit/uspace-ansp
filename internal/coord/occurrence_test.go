@@ -16,6 +16,7 @@ import (
 
 	"github.com/rootxkit/uspace-ansp/internal/auth"
 	"github.com/rootxkit/uspace-ansp/internal/deliver"
+	"github.com/rootxkit/uspace-ansp/internal/restriction"
 )
 
 const occurrenceBody = `{"channel":"mandatory","occurred_at":"2026-10-03T10:00:00.000Z","became_aware_at":"2026-10-03T10:05:00.000Z",
@@ -97,7 +98,9 @@ type authorityStub struct {
 	hdr  []http.Header
 	code int
 	echo bool
-	srv  *httptest.Server
+	// reply, when set, is written as the answer.
+	reply []byte
+	srv   *httptest.Server
 }
 
 func newAuthority(t *testing.T) *authorityStub {
@@ -107,9 +110,12 @@ func newAuthority(t *testing.T) *authorityStub {
 		b, _ := io.ReadAll(r.Body)
 		a.mu.Lock()
 		a.got, a.hdr = append(a.got, b), append(a.hdr, r.Header.Clone())
-		code, echo := a.code, a.echo
+		code, echo, reply := a.code, a.echo, a.reply
 		a.mu.Unlock()
 		w.WriteHeader(code)
+		if reply != nil {
+			_, _ = w.Write(reply)
+		}
 		if echo {
 			_, _ = w.Write(b)
 		}
@@ -201,12 +207,17 @@ func TestOccurrenceCreateAndSend(t *testing.T) {
 	if strings.Contains(string(f.auth.got[0]), "acct-3") || f.auth.hdr[0].Get("Authorization") != "Bearer tok" || f.tokens.scope != deliver.ScopeOccurrences {
 		t.Fatal("a name or the wrong credential")
 	}
-	// An authority that echoes the body never returns the reference into
-	// the delivery log.
-	f.auth.echo, f.auth.code = true, http.StatusBadRequest
-	resp = f.occ.SendOccurrence(context.Background(), deliver.Delivery{ID: j.ID})
-	if strings.Contains(resp.Excerpt, "staff-0042") || !strings.Contains(resp.Excerpt, redacted) {
-		t.Fatalf("%+v", resp)
+	// An authority that echoes the body, byte-identical, JSON-escaped or
+	// percent-encoded, never returns the reference into the delivery log:
+	// nothing of an occurrence answer is kept but its status code
+	// (ansp audit S-7).
+	f.auth.code = http.StatusBadRequest
+	for _, reply := range []string{"", `{"detail":"staff-0042"}`, `{"detail":"staff%2D0042"}`, `{"detail":"staff-004"}`} {
+		f.auth.echo, f.auth.reply = reply == "", []byte(reply)
+		resp = f.occ.SendOccurrence(context.Background(), deliver.Delivery{ID: j.ID})
+		if resp.Status != http.StatusBadRequest || resp.Excerpt != "" || resp.Err != "" {
+			t.Fatalf("%q: %+v", reply, resp)
+		}
 	}
 }
 
@@ -394,5 +405,40 @@ func visit(ty reflect.Type, seen map[reflect.Type]bool, f func(name, tag string)
 		tag, _, _ := strings.Cut(fl.Tag.Get("json"), ",")
 		f(fl.Name, tag)
 		visit(fl.Type, seen, f)
+	}
+}
+
+// became_aware_at after now (plus the clock skew) or occurred_at older
+// than OccurrenceMaxAge, both on the database clock, is refused and
+// nothing is stored (ansp audit S-11): the 72 h deadline is never moved
+// by a client's clock or a typo. Twin: a report at the edges is taken.
+func TestOccurrenceTimesBoundedByTheDatabaseClock(t *testing.T) {
+	f := newOccFixture(t)
+	now := f.repo.now
+	pol := f.occ.Policy
+	at := func(occ, aware time.Time) string {
+		s := strings.Replace(occurrenceBody, `"occurred_at":"2026-10-03T10:00:00.000Z"`, `"occurred_at":"`+restriction.Stamp(occ)+`"`, 1)
+		return strings.Replace(s, `"became_aware_at":"2026-10-03T10:05:00.000Z"`, `"became_aware_at":"`+restriction.Stamp(aware)+`"`, 1)
+	}
+	for name, body := range map[string]string{
+		"became_aware_at": at(now.Add(-time.Hour), now.Add(pol.OccurrenceClockSkew+time.Minute)),
+		"occurred_at":     at(now.Add(-pol.OccurrenceMaxAge-time.Hour), now.Add(-time.Hour)),
+	} {
+		in, errs := DecodeOccurrence([]byte(body))
+		if len(errs) > 0 {
+			t.Fatal(errs)
+		}
+		_, err := f.occ.Create(context.Background(), Actor{ID: "a"}, in)
+		rf := refusalOf(t, err)
+		if rf.Status != http.StatusBadRequest || len(rf.Fields) != 1 || rf.Fields[0].Field != name {
+			t.Fatalf("%s: %+v", name, rf)
+		}
+	}
+	if len(f.repo.occ) != 0 || len(f.repo.jobs) != 0 {
+		t.Fatal("a refused report was stored")
+	}
+	f.create(t, at(now.Add(-pol.OccurrenceMaxAge+time.Hour), now.Add(pol.OccurrenceClockSkew-time.Second)))
+	if len(f.repo.occ) != 1 {
+		t.Fatal("a report within the bounds was not stored")
 	}
 }

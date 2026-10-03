@@ -204,9 +204,10 @@ func (s *Service) serve(parent context.Context, conn *websocket.Conn, c *client,
 			return
 		case <-c.notify:
 			for _, f := range c.take() {
-				if !write(f) {
+				if !write(f.frame) {
 					return
 				}
+				c.written(f)
 			}
 		case <-resubscribe:
 			if !snapshot() {

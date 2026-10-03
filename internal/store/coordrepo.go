@@ -176,6 +176,12 @@ func (t coordTx) NoticeBySenderRef(ctx context.Context, sender, noticeRef string
 	return noticeFrom(row), nil
 }
 
+// CountSenderNotices is the sender's notices received since since or
+// awaiting acknowledgement.
+func (t coordTx) CountSenderNotices(ctx context.Context, sender string, since time.Time) (int64, error) {
+	return t.tx.Q.CountSenderNotices(ctx, relational.CountSenderNoticesParams{SenderClientID: sender, Since: since})
+}
+
 // Intersecting is the restrictions the boxes intersect.
 func (t coordTx) Intersecting(ctx context.Context, boxes []coord.Box, limit int) ([]string, error) {
 	if len(boxes) == 0 {

@@ -95,8 +95,10 @@ func wireRestrictions(cfg config.Config, db *store.Relational, b *bus.Bus, sessi
 	} else {
 		logger.Error("restr.v1 is not published: no bus (ANSP_NATS_URL); every version stays unpublished, counted, until one is configured")
 	}
-	pol := store.PolicyRepo{DB: db}
-	st := newRestrictionStream(svc, pol.Latest, sessions, producer)
+	// The status frame of every connection, every 2 s, reads the policy
+	// through the cache, not the database (ansp audit N-6).
+	pol := &cachedPolicy{latest: store.PolicyRepo{DB: db}.Latest}
+	st := newRestrictionStream(svc, pol.policy, sessions, producer)
 	svc.Local = func(v restriction.Version, msg []byte) { st.Offer(restriction.DedupeID(v), msg) }
 	var unpublished atomic.Int64
 	st.degraded = func() []string {

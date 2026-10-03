@@ -94,7 +94,7 @@ func wireCoord(cfg config.Config, db *store.Relational, b *bus.Bus, sessions *au
 	} else {
 		logger.Error("coord.v1 is not published: no bus (ANSP_NATS_URL); every notice is stored and shown on this replica's stream, and put on the bus once one is configured")
 	}
-	st := newCoordStream(svc, store.PolicyRepo{DB: db}.Latest, sessions, producer)
+	st := newCoordStream(svc, cached.policy, sessions, producer)
 	svc.Local = st.Offer
 	st.degraded = func() []string {
 		var out []string

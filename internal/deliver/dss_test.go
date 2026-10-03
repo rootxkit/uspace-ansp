@@ -68,7 +68,7 @@ func newDSSHarness(t *testing.T) *dssHarness {
 	pol := h.outbox.Policy
 	client := NewHTTPClient(pol.HTTPTimeout, nil, nil)
 	h.worker.DSS = &DSS{Client: &dss.Client{BaseURL: h.dss.URL(), HTTP: client, Tokens: h.tokens, MaxSubscribers: pol.MaxSubscribers},
-		Notifier: &dss.Notifier{HTTP: client, Tokens: h.tokens}, USSBaseURL: "https://ansp.test", Logger: h.worker.Logger, Counters: h.counters}
+		Notifier: &dss.Notifier{HTTP: client, Tokens: h.tokens, AllowPrivate: true}, USSBaseURL: "https://ansp.test", Logger: h.worker.Logger, Counters: h.counters}
 	h.worker.Outbox = h.outbox
 	h.monitor = &Monitor{Repo: h.repo, Outbox: h.outbox, Events: h.events, Policy: pol, Logger: h.worker.Logger, Counters: h.counters,
 		AlarmAfter: func(context.Context) time.Duration { return time.Hour }}
@@ -453,7 +453,7 @@ func TestDSSSubscriberRetriedAndLateAlarm(t *testing.T) {
 
 // A notification still queued when the DSS names the subscriber for a
 // newer version is superseded by the newer one (its rows cancelled); a
-// subscriber's 409 (it holds a newer one) fails it at once.
+// subscriber's 409 (it holds a newer one) settles it as superseded there.
 func TestDSSNotificationSupersededAndRefused(t *testing.T) {
 	h := newDSSHarness(t)
 	h.ussB.Answer(func(int, dsstest.Request) int { return http.StatusServiceUnavailable })
@@ -476,9 +476,110 @@ func TestDSSNotificationSupersededAndRefused(t *testing.T) {
 	}
 	h.ussB.Answer(func(int, dsstest.Request) int { return http.StatusConflict })
 	nb := h.notifyJobs(3)[h.ussB.URL()]
-	h.deliver(nb)
-	if r := h.repo.row(nb); r.State != StateFailed {
+	alarms := len(h.repo.alarms)
+	m := h.deliver(nb)
+	// The standard's 409: the subscriber holds a newer notification, a
+	// normal condition; settled at once as superseded there, no alarm a
+	// person must acknowledge (ansp audit N-5).
+	if r := h.repo.row(nb); r.State != StateCancelled || r.CancelReason != CancelSupersededAtSubscriber || !m.acked {
 		t.Fatalf("%+v", r.Delivery)
+	}
+	if len(h.repo.alarms) != alarms || len(h.ussB.Requests()) == 0 {
+		t.Fatalf("alarms %+v", h.repo.alarms)
+	}
+	for _, n := range h.repo.notificationRows() {
+		if n.DeliveryID == nb && n.status != StateCancelled {
+			t.Fatalf("%+v", n)
+		}
+	}
+}
+
+// A subscriber whose uss_base_url is not https on a public address
+// (here loopback http, with private targets not allowed) is refused
+// before any request: failed at once with one alarm, counted, never
+// retried for the notification window (ansp audit S-2). Its twin is
+// every notification test above, with private targets allowed.
+func TestDSSNotificationToANonPublicTargetFails(t *testing.T) {
+	h := newDSSHarness(t)
+	h.worker.DSS.Notifier.AllowPrivate = false
+	h.deliver(h.step(2, "active", restriction.OpActivate, testStart.Add(4*time.Hour)))
+	nb := h.notifyJobs(2)[h.ussB.URL()]
+	m := h.deliver(nb)
+	if r := h.repo.row(nb); r.State != StateFailed || r.Attempt != 1 || !m.acked || !strings.Contains(r.LastError, "public address") {
+		t.Fatalf("%+v", r.Delivery)
+	}
+	if len(h.ussB.Requests()) != 0 || h.counters.Get(CounterNotifyTargetRefused) != 1 {
+		t.Fatalf("requests %d, counters %v", len(h.ussB.Requests()), h.counters.Snapshot())
+	}
+	alarms := 0
+	for _, a := range h.repo.alarms {
+		if a.DeliveryID == nb && a.Kind == AlarmFailed {
+			alarms++
+		}
+	}
+	if alarms != 1 {
+		t.Fatalf("alarms %+v", h.repo.alarms)
+	}
+}
+
+// An attempt (token fetches and every DSS call of a put or a delete) is
+// bounded by Policy.AttemptTimeout, which is shorter than the lease: a
+// second worker cannot claim the row while the first is in flight
+// (ansp audit S-1).
+func TestAttemptBoundedByTheLease(t *testing.T) {
+	h := newDSSHarness(t)
+	pol := h.worker.Policy
+	if pol.AttemptTimeout <= 0 || pol.AttemptTimeout >= pol.Lease || pol.Validate() != nil {
+		t.Fatalf("attempt %s lease %s", pol.AttemptTimeout, pol.Lease)
+	}
+	before := time.Now()
+	h.deliver(h.step(2, "active", restriction.OpActivate, testStart.Add(4*time.Hour)))
+	h.tokens.mu.Lock()
+	defer h.tokens.mu.Unlock()
+	if len(h.tokens.deadlines) == 0 {
+		t.Fatal("no token asked")
+	}
+	for _, dl := range h.tokens.deadlines {
+		if dl.IsZero() || dl.After(before.Add(pol.AttemptTimeout+time.Second)) {
+			t.Fatalf("a token fetch of the attempt is not bounded by %s: deadline %v", pol.AttemptTimeout, dl)
+		}
+	}
+	bad := pol
+	bad.AttemptTimeout = pol.Lease
+	if bad.Validate() == nil {
+		t.Fatal("an attempt as long as the lease is accepted")
+	}
+}
+
+// The lease lost after the DSS accepted a write (ansp audit S-1, N-1):
+// the outcome cannot be recorded under the lost lease, so it is counted,
+// logged at error and alarmed (the subscribers the DSS named may never
+// be notified), never acknowledged in silence. Twin: a held lease
+// records the write (TestDSSWriteNotifiesEverySubscriber).
+func TestLeaseLostAfterADSSWriteIsAlarmed(t *testing.T) {
+	h := newDSSHarness(t)
+	id := h.step(2, "active", restriction.OpActivate, testStart.Add(4*time.Hour))
+	h.repo.mu.Lock()
+	h.repo.loseLease = true
+	h.repo.mu.Unlock()
+	m := h.deliver(id)
+	if len(h.dss.Requests()) != 1 || !m.acked {
+		t.Fatalf("requests %d acked %v", len(h.dss.Requests()), m.acked)
+	}
+	if h.counters.Get(CounterLeaseLost) != 1 || len(h.notifyJobs(2)) != 0 {
+		t.Fatalf("counters %v", h.counters.Snapshot())
+	}
+	var alarm *Alarm
+	for _, a := range h.repo.alarms {
+		if a.DeliveryID == id {
+			alarm = a
+		}
+	}
+	if alarm == nil || !strings.Contains(alarm.Detail, "lease") || !strings.Contains(alarm.Detail, "2 subscriber") {
+		t.Fatalf("alarm %+v", alarm)
+	}
+	if !strings.Contains(h.log(), `"level":"ERROR","msg":"deliver: the lease was lost`) {
+		t.Fatalf("not logged at error:\n%s", h.log())
 	}
 }
 

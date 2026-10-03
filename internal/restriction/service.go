@@ -50,6 +50,9 @@ type Repo interface {
 	List(ctx context.Context, f ListFilter) ([]Restriction, bool, error)
 	Versions(ctx context.Context, id string, limit int) ([]Version, error)
 	Version(ctx context.Context, id string, version int64) (Version, error)
+	// CurrentVersions is the current version of every restriction in
+	// state, at most limit, in one read; more says others exist.
+	CurrentVersions(ctx context.Context, state State, limit int) ([]Version, bool, error)
 	Request(ctx context.Context, id string) (Request, error)
 	// DueActivations and DueExpiries are judged on the database's clock.
 	DueActivations(ctx context.Context, limit int) ([]string, error)
@@ -111,13 +114,16 @@ const (
 	CounterActivationLate       = "restriction_activation_late"
 	CounterExpiries             = "restriction_expiries"
 	CounterTickFailed           = "restriction_tick_failed"
-	CounterBusPublished         = "restriction_bus_published"
-	CounterBusFailed            = "restriction_bus_publish_failed"
-	CounterBusRepublished       = "restriction_bus_republished"
-	CounterReissued             = "restriction_reissued"
-	CounterRequests             = "restriction_requests_received"
-	CounterRequestsRefused      = "restriction_requests_refused"
-	CounterIdempotentReplays    = "restriction_idempotent_replays"
+	// CounterTickRaced counts due restrictions another replica's tick
+	// activated or expired first: nothing to do, not a failure.
+	CounterTickRaced         = "restriction_tick_raced"
+	CounterBusPublished      = "restriction_bus_published"
+	CounterBusFailed         = "restriction_bus_publish_failed"
+	CounterBusRepublished    = "restriction_bus_republished"
+	CounterReissued          = "restriction_reissued"
+	CounterRequests          = "restriction_requests_received"
+	CounterRequestsRefused   = "restriction_requests_refused"
+	CounterIdempotentReplays = "restriction_idempotent_replays"
 )
 
 // MaxOpenRequests bounds the received (undecided) requests one requester
@@ -518,7 +524,9 @@ func (s *Service) reissue(ctx context.Context, tx Tx, actor Actor, r Restriction
 func transitionRefusal(err error) error {
 	var te *TransitionError
 	if errors.As(err, &te) {
-		return refuse(409, SlugIllegalTransition, te.Error(), core.Fieldf("state", "is %s; %s", te.From, te.Error()))
+		rf := refuse(409, SlugIllegalTransition, te.Error(), core.Fieldf("state", "is %s; %s", te.From, te.Error()))
+		rf.cause = te
+		return rf
 	}
 	var fe *core.FieldError
 	if errors.As(err, &fe) {
@@ -630,6 +638,15 @@ type TickReport struct {
 	Unpublished int
 }
 
+// raced reports whether err is a tick's transition refused because the
+// restriction moved on since it was read as due (another replica's tick
+// or a person changed it first): a TransitionError without a reason.
+// A refusal with a reason (the window has passed) is a real failure.
+func raced(err error) bool {
+	var te *TransitionError
+	return errors.As(err, &te) && te.Reason == ""
+}
+
 // Tick activates the scheduled restrictions whose starts_at has come and
 // expires the active ones whose ends_at has passed (both on the
 // database's clock), then republishes versions the bus did not take. An
@@ -644,6 +661,10 @@ func (s *Service) Tick(ctx context.Context, late time.Duration) (TickReport, err
 	}
 	for _, id := range due {
 		r, err := s.Apply(ctx, SystemActor, id, OpActivate, "scheduled activation at starts_at", nil)
+		if raced(err) {
+			s.counters.Inc(CounterTickRaced)
+			continue
+		}
 		if err != nil {
 			rep.Failed++
 			s.counters.Inc(CounterTickFailed)
@@ -665,7 +686,12 @@ func (s *Service) Tick(ctx context.Context, late time.Duration) (TickReport, err
 		errs = append(errs, err)
 	}
 	for _, id := range exp {
-		if _, err := s.Apply(ctx, SystemActor, id, OpExpire, "expired at ends_at", nil); err != nil {
+		_, err := s.Apply(ctx, SystemActor, id, OpExpire, "expired at ends_at", nil)
+		if raced(err) {
+			s.counters.Inc(CounterTickRaced)
+			continue
+		}
+		if err != nil {
 			rep.Failed++
 			s.counters.Inc(CounterTickFailed)
 			errs = append(errs, fmt.Errorf("expire %s: %w", id, err))
@@ -719,19 +745,15 @@ func (s *Service) Version(ctx context.Context, id string, v int64) (Version, err
 // state; truncated says more existed (the stream says so, never hides
 // it).
 func (s *Service) Snapshot(ctx context.Context, limit int) (msgs [][]byte, truncated bool, err error) {
+	// One read per state (ansp audit S-4: never a read per restriction).
 	for _, st := range []State{StateActive, StatePlanned} {
-		state := st
-		rs, more, err := s.Repo.List(ctx, ListFilter{State: &state, Limit: limit})
+		vs, more, err := s.Repo.CurrentVersions(ctx, st, limit)
 		if err != nil {
 			return nil, false, err
 		}
 		truncated = truncated || more
-		for i := range rs {
-			v, err := s.Repo.Version(ctx, rs[i].ID, rs[i].AnspVersion)
-			if err != nil {
-				return nil, false, err
-			}
-			msg, err := StateMessage(v, s.Producer, false)
+		for i := range vs {
+			msg, err := StateMessage(vs[i], s.Producer, false)
 			if err != nil {
 				return nil, false, err
 			}

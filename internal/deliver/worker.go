@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"strings"
 	"sync"
 	"time"
@@ -154,14 +155,18 @@ func (w *Worker) Handle(ctx context.Context, m Msg) {
 	log = log.With(slog.String("restriction_id", d.RestrictionID), slog.Int64("ansp_version", d.AnspVersion),
 		slog.String("op", d.Op), slog.String("target", d.Target), slog.Int("attempt", d.Attempt))
 	a := Attempt{ID: d.ID, Token: token, Attempt: d.Attempt}
-	if d.Attempt > d.MaxAttempts || c.Now.After(d.WindowEndsAt) {
+	if d.Kind != KindOccurrence && (d.Attempt > d.MaxAttempts || c.Now.After(d.WindowEndsAt)) {
 		a.State, a.Outcome, a.Error = StateAbandoned, "abandoned",
 			fmt.Sprintf("not sent: %d attempts of at most %d, or the window ended at %s", d.Attempt-1, d.MaxAttempts, restriction.Stamp(d.WindowEndsAt))
 		w.finish(ctx, m, log, d, a, c.Now, nil)
 		return
 	}
 	start := w.clock()
-	out, err := w.send(ctx, &d, token)
+	// The whole attempt (token fetches and every call) ends before the
+	// lease, so its outcome is recorded under it (ansp audit S-1).
+	actx, cancel := context.WithTimeout(ctx, w.Policy.AttemptTimeout)
+	out, err := w.send(actx, &d, token)
+	cancel()
 	a.Duration = w.clock().Sub(start)
 	switch {
 	case err != nil:
@@ -178,6 +183,14 @@ func (w *Worker) Handle(ctx context.Context, m Msg) {
 		if out.verdict != nil {
 			v = *out.verdict
 		}
+		if d.Kind == KindOccurrence && intakeAbsent(resp) {
+			// The authority does not serve its intake yet: the report is
+			// held, not failed, and the row says why.
+			w.count(CounterOccurrenceIntakeAbsent)
+			v = Retry
+			a.Error = clip(fmt.Sprintf("authority intake not available (HTTP %d on %s): the report is held and tried again every %s",
+				resp.Status, PathOccurrences, w.Policy.OccurrenceHold), 1000)
+		}
 		switch v {
 		case Sent:
 			a.State, a.Outcome = StateSent, "sent"
@@ -185,10 +198,19 @@ func (w *Worker) Handle(ctx context.Context, m Msg) {
 			a.State, a.Outcome = StateFailed, "failed"
 		case Retry:
 			wait := max(w.Policy.Backoff(d.Attempt), resp.RetryAfter)
+			if d.Kind == KindOccurrence && (intakeAbsent(resp) || d.Attempt >= d.MaxAttempts || c.Now.After(d.WindowEndsAt)) {
+				wait = max(wait, w.Policy.OccurrenceHold)
+			}
 			a.RetryAt = c.Now.Add(a.Duration).Add(wait)
-			if d.Attempt >= d.MaxAttempts || a.RetryAt.After(d.WindowEndsAt) {
+			switch {
+			case d.Kind == KindOccurrence:
+				// Held until delivered, never abandoned (system audit F-2):
+				// a report under 376/2014 stays queued and visible
+				// (occurrence_undelivered), however long it waits.
+				a.State, a.Outcome = StateQueued, "retry"
+			case d.Attempt >= d.MaxAttempts || a.RetryAt.After(d.WindowEndsAt):
 				a.State, a.Outcome = StateAbandoned, "abandoned"
-			} else {
+			default:
 				a.State, a.Outcome = StateQueued, "retry"
 			}
 		}
@@ -197,6 +219,39 @@ func (w *Worker) Handle(ctx context.Context, m Msg) {
 		out.write = nil
 	}
 	w.finish(ctx, m, log, d, a, c.Now, out.write)
+}
+
+// alarmLostWrite raises a failure alarm for a DSS write the DSS accepted
+// whose outcome could not be recorded because the lease was lost: the
+// attempt that owns the job now may find nothing to do, and the
+// subscribers this answer named would never be notified in silence.
+func (w *Worker) alarmLostWrite(ctx context.Context, log *slog.Logger, d Delivery, write DSSWrite, now time.Time) {
+	detail := fmt.Sprintf("%s to %s (%s of version %d): the DSS accepted it, but the lease was lost before the outcome was recorded; %d subscriber(s) it named may not be notified",
+		d.Kind, d.Target, d.Op, d.AnspVersion, len(write.Subscribers))
+	var raised *Alarm
+	err := w.Repo.Tx(ctx, func(ctx context.Context, tx Tx) error {
+		al, ok, err := tx.RaiseAlarm(ctx, Alarm{ID: restriction.NewULID(now), Kind: AlarmFailed, RestrictionID: d.RestrictionID,
+			AnspVersion: d.AnspVersion, DeliveryID: d.ID, Since: d.QueuedAt, Detail: clip(detail, 1000)})
+		if ok {
+			raised = &al
+		}
+		return err
+	})
+	if err != nil {
+		w.count(CounterStoreFailed)
+		log.Error("deliver: the alarm of a lost DSS outcome was not recorded", slog.String("error", err.Error()))
+		return
+	}
+	if raised != nil {
+		w.count(CounterAlarmsRaised)
+		w.Events.Alarm(ctx, *raised, "raised")
+	}
+}
+
+// intakeAbsent is whether the authority answered that it does not
+// serve the occurrence intake (404, 405 or 501).
+func intakeAbsent(r Response) bool {
+	return r.Status == http.StatusNotFound || r.Status == http.StatusMethodNotAllowed || r.Status == http.StatusNotImplemented
 }
 
 func statusPtr(s int) *int {
@@ -234,7 +289,16 @@ func (w *Worker) send(ctx context.Context, d *Delivery, token string) (sent, err
 		if w.CISP == nil {
 			return sent{resp: Response{Err: "no CISP configured (ANSP_CISP_URL)"}}, nil
 		}
-		return sent{resp: w.CISP.Publish(ctx, d.Method, d.URL, d.Body, d.IdempotencyKey)}, nil
+		resp := w.CISP.Publish(ctx, d.Method, d.URL, d.Body, d.IdempotencyKey)
+		if resp.Status == http.StatusConflict {
+			// The CISP's 409 on /v1/restrictions* is deterministic (the
+			// pair with another body, or a lower ansp_version): failed at
+			// once with an alarm, so it never holds the restriction's
+			// next operation behind it in the ordered channel.
+			w.count(CounterCISPConflict)
+			return sent{resp: resp, verdict: verdict(Permanent)}, nil
+		}
+		return sent{resp: resp}, nil
 	case KindDirect:
 		if d.Method == "" {
 			p, err := w.Repo.Prepare(ctx, d.ID, token, "POST", strings.TrimRight(d.Target, "/")+PathNotifications, d.Body)
@@ -355,7 +419,10 @@ func (w *Worker) finish(ctx context.Context, m Msg, log *slog.Logger, d Delivery
 	}
 	if !held {
 		w.count(CounterLeaseLost)
-		log.Warn("deliver: the lease was lost before the outcome was recorded; another attempt owns the job", slog.String("outcome", a.Outcome))
+		log.Error("deliver: the lease was lost before the outcome was recorded; another attempt owns the job", slog.String("outcome", a.Outcome))
+		if write != nil {
+			w.alarmLostWrite(ctx, log, d, *write, now)
+		}
 		_ = m.Ack()
 		return
 	}

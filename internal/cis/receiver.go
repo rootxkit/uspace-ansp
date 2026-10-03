@@ -51,6 +51,9 @@ const (
 	CounterNotifyJTIFull        = "cis_notify_jti_full"
 	CounterNotifyStoreFailed    = "cis_notify_store_failed"
 	CounterPullURLMismatch      = "cis_pull_url_mismatch"
+	// CounterPullURLUnchecked counts pull_urls not judged because no
+	// guard is configured (the configured dataset URL is pulled).
+	CounterPullURLUnchecked = "cis_pull_url_unchecked"
 )
 
 // Problem slugs of the receiver.
@@ -215,7 +218,7 @@ func (rc *Receiver) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if rc.cfg.Guard == nil {
-		rc.cfg.Counters.Inc(CounterPullURLMismatch)
+		rc.cfg.Counters.Inc(CounterPullURLUnchecked)
 	} else if err := rc.cfg.Guard.CheckPullURL(ch.PullUrl); err != nil {
 		// M5: the configured dataset URL is pulled instead.
 		rc.cfg.Counters.Inc(CounterPullURLMismatch)

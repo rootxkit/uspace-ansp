@@ -115,6 +115,31 @@ func (r RestrictionRepo) Version(ctx context.Context, id string, version int64) 
 	return out, err
 }
 
+// CurrentVersions is the current version of every restriction in state,
+// at most limit, in one query.
+func (r RestrictionRepo) CurrentVersions(ctx context.Context, state restriction.State, limit int) ([]restriction.Version, bool, error) {
+	page := min(max(limit, 0), 1000)
+	var out []restriction.Version
+	more := false
+	err := r.DB.Do(ctx, func(ctx context.Context, _ relational.DBTX, q *relational.Queries) error {
+		rows, err := q.CurrentRestrictionVersions(ctx, relational.CurrentRestrictionVersionsParams{
+			State: relational.RestrictionState(state), PageSize: int32(page) + 1})
+		if err != nil {
+			return err
+		}
+		more = len(rows) > page
+		if more {
+			rows = rows[:page]
+		}
+		out = make([]restriction.Version, 0, len(rows))
+		for i := range rows {
+			out = append(out, versionFromRow(relational.RestrictionVersionRow(rows[i])))
+		}
+		return nil
+	})
+	return out, more, err
+}
+
 // Request is one restriction request.
 func (r RestrictionRepo) Request(ctx context.Context, id string) (restriction.Request, error) {
 	var out restriction.Request

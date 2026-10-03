@@ -219,7 +219,7 @@ func newDeliverStack(t *testing.T) *deliverStack {
 		"ANSP_AUTHORITY_NAME=Test ANSP", "ANSP_CISP_URL=" + s.cisp.srv.URL, "ANSP_TOKEN_URL=" + tokenSrv.URL + "/oauth/token",
 		"ANSP_CLIENT_SECRET_FILE=" + secretFile, "ANSP_DELIVERY_KEY_FILE=" + deliveryKey,
 		"ANSP_CISP_CLIENT_CERT_FILE=" + clientCert, "ANSP_CISP_CLIENT_KEY_FILE=" + clientKey,
-		"ANSP_AUTHORITY_URL=" + s.authority.srv.URL, "ANSP_DSS_URL=" + s.dss.URL()}
+		"ANSP_AUTHORITY_URL=" + s.authority.srv.URL, "ANSP_DSS_URL=" + s.dss.URL(), "ANSP_DSS_NOTIFY_PRIVATE_ALLOWED=true"}
 	if creds := os.Getenv("ANSP_NATS_CREDS"); creds != "" {
 		env = append(env, "ANSP_NATS_CREDS="+creds)
 	}

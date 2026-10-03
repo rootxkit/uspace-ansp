@@ -171,6 +171,9 @@ type Tx interface {
 	// before (nothing is written).
 	InsertNotice(ctx context.Context, n NewNotice) (Notice, bool, error)
 	NoticeBySenderRef(ctx context.Context, sender, noticeRef string) (Notice, error)
+	// CountSenderNotices is how many notices sender holds received since
+	// since, or still awaiting a person's acknowledgement.
+	CountSenderNotices(ctx context.Context, sender string, since time.Time) (int64, error)
 	// Intersecting is the planned or active restrictions any box
 	// intersects in space and time, at most limit.
 	Intersecting(ctx context.Context, boxes []Box, limit int) ([]string, error)

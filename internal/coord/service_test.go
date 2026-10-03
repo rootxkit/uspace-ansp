@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"sync"
@@ -113,6 +114,51 @@ func TestSubmitReplayAndReuse(t *testing.T) {
 	m["ussp_id"] = "ussp-02"
 	if _, replay, err := f.submit(t, "ussp-ussp-02-01", encode(t, m)); err != nil || replay {
 		t.Fatal(err)
+	}
+}
+
+// A sender holds at most MaxSenderNotices recent or unacknowledged
+// notices (ansp audit S-9): one more with a fresh notice_ref is refused
+// 429 with Retry-After and nothing stored; a repeat of one stored is
+// still answered its receipt; another sender is not affected; once the
+// window has passed and the notices are acknowledged, the sender is
+// taken again.
+func TestSubmitSenderQuota(t *testing.T) {
+	f := newFixture(t)
+	f.svc.Policy.MaxSenderNotices = 3
+	f.listed = append(f.listed, "ussp-02")
+	send := func(sub, ussp, ref string) (Receipt, bool, error) {
+		m := noticeMap(t)
+		m["notice_ref"], m["ussp_id"] = ref, ussp
+		return f.submit(t, sub, encode(t, m))
+	}
+	for i := range 3 {
+		if _, _, err := send("ussp-01", "ussp-01", fmt.Sprintf("N-%d", i)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	_, _, err := send("ussp-01", "ussp-01", "N-3")
+	if rf := refusalOf(t, err); rf.Status != http.StatusTooManyRequests || rf.RetryAfter <= 0 {
+		t.Fatalf("%+v", rf)
+	}
+	if len(f.repo.notices) != 3 || f.svc.Counters().Get(CounterSenderQuota) != 1 {
+		t.Fatalf("stored %d, counters %v", len(f.repo.notices), f.svc.Counters().Snapshot())
+	}
+	if _, replay, err := send("ussp-01", "ussp-01", "N-0"); err != nil || !replay {
+		t.Fatalf("a repeat at the quota: %v %v", replay, err)
+	}
+	if _, _, err := send("ussp-ussp-02-01", "ussp-02", "N-3"); err != nil {
+		t.Fatalf("another sender: %v", err)
+	}
+	f.repo.mu.Lock()
+	for id, n := range f.repo.notices {
+		n.Acknowledged = true
+		f.repo.notices[id] = n
+	}
+	f.repo.mu.Unlock()
+	f.repo.advance(f.svc.Policy.SenderQuotaWindow + time.Second)
+	if _, _, err := send("ussp-01", "ussp-01", "N-3"); err != nil {
+		t.Fatalf("after the window: %v", err)
 	}
 }
 

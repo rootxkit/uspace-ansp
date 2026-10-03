@@ -128,6 +128,41 @@ func TestTickFaults(t *testing.T) {
 	}
 }
 
+// Several replicas tick: one that read a restriction as due after
+// another activated or expired it finds it moved on. That is counted
+// restriction_tick_raced and is not a failure (ansp audit N-2); a real
+// refusal (the window passed) still fails, and the twin, a due one, is
+// activated.
+func TestTickRacedIsNotAFailure(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t)
+	a, _, _ := f.svc.Plan(ctx, supervisor, input(t0.Add(time.Minute), t0.Add(2*time.Hour)), PlanOptions{})
+	_, _ = f.svc.Apply(ctx, supervisor, a.ID, OpActivate, "later", nil)
+	b, _, _ := f.svc.Plan(ctx, supervisor, input(t0, t0.Add(time.Minute)), PlanOptions{})
+	_, _ = f.svc.Apply(ctx, supervisor, b.ID, OpActivate, "now", nil)
+	f.repo.advance(90 * time.Second)
+	if rep, err := f.svc.Tick(ctx, time.Second); err != nil || rep.Activated != 1 || rep.Expired != 1 {
+		t.Fatalf("%+v %v", rep, err)
+	}
+	f.repo.mu.Lock()
+	f.repo.staleDue = []string{b.ID}
+	f.repo.mu.Unlock()
+	rep, err := f.svc.Tick(ctx, time.Second)
+	if err != nil || rep.Failed != 0 || f.svc.Counters().Get(CounterTickFailed) != 0 || f.svc.Counters().Get(CounterTickRaced) != 2 {
+		t.Fatalf("%+v %v %v", rep, err, f.svc.Counters().Snapshot())
+	}
+	f.repo.mu.Lock()
+	f.repo.staleDue = nil
+	f.repo.mu.Unlock()
+	now := t0.Add(90 * time.Second)
+	c, _, _ := f.svc.Plan(ctx, supervisor, input(now.Add(time.Minute), now.Add(2*time.Minute)), PlanOptions{})
+	_, _ = f.svc.Apply(ctx, supervisor, c.ID, OpActivate, "later", nil)
+	f.repo.advance(5 * time.Minute)
+	if rep, err := f.svc.Tick(ctx, time.Second); err == nil || rep.Failed != 1 || f.svc.Counters().Get(CounterTickRaced) != 2 {
+		t.Fatalf("a scheduled activation past its window: %+v %v", rep, err)
+	}
+}
+
 // The small things: the shape's GeoJSON, a refusal's text, the CIS age
 // rules, the request decoding of an accept.
 func TestHelpers(t *testing.T) {

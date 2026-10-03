@@ -37,7 +37,8 @@ const (
 	// Sent: 2xx.
 	Sent Verdict = iota
 	// Retry: 5xx, 408, 409, 429, a timeout or a network error: retried
-	// with backoff while the window and the count allow.
+	// with backoff while the window and the count allow. A CISP 409 on a
+	// publication is the exception: the worker fails it (deterministic).
 	Retry
 	// Permanent: any other 4xx (or a 1xx or 3xx: redirects are never
 	// followed): failed at once, with the excerpt and an alarm.

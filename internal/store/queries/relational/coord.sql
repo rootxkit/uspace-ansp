@@ -16,6 +16,13 @@ RETURNING *;
 -- name: NoticeBySenderRef :one
 SELECT * FROM coordination_notices WHERE sender_client_id = sqlc.arg(sender_client_id) AND notice_ref = sqlc.arg(notice_ref);
 
+-- name: CountSenderNotices :one
+-- The sender's notices received since, or still awaiting a person's
+-- acknowledgement (the per-sender quota, ansp audit S-9).
+SELECT count(*) FROM coordination_notices
+WHERE sender_client_id = sqlc.arg(sender_client_id)
+  AND (received_at >= sqlc.arg(since)::timestamptz OR (state = 'received' AND ack_required));
+
 -- name: NoticeByID :one
 SELECT * FROM coordination_notices WHERE id = sqlc.arg(id);
 

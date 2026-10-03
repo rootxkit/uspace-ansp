@@ -38,6 +38,9 @@ const (
 	streamWriteTimeout = 5 * time.Second
 	// streamDedupe bounds the remembered (restriction, version) keys.
 	streamDedupe = 4096
+	// StreamResubscribeEvery bounds the snapshots one connection's
+	// console/subscribe/v1 frames cause (ansp audit S-4).
+	StreamResubscribeEvery = time.Second
 )
 
 // Counters of the stream.
@@ -49,6 +52,9 @@ const (
 	// CounterStreamSnapshotFailed: a snapshot went out without its
 	// restrictions because the store could not be read.
 	CounterStreamSnapshotFailed = "restriction_stream_snapshot_failed"
+	// CounterStreamResubscribeThrottled counts subscribe frames answered
+	// by a deferred snapshot (at most one per StreamResubscribeEvery).
+	CounterStreamResubscribeThrottled = "restriction_stream_resubscribe_throttled"
 )
 
 // Schemas of the console frames (M29).
@@ -241,6 +247,8 @@ func (st *restrictionStream) serve(w http.ResponseWriter, r *http.Request) {
 	if !write(st.status(ctx, connID, c)) || !write(st.snapshot(ctx)) {
 		return
 	}
+	gate := resubscribeGate{every: StreamResubscribeEvery, last: time.Now()}
+	defer gate.stop()
 	tick := time.NewTicker(StreamStatusPeriod)
 	defer tick.Stop()
 	for {
@@ -252,6 +260,15 @@ func (st *restrictionStream) serve(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		case <-subscribe:
+			if !gate.ask(time.Now()) {
+				st.counters.Inc(CounterStreamResubscribeThrottled)
+				continue
+			}
+			if !write(st.snapshot(ctx)) {
+				return
+			}
+		case <-gate.due():
+			gate.served(time.Now())
 			if !write(st.snapshot(ctx)) {
 				return
 			}
@@ -266,6 +283,48 @@ func (st *restrictionStream) serve(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
+	}
+}
+
+// resubscribeGate answers a connection's console/subscribe/v1 frames
+// with at most one snapshot per every: one inside the interval arms a
+// single deferred snapshot at its end, and the frames in between are
+// answered by it (ansp audit S-4).
+type resubscribeGate struct {
+	every time.Duration
+	last  time.Time
+	timer *time.Timer
+}
+
+// ask reports whether a snapshot may be sent at now (and records it);
+// otherwise it arms the deferred snapshot, once.
+func (g *resubscribeGate) ask(now time.Time) bool {
+	if g.timer == nil && now.Sub(g.last) >= g.every {
+		g.last = now
+		return true
+	}
+	if g.timer == nil {
+		g.timer = time.NewTimer(g.every - now.Sub(g.last))
+	}
+	return false
+}
+
+// due fires when the deferred snapshot is due (nil when none is armed).
+func (g *resubscribeGate) due() <-chan time.Time {
+	if g.timer == nil {
+		return nil
+	}
+	return g.timer.C
+}
+
+// served records the deferred snapshot sent at now.
+func (g *resubscribeGate) served(now time.Time) {
+	g.timer, g.last = nil, now
+}
+
+func (g *resubscribeGate) stop() {
+	if g.timer != nil {
+		g.timer.Stop()
 	}
 }
 

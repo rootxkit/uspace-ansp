@@ -122,16 +122,20 @@ func (s *stub) requests() []recorded {
 	return append([]recorded(nil), s.reqs...)
 }
 
-// tokens is a fake token client.
+// tokens is a fake token client; deadlines records each ask's context
+// deadline (zero when it had none).
 type tokens struct {
-	mu   sync.Mutex
-	err  error
-	asks []string
+	mu        sync.Mutex
+	err       error
+	asks      []string
+	deadlines []time.Time
 }
 
-func (k *tokens) TokenFor(_ context.Context, aud string, scopes []string) (string, error) {
+func (k *tokens) TokenFor(ctx context.Context, aud string, scopes []string) (string, error) {
 	k.mu.Lock()
 	defer k.mu.Unlock()
+	dl, _ := ctx.Deadline()
+	k.deadlines = append(k.deadlines, dl)
 	k.asks = append(k.asks, aud+" "+strings.Join(scopes, " "))
 	if k.err != nil {
 		return "", k.err

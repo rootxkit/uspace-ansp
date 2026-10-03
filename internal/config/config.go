@@ -96,8 +96,13 @@ type Config struct {
 	// the signature made at publication, so it is as old as the version.
 	CISPublisherSigMaxAgeS int `env:"ANSP_CIS_PUBLISHER_SIG_MAX_AGE_S" default:"31622400" min:"300" max:"315360000"`
 	// DSSURL is the DSS base URL; its host is the DSS audience.
-	DSSURL       string `env:"ANSP_DSS_URL" kind:"url"`
-	AuthorityURL string `env:"ANSP_AUTHORITY_URL" kind:"url"`
+	DSSURL string `env:"ANSP_DSS_URL" kind:"url"`
+	// DSSNotifyPrivateAllowed lets a subscriber notification go to http
+	// and to a loopback or private address (the lab and tests only):
+	// a uss_base_url is written by any DSS participant, so by default it
+	// must be https on a public address (ansp audit S-2).
+	DSSNotifyPrivateAllowed string `env:"ANSP_DSS_NOTIFY_PRIVATE_ALLOWED" default:"false" enum:"true|false"`
+	AuthorityURL            string `env:"ANSP_AUTHORITY_URL" kind:"url"`
 	// PublicBaseURL is the uss_base_url written to the DSS, the
 	// callback_url base and the host of this system's own aud.
 	PublicBaseURL string `env:"ANSP_PUBLIC_BASE_URL" kind:"url"`
