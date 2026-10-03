@@ -89,6 +89,13 @@ type Policy struct {
 	OccurrenceAlarmAfter time.Duration
 	// OccurrenceAlarmEvery is the occurrence monitor's period.
 	OccurrenceAlarmEvery time.Duration
+	// OccurrenceClockSkew is how far after now (the database clock) a
+	// report's became_aware_at may be; later is refused, so a client's
+	// clock never moves the 72 h deadline.
+	OccurrenceClockSkew time.Duration
+	// OccurrenceMaxAge is how far before now a report's occurred_at may
+	// be; older is refused as a likely typo.
+	OccurrenceMaxAge time.Duration
 }
 
 // OccurrenceDeadline is 376/2014 Art. 4(8): a report within 72 h of
@@ -100,6 +107,7 @@ func DefaultPolicy() Policy {
 	return Policy{
 		EscalationRepeat: 30 * time.Second, TickEvery: time.Second, MaxBatch: 100, MaxRestrictionIDs: 1000, MaxListed: 1000,
 		OccurrenceAlarmAfter: 60 * time.Hour, OccurrenceAlarmEvery: 10 * time.Second,
+		OccurrenceClockSkew: 5 * time.Minute, OccurrenceMaxAge: 365 * 24 * time.Hour,
 	}
 }
 
@@ -114,6 +122,9 @@ func (p Policy) Validate() error {
 	}
 	if p.OccurrenceAlarmAfter <= 0 || p.OccurrenceAlarmAfter >= OccurrenceDeadline {
 		errs = append(errs, core.Fieldf("occurrence_alarm_after", "must be positive and before the 72 h deadline"))
+	}
+	if p.OccurrenceClockSkew <= 0 || p.OccurrenceMaxAge <= OccurrenceDeadline {
+		errs = append(errs, core.Fieldf("occurrence_times", "the skew must be positive and the age longer than the 72 h deadline"))
 	}
 	return errors.Join(errs...)
 }

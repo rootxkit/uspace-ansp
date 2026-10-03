@@ -16,6 +16,7 @@ import (
 
 	"github.com/rootxkit/uspace-ansp/internal/auth"
 	"github.com/rootxkit/uspace-ansp/internal/deliver"
+	"github.com/rootxkit/uspace-ansp/internal/restriction"
 )
 
 const occurrenceBody = `{"channel":"mandatory","occurred_at":"2026-10-03T10:00:00.000Z","became_aware_at":"2026-10-03T10:05:00.000Z",
@@ -404,5 +405,40 @@ func visit(ty reflect.Type, seen map[reflect.Type]bool, f func(name, tag string)
 		tag, _, _ := strings.Cut(fl.Tag.Get("json"), ",")
 		f(fl.Name, tag)
 		visit(fl.Type, seen, f)
+	}
+}
+
+// became_aware_at after now (plus the clock skew) or occurred_at older
+// than OccurrenceMaxAge, both on the database clock, is refused and
+// nothing is stored (ansp audit S-11): the 72 h deadline is never moved
+// by a client's clock or a typo. Twin: a report at the edges is taken.
+func TestOccurrenceTimesBoundedByTheDatabaseClock(t *testing.T) {
+	f := newOccFixture(t)
+	now := f.repo.now
+	pol := f.occ.Policy
+	at := func(occ, aware time.Time) string {
+		s := strings.Replace(occurrenceBody, `"occurred_at":"2026-10-03T10:00:00.000Z"`, `"occurred_at":"`+restriction.Stamp(occ)+`"`, 1)
+		return strings.Replace(s, `"became_aware_at":"2026-10-03T10:05:00.000Z"`, `"became_aware_at":"`+restriction.Stamp(aware)+`"`, 1)
+	}
+	for name, body := range map[string]string{
+		"became_aware_at": at(now.Add(-time.Hour), now.Add(pol.OccurrenceClockSkew+time.Minute)),
+		"occurred_at":     at(now.Add(-pol.OccurrenceMaxAge-time.Hour), now.Add(-time.Hour)),
+	} {
+		in, errs := DecodeOccurrence([]byte(body))
+		if len(errs) > 0 {
+			t.Fatal(errs)
+		}
+		_, err := f.occ.Create(context.Background(), Actor{ID: "a"}, in)
+		rf := refusalOf(t, err)
+		if rf.Status != http.StatusBadRequest || len(rf.Fields) != 1 || rf.Fields[0].Field != name {
+			t.Fatalf("%s: %+v", name, rf)
+		}
+	}
+	if len(f.repo.occ) != 0 || len(f.repo.jobs) != 0 {
+		t.Fatal("a refused report was stored")
+	}
+	f.create(t, at(now.Add(-pol.OccurrenceMaxAge+time.Hour), now.Add(pol.OccurrenceClockSkew-time.Second)))
+	if len(f.repo.occ) != 1 {
+		t.Fatal("a report within the bounds was not stored")
 	}
 }
