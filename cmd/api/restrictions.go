@@ -352,10 +352,7 @@ func (s apiServer) CreateRestrictionRequest(w http.ResponseWriter, r *http.Reque
 		refusal(w, r, &restriction.Refusal{Status: http.StatusBadRequest, Slug: restriction.SlugInvalid, Detail: "the request is refused; nothing was stored", Fields: errs})
 		return
 	}
-	source, requester := restriction.SourceAuthority, actor.ID
-	if actor.Type == string(audit.ActorUser) {
-		source, requester = restriction.SourceConsole, actor.Role
-	}
+	source, requester := requesterOf(actor)
 	q, replay, err := rs.svc.CreateRequest(r.Context(), actor, requester, source, *b.ClientRef, body)
 	if err != nil {
 		refusal(w, r, err)
@@ -366,6 +363,17 @@ func (s apiServer) CreateRestrictionRequest(w http.ResponseWriter, r *http.Reque
 		status = http.StatusOK
 	}
 	writeJSON(w, status, toRequestJSON(q))
+}
+
+// requesterOf is who a restriction request belongs to: the client id of
+// a system, or the account of a console user, never its role (two
+// supervisors' client_ref "1" are two requests, and each account has
+// its own MaxOpenRequests).
+func requesterOf(actor restriction.Actor) (source, requester string) {
+	if actor.Type == string(audit.ActorUser) {
+		return restriction.SourceConsole, actor.ID
+	}
+	return restriction.SourceAuthority, actor.ID
 }
 
 // GetRestrictionRequest serves GET /v1/restriction-requests/{id}.

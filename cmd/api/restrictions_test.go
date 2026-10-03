@@ -16,6 +16,7 @@ import (
 	"github.com/rootxkit/uspace-core/core"
 
 	"github.com/rootxkit/uspace-ansp/internal/apierr"
+	"github.com/rootxkit/uspace-ansp/internal/audit"
 	"github.com/rootxkit/uspace-ansp/internal/auth"
 	"github.com/rootxkit/uspace-ansp/internal/bus"
 	"github.com/rootxkit/uspace-ansp/internal/config"
@@ -297,6 +298,23 @@ func TestActorOf(t *testing.T) {
 	a, ok = actorOf(r.WithContext(auth.WithPrincipal(r.Context(), m)))
 	if !ok || a.Type != "client" || a.ID != "authority-01" {
 		t.Fatalf("%+v", a)
+	}
+}
+
+// A console request belongs to the account, not the role: two
+// supervisors are two requesters (ansp audit S-8); a system's request
+// belongs to its client id.
+func TestRequesterIsTheAccount(t *testing.T) {
+	a := restriction.Actor{Type: string(audit.ActorUser), ID: "01K6NZ8Q2W3E4R5T6Y7V8W9X0Z", Role: auth.RoleWatchSupervisor}
+	b := restriction.Actor{Type: string(audit.ActorUser), ID: "01K6NZ8Q2W3E4R5T6Y7V8W9X1A", Role: auth.RoleWatchSupervisor}
+	srcA, reqA := requesterOf(a)
+	srcB, reqB := requesterOf(b)
+	if srcA != restriction.SourceConsole || srcB != restriction.SourceConsole || reqA != a.ID || reqB != b.ID {
+		t.Fatalf("%s %s, %s %s", srcA, reqA, srcB, reqB)
+	}
+	src, req := requesterOf(restriction.Actor{Type: string(audit.ActorClient), ID: "authority-01", Role: "authority-01"})
+	if src != restriction.SourceAuthority || req != "authority-01" {
+		t.Fatalf("%s %s", src, req)
 	}
 }
 

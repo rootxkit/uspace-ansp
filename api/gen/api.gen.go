@@ -2749,7 +2749,7 @@ type RestrictionRequest struct {
 	// ReceivedAt RFC 3339 UTC with Z, millisecond precision (02 §1).
 	ReceivedAt Timestamp `json:"received_at"`
 
-	// Requester The client id of the requesting system, or the console role.
+	// Requester The client id of the requesting system, or the console account id.
 	Requester string `json:"requester"`
 
 	// RestrictionId Crockford base32, 26 characters (04 §2).

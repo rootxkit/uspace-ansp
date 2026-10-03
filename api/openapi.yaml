@@ -1631,7 +1631,7 @@ components:
           $ref: "#/components/schemas/ULID"
         requester:
           type: string
-          description: The client id of the requesting system, or the console role.
+          description: The client id of the requesting system, or the console account id.
         source:
           type: string
           enum: [authority, console]
