@@ -65,11 +65,17 @@ jobs:
               - 'schemas/**'
               - 'docs/PLAN.md'
               - 'deploy/.env.example'
+              # Read by the tests and embedded in the binaries: a change to
+              # only these must still run the tests that read them.
+              - 'testdata/**'
+              - '**/testdata/**'
+              - 'migrations/**'
               - '.github/workflows/ci.yml'
             integration:
               - 'internal/**'
               - 'cmd/**'
               - 'migrations/**'
+              - 'testdata/**'
               - 'go.mod'
               - 'go.sum'
               - 'Makefile'
@@ -86,6 +92,7 @@ jobs:
             web:
               - 'web/**'
               - 'api/openapi.yaml'
+              - '.github/workflows/ci.yml'
             contracts:
               - 'api/**'
               - 'schemas/**'
