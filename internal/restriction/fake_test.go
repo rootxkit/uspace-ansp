@@ -43,6 +43,9 @@ type memRepo struct {
 	// reads counts the store reads outside a transaction (List,
 	// Version, CurrentVersions): a snapshot's cost.
 	reads int
+	// staleDue is answered by DueActivations and DueExpiries besides
+	// what is due: what another replica's tick changed since it read.
+	staleDue []string
 }
 
 func (m *memRepo) failing(name string) error { return m.fail[name] }
@@ -186,7 +189,7 @@ func (m *memRepo) DueActivations(_ context.Context, limit int) ([]string, error)
 		}
 	}
 	sort.Strings(out)
-	return out, nil
+	return append(out, m.staleDue...), nil
 }
 
 func (m *memRepo) DueExpiries(_ context.Context, limit int) ([]string, error) {
@@ -200,7 +203,7 @@ func (m *memRepo) DueExpiries(_ context.Context, limit int) ([]string, error) {
 		}
 	}
 	sort.Strings(out)
-	return out, nil
+	return append(out, m.staleDue...), nil
 }
 
 func (m *memRepo) Unpublished(_ context.Context, limit int) ([]Version, error) {

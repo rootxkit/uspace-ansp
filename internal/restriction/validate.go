@@ -38,7 +38,13 @@ type Refusal struct { //nolint:errname // the refusal is the problem body, apier
 	Detail     string
 	Fields     []*core.FieldError
 	RetryAfter time.Duration
+	// cause is what the refusal was made from (a *TransitionError), for
+	// errors.As; never on the wire.
+	cause error
 }
+
+// Unwrap is the refusal's cause, if any.
+func (r *Refusal) Unwrap() error { return r.cause }
 
 func (r *Refusal) Error() string {
 	if len(r.Fields) > 0 {
