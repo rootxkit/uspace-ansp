@@ -34,5 +34,5 @@ export function proxy(req: NextRequest): NextResponse {
 export const config = {
   // Pages only: not Next's assets, the BFF, the API paths Caddy routes to
   // api and manned-feed, the basemap, or the static health file.
-  matcher: ["/((?!_next/|_bff/|v1/|uss/|basemap/|\.well-known/|healthz|favicon\.ico).*)"],
+  matcher: ["/((?!_next/|_bff/|v1/|uss/|basemap/|\\.well-known/|healthz|favicon\\.ico).*)"],
 };
