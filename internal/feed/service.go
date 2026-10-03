@@ -306,10 +306,9 @@ func (s *Service) broadcast(e *picture.Entry, now time.Time) {
 			}
 			frame = b
 		}
-		if c.enqueue(frame) {
+		if c.enqueue(frame, e.Relevance.Relevant) {
 			s.counters.Inc(CounterDroppedFrames)
 		}
-		c.noteSent(e.Relevance.Relevant)
 	}
 }
 
@@ -420,7 +419,7 @@ type client struct {
 	mu       sync.Mutex
 	bbox     *geodesy.BBox
 	manned   bool
-	queue    [][]byte
+	queue    []queued
 	max      int
 	notify   chan struct{}
 	dropped  atomic.Int64
@@ -437,9 +436,16 @@ func (c *client) wants(e *picture.Entry) bool {
 	return c.bbox == nil || c.bbox.Contains(e.Track.Position)
 }
 
+// queued is a track frame waiting for the writer, with whether its
+// aircraft is relevant (for the product, counted once written).
+type queued struct {
+	frame    []byte
+	relevant bool
+}
+
 // enqueue adds a frame, dropping the oldest past the bound; it reports
 // whether one was dropped.
-func (c *client) enqueue(frame []byte) bool {
+func (c *client) enqueue(frame []byte, relevant bool) bool {
 	c.mu.Lock()
 	dropped := false
 	if len(c.queue) >= c.max {
@@ -447,7 +453,7 @@ func (c *client) enqueue(frame []byte) bool {
 		c.dropped.Add(1)
 		dropped = true
 	}
-	c.queue = append(c.queue, frame)
+	c.queue = append(c.queue, queued{frame: frame, relevant: relevant})
 	c.mu.Unlock()
 	select {
 	case c.notify <- struct{}{}:
@@ -456,7 +462,7 @@ func (c *client) enqueue(frame []byte) bool {
 	return dropped
 }
 
-func (c *client) take() [][]byte {
+func (c *client) take() []queued {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	q := c.queue
@@ -464,10 +470,14 @@ func (c *client) take() [][]byte {
 	return q
 }
 
-func (c *client) noteSent(relevant bool) {
+// written counts a track frame the writer delivered, for the product:
+// the Annex V record of what was served counts what was written, never
+// a frame dropped from the queue or cleared by a resubscription (ansp
+// audit S-5).
+func (c *client) written(q queued) {
 	c.mu.Lock()
 	c.sent++
-	if relevant {
+	if q.relevant {
 		c.relevant++
 	}
 	c.mu.Unlock()
