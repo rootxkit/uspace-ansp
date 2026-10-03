@@ -307,7 +307,11 @@ jobs:
           cache: true
       - name: this repository's RunOwned vectors, then uspace-core's at the pinned version
         run: |
-          go test -count=1 -run Vectors ./...
+          go test -count=1 -run Vectors -v ./... > own-vectors.log 2>&1 || { cat own-vectors.log; exit 1; }
+          passed="$(grep -c '^--- PASS' own-vectors.log || true)"
+          failed="$(grep -c '^--- FAIL' own-vectors.log || true)"
+          echo "this repository's vectors: ${passed} passed, ${failed} failed" | tee -a "$GITHUB_STEP_SUMMARY"
+          if [ "$passed" -eq 0 ] || [ "$failed" -ne 0 ]; then cat own-vectors.log; exit 1; fi
           go test -count=1 -run Vectors -v github.com/rootxkit/uspace-core/... > core-vectors.log 2>&1 || { cat core-vectors.log; exit 1; }
           passed="$(grep -c '^--- PASS' core-vectors.log || true)"
           failed="$(grep -c '^--- FAIL' core-vectors.log || true)"
