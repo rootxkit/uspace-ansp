@@ -5,13 +5,14 @@
 // restriction/state/v1 frame of the shared stream merged on top
 // (restrictions.ts). The list is read again when the stream comes back
 // live (the snapshot it missed is not replayed to the app) and when a
-// frame names a restriction the list does not hold.
+// frame names a restriction the list does not hold in a state the list's
+// filter takes.
 import { useEffect, useRef, useState } from "react";
 import type { CallFailure } from "../api/client";
 import { failureOf } from "../api/client";
 import { useConsole } from "./context";
 import type { ApiAlarm, ApiRestriction } from "./delivery";
-import { mergeAlarm, mergeState, stateBodyOf } from "./restrictions";
+import { mergeAlarm, mergeState, reloadsFor, stateBodyOf } from "./restrictions";
 
 /** The list's bound (api/openapi.yaml Limit). Display-only: the API says when it cut the list. */
 export const LIST_LIMIT = 500;
@@ -90,7 +91,8 @@ export function useRestrictions(state: string | null): LiveRestrictions {
         if (body === null || list.current === null) return;
         const merged = mergeState(list.current, body);
         if (merged.unknown) {
-          setTick((n) => n + 1);
+          // Not for a state the filter leaves out: the list would not hold it.
+          if (reloadsFor(body, state)) setTick((n) => n + 1);
           return;
         }
         if (merged.stale) return;
@@ -99,7 +101,7 @@ export function useRestrictions(state: string | null): LiveRestrictions {
         setAlarms((prev) => mergeAlarm(prev, body.alarm));
         setFramesApplied((n) => n + 1);
       }),
-    [onFrame],
+    [onFrame, state],
   );
 
   return {

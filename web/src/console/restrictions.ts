@@ -72,3 +72,13 @@ export function mergeAlarm(alarms: readonly ApiAlarm[], alarm: ApiAlarm | undefi
   const out = alarms.filter((a) => a.id !== alarm.id);
   return [alarm, ...out];
 }
+
+/**
+ * Whether a frame naming a restriction the list does not hold asks for
+ * a reload of a list filtered to `filter` (null: every state). A frame in
+ * a state the filter leaves out does not: the reload would not hold that
+ * restriction either, and every such frame would read the list again.
+ */
+export function reloadsFor(body: ApiStateBody, filter: string | null): boolean {
+  return filter === null || body.state === filter;
+}

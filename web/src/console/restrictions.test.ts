@@ -4,7 +4,7 @@
 import { describe, expect, it } from "vitest";
 import type { ConsoleFrame } from "@rootxkit/uspace-ui/live";
 import { alarm, FEATURE, restriction } from "../../test/fixtures";
-import { mergeAlarm, mergeState, stateBodyOf, type ApiStateBody } from "./restrictions";
+import { mergeAlarm, mergeState, reloadsFor, stateBodyOf, type ApiStateBody } from "./restrictions";
 
 function frame(body: unknown, schema = "restriction/state/v1"): ConsoleFrame {
   return {
@@ -87,5 +87,23 @@ describe("mergeAlarm", () => {
   it("keeps the list without an alarm", () => {
     const a = alarm();
     expect(mergeAlarm([a], undefined)).toEqual([a]);
+  });
+});
+
+describe("reloadsFor", () => {
+  it("reloads an unfiltered list for any state", () => {
+    for (const state of ["planned", "active", "ended", "cancelled"] as const) {
+      expect(reloadsFor({ ...BODY, state }, null)).toBe(true);
+    }
+  });
+
+  it("reloads a filtered list for a frame in the filter's state", () => {
+    expect(reloadsFor({ ...BODY, state: "active" }, "active")).toBe(true);
+  });
+
+  it("does not reload a filtered list for a frame in another state", () => {
+    expect(reloadsFor({ ...BODY, state: "ended" }, "active")).toBe(false);
+    expect(reloadsFor({ ...BODY, state: "cancelled" }, "active")).toBe(false);
+    expect(reloadsFor({ ...BODY, state: "active" }, "planned")).toBe(false);
   });
 });
