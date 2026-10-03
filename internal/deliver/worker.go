@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"strings"
 	"sync"
 	"time"
@@ -234,7 +235,16 @@ func (w *Worker) send(ctx context.Context, d *Delivery, token string) (sent, err
 		if w.CISP == nil {
 			return sent{resp: Response{Err: "no CISP configured (ANSP_CISP_URL)"}}, nil
 		}
-		return sent{resp: w.CISP.Publish(ctx, d.Method, d.URL, d.Body, d.IdempotencyKey)}, nil
+		resp := w.CISP.Publish(ctx, d.Method, d.URL, d.Body, d.IdempotencyKey)
+		if resp.Status == http.StatusConflict {
+			// The CISP's 409 on /v1/restrictions* is deterministic (the
+			// pair with another body, or a lower ansp_version): failed at
+			// once with an alarm, so it never holds the restriction's
+			// next operation behind it in the ordered channel.
+			w.count(CounterCISPConflict)
+			return sent{resp: resp, verdict: verdict(Permanent)}, nil
+		}
+		return sent{resp: resp}, nil
 	case KindDirect:
 		if d.Method == "" {
 			p, err := w.Repo.Prepare(ctx, d.ID, token, "POST", strings.TrimRight(d.Target, "/")+PathNotifications, d.Body)

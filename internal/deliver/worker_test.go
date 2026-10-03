@@ -204,12 +204,14 @@ func TestWorkerRetriesWithBackoff(t *testing.T) {
 }
 
 // A 400 is failed at once with the excerpt and an alarm, never retried;
-// its twin, a 409, is retried.
+// so is a CISP 409 (the pair with another body, or a lower ansp_version:
+// an answer no retry changes, system audit F-3); its twin, a 429, is
+// retried.
 func TestWorkerPermanentAndRetriedConflict(t *testing.T) {
 	for _, tc := range []struct {
 		code  int
 		state State
-	}{{400, StateFailed}, {409, StateQueued}, {429, StateQueued}, {404, StateFailed}} {
+	}{{400, StateFailed}, {409, StateFailed}, {429, StateQueued}, {404, StateFailed}} {
 		h := newHarness(t, func(int, recorded) (int, string) {
 			return tc.code, `{"type":"https://schemas.uspace.ge/problems/restriction_refused","detail":"refused"}`
 		})
@@ -331,6 +333,35 @@ func TestWorkerKeepsVersionsInOrder(t *testing.T) {
 	reqs := h.cisp.requests()
 	if len(reqs) != 3 || reqs[1].Method != http.MethodPost || reqs[2].Method != http.MethodPatch {
 		t.Fatalf("requests %v", reqs)
+	}
+}
+
+// A CISP 409 on one version fails it on its first attempt, counted,
+// and does not hold the restriction's next operation behind it in the
+// ordered channel: the activation that follows is sent (system audit F-3).
+func TestCISPConflictFailsAndNextOpGoes(t *testing.T) {
+	h := newHarness(t, func(n int, _ recorded) (int, string) {
+		if n == 1 {
+			return http.StatusConflict, `{"type":"https://schemas.uspace.ge/problems/reference_mismatch","status":409}`
+		}
+		return 200, "{}"
+	})
+	h.repo.addVersion(version(1, "planned"))
+	h.repo.addVersion(version(2, "active"))
+	id1 := h.enqueue(1, OpCreate)
+	id2 := h.enqueue(2, OpActivate)
+	m := h.deliver(id1)
+	if r := h.repo.row(id1); r.State != StateFailed || r.Attempt != 1 || !m.acked || len(m.naked) != 0 {
+		t.Fatalf("state %s attempt %d acked %v naked %v", r.State, r.Attempt, m.acked, m.naked)
+	}
+	if h.counters.Get(CounterCISPConflict) != 1 || len(h.repo.alarms) != 1 || h.repo.alarms[0].Kind != AlarmFailed {
+		t.Fatalf("counters %v alarms %+v", h.counters.Snapshot(), h.repo.alarms)
+	}
+	h.clock.Advance(time.Second)
+	h.deliver(id2)
+	reqs := h.cisp.requests()
+	if len(reqs) != 2 || !strings.HasPrefix(reqs[1].Path, "/v1/restrictions") || h.repo.row(id2).State != StateSent {
+		t.Fatalf("the next operation did not go: %d requests, state %s", len(reqs), h.repo.row(id2).State)
 	}
 }
 

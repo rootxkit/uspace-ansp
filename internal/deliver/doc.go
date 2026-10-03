@@ -18,8 +18,9 @@
 // message. 5xx, 408, 409, 429, timeouts and network errors are retried
 // with backoff from 1 s doubling to 60 s (Nak with that delay) for the
 // policy's window (24 h) and at most Policy.MaxAttempts times, then the
-// job is abandoned with an alarm; any other 4xx fails at once with the
-// response excerpt and an alarm. Both alarms stay open until a person
+// job is abandoned with an alarm; any other 4xx, and a CISP 409 on a
+// publication (deterministic: the pair with another body, or a lower
+// ansp_version), fails at once with the response excerpt and an alarm. Both alarms stay open until a person
 // acknowledges them with a reason (Alarms, audited). A message for a
 // row that is already settled does nothing.
 //

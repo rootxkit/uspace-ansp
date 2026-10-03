@@ -51,6 +51,10 @@ const (
 	CounterRefsTruncated   = "deliver_cisp_heartbeat_refs_truncated"
 	CounterReconciled      = "deliver_reconciled"
 	CounterReconcileFailed = "deliver_reconcile_failed"
+	// CounterCISPConflict counts CISP 409 answers to a publication: the
+	// pair with another body, or a lower ansp_version for the ansp_ref,
+	// which no retry changes; each is failed at once with an alarm.
+	CounterCISPConflict = "deliver_cisp_conflict"
 )
 
 // BusPublisher puts a message on JetStream with a message id (the
