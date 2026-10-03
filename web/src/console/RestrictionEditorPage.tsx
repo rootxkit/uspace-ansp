@@ -27,16 +27,12 @@ import { ConsoleMap, DraftLayer } from "./ConsoleMap";
 import { useConsole } from "./context";
 import { parseVertices, roundClick, verticesText, type Position } from "./draft";
 import { planBody, planSchema, VERTICAL_REFS, ZONE_TYPES, type AreaMode, type PlanValues } from "./plan";
+import { referenceAfter, referenceFor } from "./reference";
 import { maySupervise } from "./roles";
 import { Empty } from "./ui";
 import { useRestrictions } from "./useRestrictions";
 
 type ApiRestrictionCreate = components["schemas"]["RestrictionCreate"];
-
-/** A fresh client reference for Idempotency-Key ([A-Za-z0-9._:-], api/openapi.yaml). */
-function clientRef(): string {
-  return `console-${crypto.randomUUID()}`;
-}
 
 interface Pending {
   body: ApiRestrictionCreate;
@@ -113,7 +109,7 @@ export function RestrictionEditorPage() {
       radius: t("ansp.editor.radius_required"),
     });
     if ("errors" in built) return Promise.resolve(built.errors);
-    if (ref.current === "") ref.current = clientRef();
+    ref.current = referenceFor(ref.current);
     return new Promise((resolve, reject) => setPending({ body: built.body, resolve, reject }));
   };
 
@@ -130,8 +126,9 @@ export function RestrictionEditorPage() {
     } catch (err: unknown) {
       const f = failureOf(err);
       setChain(chainProposal(f));
-      // Another body is another plan: a new reference after a refusal.
-      ref.current = "";
+      // A refusal spends the reference (the next body is another plan);
+      // no answer, a 502 or a 504 keeps it for the retry (reference.ts).
+      ref.current = referenceAfter(ref.current, f);
       setFailure(f);
       p.reject(err);
     }
