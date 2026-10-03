@@ -78,6 +78,26 @@ func (q *Queries) CountNoticesBehindBus(ctx context.Context) (int64, error) {
 	return column_1, err
 }
 
+const countSenderNotices = `-- name: CountSenderNotices :one
+SELECT count(*) FROM coordination_notices
+WHERE sender_client_id = $1
+  AND (received_at >= $2::timestamptz OR (state = 'received' AND ack_required))
+`
+
+type CountSenderNoticesParams struct {
+	SenderClientID string
+	Since          time.Time
+}
+
+// The sender's notices received since, or still awaiting a person's
+// acknowledgement (the per-sender quota, ansp audit S-9).
+func (q *Queries) CountSenderNotices(ctx context.Context, arg CountSenderNoticesParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countSenderNotices, arg.SenderClientID, arg.Since)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const deliveredOccurrenceAlarms = `-- name: DeliveredOccurrenceAlarms :many
 SELECT a.id, a.delivery_id
 FROM delivery_alarms a JOIN deliveries d ON d.id = a.delivery_id

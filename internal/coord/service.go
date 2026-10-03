@@ -43,6 +43,8 @@ const (
 	CounterRepublished      = "notices_republished"
 	CounterRestrictionsCut  = "notices_restriction_ids_truncated"
 	CounterInboxViewed      = "notices_inbox_viewed"
+	// CounterSenderQuota counts notices refused 429 at the sender's quota.
+	CounterSenderQuota = "notices_sender_quota_refused"
 )
 
 // The refusal slugs of the inbox (problem type slugs, M28).
@@ -52,6 +54,7 @@ const (
 	SlugSenderMismatch = "sender_mismatch"
 	SlugRefReused      = "notice_ref_reused"
 	SlugAuditFailed    = "audit_unavailable"
+	SlugRateLimited    = "rate_limited"
 )
 
 // Refusal is a refused request: the status, the problem slug, the detail
@@ -96,6 +99,11 @@ type Policy struct {
 	// OccurrenceMaxAge is how far before now a report's occurred_at may
 	// be; older is refused as a likely typo.
 	OccurrenceMaxAge time.Duration
+	// MaxSenderNotices bounds the notices one sender holds received
+	// within SenderQuotaWindow or still awaiting a person's
+	// acknowledgement; one more is refused 429 (ansp audit S-9).
+	MaxSenderNotices  int
+	SenderQuotaWindow time.Duration
 }
 
 // OccurrenceDeadline is 376/2014 Art. 4(8): a report within 72 h of
@@ -108,6 +116,7 @@ func DefaultPolicy() Policy {
 		EscalationRepeat: 30 * time.Second, TickEvery: time.Second, MaxBatch: 100, MaxRestrictionIDs: 1000, MaxListed: 1000,
 		OccurrenceAlarmAfter: 60 * time.Hour, OccurrenceAlarmEvery: 10 * time.Second,
 		OccurrenceClockSkew: 5 * time.Minute, OccurrenceMaxAge: 365 * 24 * time.Hour,
+		MaxSenderNotices: 500, SenderQuotaWindow: time.Hour,
 	}
 }
 
@@ -117,7 +126,7 @@ func (p Policy) Validate() error {
 	if p.EscalationRepeat <= 0 || p.TickEvery <= 0 || p.OccurrenceAlarmEvery <= 0 {
 		errs = append(errs, core.Fieldf("periods", "must be positive"))
 	}
-	if p.MaxBatch < 1 || p.MaxRestrictionIDs < 1 || p.MaxListed < 1 {
+	if p.MaxBatch < 1 || p.MaxRestrictionIDs < 1 || p.MaxListed < 1 || p.MaxSenderNotices < 1 || p.SenderQuotaWindow <= 0 {
 		errs = append(errs, core.Fieldf("bounds", "must be at least 1"))
 	}
 	if p.OccurrenceAlarmAfter <= 0 || p.OccurrenceAlarmAfter >= OccurrenceDeadline {
@@ -255,6 +264,12 @@ func (s *Service) Submit(ctx context.Context, sub string, body []byte) (Receipt,
 		if err != nil {
 			return err
 		}
+		if rf, err := s.quota(ctx, tx, sub, d.NoticeRef, now); err != nil || rf != nil {
+			if rf != nil {
+				return rf
+			}
+			return err
+		}
 		ids, err := tx.Intersecting(ctx, d.Boxes(), s.Policy.MaxRestrictionIDs+1)
 		if err != nil {
 			return err
@@ -299,6 +314,9 @@ func (s *Service) Submit(ctx context.Context, sub string, body []byte) (Receipt,
 		if errors.As(err, &rf) && rf.Slug == SlugRefReused {
 			s.counters.Inc(CounterRefReused)
 		}
+		if errors.As(err, &rf) && rf.Status == http.StatusTooManyRequests {
+			s.counters.Inc(CounterSenderQuota)
+		}
 		return Receipt{}, false, err
 	}
 	if replay {
@@ -308,6 +326,25 @@ func (s *Service) Submit(ctx context.Context, sub string, body []byte) (Receipt,
 	s.counters.Inc(CounterReceived)
 	s.publish(ctx, stored)
 	return receiptOf(stored), false, nil
+}
+
+// quota refuses a new notice of a sender that holds MaxSenderNotices
+// received within SenderQuotaWindow or awaiting acknowledgement: 429
+// with Retry-After, nothing stored. A repeat of a notice it holds is
+// not refused (its receipt is answered).
+func (s *Service) quota(ctx context.Context, tx Tx, sub, ref string, now time.Time) (*Refusal, error) {
+	n, err := tx.CountSenderNotices(ctx, sub, now.Add(-s.Policy.SenderQuotaWindow))
+	if err != nil || n < int64(s.Policy.MaxSenderNotices) {
+		return nil, err
+	}
+	if _, err := tx.NoticeBySenderRef(ctx, sub, ref); err == nil {
+		return nil, nil
+	} else if !errors.Is(err, ErrNotFound) {
+		return nil, err
+	}
+	return &Refusal{Status: http.StatusTooManyRequests, Slug: SlugRateLimited, RetryAfter: s.Policy.SenderQuotaWindow / 4,
+		Detail: fmt.Sprintf("the sender holds %d notices received in the last %s or awaiting acknowledgement; at most %d; nothing was stored",
+			n, s.Policy.SenderQuotaWindow, s.Policy.MaxSenderNotices)}, nil
 }
 
 // refuseSender records the refusal of a sender in the audit log, then
