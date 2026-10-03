@@ -5,7 +5,9 @@
 #                       api/internal/opsgen (api/gen/operations.gen.go and the
 #                       contract tests' stub) and sqlc (internal/store)
 #   api/gen/SOURCE      the SHA-256 of the inputs api/gen was generated from
-#   web/                the TypeScript API types, once web/ exists (WP-11)
+#   web/                the TypeScript API types (uspace-ui-gen-api, WP-11),
+#                       when web/node_modules is installed; the web CI job
+#                       checks them with `make web-types` either way
 # scripts/generate-check.sh runs this and fails on any difference.
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -24,6 +26,10 @@ sum() { sha256sum "$1" | cut -d' ' -f1; }
 } > api/gen/SOURCE
 
 if [ -f web/package.json ]; then
-  (cd web && pnpm run types)
+  if [ -d web/node_modules ]; then
+    (cd web && pnpm run types)
+  else
+    echo "generate: web types SKIPPED, web/node_modules is not installed (make web-install); the web job runs make web-types"
+  fi
 fi
 echo "generate: done"
