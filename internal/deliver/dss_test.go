@@ -510,6 +510,67 @@ func TestDSSNotificationToANonPublicTargetFails(t *testing.T) {
 	}
 }
 
+// An attempt (token fetches and every DSS call of a put or a delete) is
+// bounded by Policy.AttemptTimeout, which is shorter than the lease: a
+// second worker cannot claim the row while the first is in flight
+// (ansp audit S-1).
+func TestAttemptBoundedByTheLease(t *testing.T) {
+	h := newDSSHarness(t)
+	pol := h.worker.Policy
+	if pol.AttemptTimeout <= 0 || pol.AttemptTimeout >= pol.Lease || pol.Validate() != nil {
+		t.Fatalf("attempt %s lease %s", pol.AttemptTimeout, pol.Lease)
+	}
+	before := time.Now()
+	h.deliver(h.step(2, "active", restriction.OpActivate, testStart.Add(4*time.Hour)))
+	h.tokens.mu.Lock()
+	defer h.tokens.mu.Unlock()
+	if len(h.tokens.deadlines) == 0 {
+		t.Fatal("no token asked")
+	}
+	for _, dl := range h.tokens.deadlines {
+		if dl.IsZero() || dl.After(before.Add(pol.AttemptTimeout+time.Second)) {
+			t.Fatalf("a token fetch of the attempt is not bounded by %s: deadline %v", pol.AttemptTimeout, dl)
+		}
+	}
+	bad := pol
+	bad.AttemptTimeout = pol.Lease
+	if bad.Validate() == nil {
+		t.Fatal("an attempt as long as the lease is accepted")
+	}
+}
+
+// The lease lost after the DSS accepted a write (ansp audit S-1, N-1):
+// the outcome cannot be recorded under the lost lease, so it is counted,
+// logged at error and alarmed (the subscribers the DSS named may never
+// be notified), never acknowledged in silence. Twin: a held lease
+// records the write (TestDSSWriteNotifiesEverySubscriber).
+func TestLeaseLostAfterADSSWriteIsAlarmed(t *testing.T) {
+	h := newDSSHarness(t)
+	id := h.step(2, "active", restriction.OpActivate, testStart.Add(4*time.Hour))
+	h.repo.mu.Lock()
+	h.repo.loseLease = true
+	h.repo.mu.Unlock()
+	m := h.deliver(id)
+	if len(h.dss.Requests()) != 1 || !m.acked {
+		t.Fatalf("requests %d acked %v", len(h.dss.Requests()), m.acked)
+	}
+	if h.counters.Get(CounterLeaseLost) != 1 || len(h.notifyJobs(2)) != 0 {
+		t.Fatalf("counters %v", h.counters.Snapshot())
+	}
+	var alarm *Alarm
+	for _, a := range h.repo.alarms {
+		if a.DeliveryID == id {
+			alarm = a
+		}
+	}
+	if alarm == nil || !strings.Contains(alarm.Detail, "lease") || !strings.Contains(alarm.Detail, "2 subscriber") {
+		t.Fatalf("alarm %+v", alarm)
+	}
+	if !strings.Contains(h.log(), `"level":"ERROR","msg":"deliver: the lease was lost`) {
+		t.Fatalf("not logged at error:\n%s", h.log())
+	}
+}
+
 // E-10: a DSS answer naming more subscriptions than the policy's bound
 // is refused whole and alarmed, never cut; nothing is notified. At the
 // bound it is accepted (see internal/dss for the 10 000 / 10 001 pair).

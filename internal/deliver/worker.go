@@ -162,7 +162,11 @@ func (w *Worker) Handle(ctx context.Context, m Msg) {
 		return
 	}
 	start := w.clock()
-	out, err := w.send(ctx, &d, token)
+	// The whole attempt (token fetches and every call) ends before the
+	// lease, so its outcome is recorded under it (ansp audit S-1).
+	actx, cancel := context.WithTimeout(ctx, w.Policy.AttemptTimeout)
+	out, err := w.send(actx, &d, token)
+	cancel()
 	a.Duration = w.clock().Sub(start)
 	switch {
 	case err != nil:
@@ -215,6 +219,33 @@ func (w *Worker) Handle(ctx context.Context, m Msg) {
 		out.write = nil
 	}
 	w.finish(ctx, m, log, d, a, c.Now, out.write)
+}
+
+// alarmLostWrite raises a failure alarm for a DSS write the DSS accepted
+// whose outcome could not be recorded because the lease was lost: the
+// attempt that owns the job now may find nothing to do, and the
+// subscribers this answer named would never be notified in silence.
+func (w *Worker) alarmLostWrite(ctx context.Context, log *slog.Logger, d Delivery, write DSSWrite, now time.Time) {
+	detail := fmt.Sprintf("%s to %s (%s of version %d): the DSS accepted it, but the lease was lost before the outcome was recorded; %d subscriber(s) it named may not be notified",
+		d.Kind, d.Target, d.Op, d.AnspVersion, len(write.Subscribers))
+	var raised *Alarm
+	err := w.Repo.Tx(ctx, func(ctx context.Context, tx Tx) error {
+		al, ok, err := tx.RaiseAlarm(ctx, Alarm{ID: restriction.NewULID(now), Kind: AlarmFailed, RestrictionID: d.RestrictionID,
+			AnspVersion: d.AnspVersion, DeliveryID: d.ID, Since: d.QueuedAt, Detail: clip(detail, 1000)})
+		if ok {
+			raised = &al
+		}
+		return err
+	})
+	if err != nil {
+		w.count(CounterStoreFailed)
+		log.Error("deliver: the alarm of a lost DSS outcome was not recorded", slog.String("error", err.Error()))
+		return
+	}
+	if raised != nil {
+		w.count(CounterAlarmsRaised)
+		w.Events.Alarm(ctx, *raised, "raised")
+	}
 }
 
 // intakeAbsent is whether the authority answered that it does not
@@ -388,7 +419,10 @@ func (w *Worker) finish(ctx context.Context, m Msg, log *slog.Logger, d Delivery
 	}
 	if !held {
 		w.count(CounterLeaseLost)
-		log.Warn("deliver: the lease was lost before the outcome was recorded; another attempt owns the job", slog.String("outcome", a.Outcome))
+		log.Error("deliver: the lease was lost before the outcome was recorded; another attempt owns the job", slog.String("outcome", a.Outcome))
+		if write != nil {
+			w.alarmLostWrite(ctx, log, d, *write, now)
+		}
 		_ = m.Ack()
 		return
 	}

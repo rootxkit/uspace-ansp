@@ -23,8 +23,13 @@ type Policy struct {
 	// HTTPTimeout bounds one attempt's request and response.
 	HTTPTimeout time.Duration
 	// Lease bounds one attempt's hold on its row; it outlives
-	// HTTPTimeout.
+	// AttemptTimeout.
 	Lease time.Duration
+	// AttemptTimeout bounds one whole attempt: every token fetch and
+	// every call of it (a DSS put or delete makes up to three), so the
+	// outcome is recorded before the lease ends and no second worker
+	// claims the row while the first is in flight (ansp audit S-1).
+	AttemptTimeout time.Duration
 	// ScanEvery is the outbox scan (B-05): rows never published, and
 	// rows whose message is overdue by StuckGrace, are published again.
 	ScanEvery    time.Duration
@@ -79,7 +84,7 @@ type Policy struct {
 func DefaultPolicy() Policy {
 	return Policy{
 		BackoffMin: time.Second, BackoffMax: 60 * time.Second, Window: 24 * time.Hour,
-		HTTPTimeout: 10 * time.Second, Lease: 30 * time.Second,
+		HTTPTimeout: 10 * time.Second, Lease: 30 * time.Second, AttemptTimeout: 20 * time.Second,
 		ScanEvery: 5 * time.Second, PublishGrace: 2 * time.Second, StuckGrace: 30 * time.Second,
 		InFlight: 8, MaxResponseBytes: 1 << 20, ExcerptBytes: 1024, MaxBodyBytes: 256 << 10,
 		MaxActiveRefs: 1000, MaxTargets: 201, AlarmEvery: time.Second, MaxBatch: 100,
@@ -102,8 +107,8 @@ func (p Policy) Validate() error {
 	if p.Window < p.BackoffMax {
 		errs = append(errs, core.Fieldf("window", "shorter than the longest backoff"))
 	}
-	if p.HTTPTimeout <= 0 || p.Lease <= p.HTTPTimeout {
-		errs = append(errs, core.Fieldf("lease", "must outlive the HTTP timeout"))
+	if p.HTTPTimeout <= 0 || p.AttemptTimeout < p.HTTPTimeout || p.Lease <= p.AttemptTimeout {
+		errs = append(errs, core.Fieldf("lease", "the attempt must take at least the HTTP timeout and the lease must outlive the attempt"))
 	}
 	if p.ScanEvery <= 0 || p.PublishGrace <= 0 || p.StuckGrace <= 0 || p.AlarmEvery <= 0 {
 		errs = append(errs, core.Fieldf("periods", "must be positive"))
