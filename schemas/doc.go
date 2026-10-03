@@ -1,6 +1,9 @@
 // Package schemas holds the JSON Schemas (draft 2020-12) of the messages
 // this system owns (spec 04 §1, decision record M14): track/manned/v1,
-// restriction/state/v1 and coordination/annex_v/v1, each at
+// restriction/state/v1, coordination/annex_v/v1 (the USSP's request
+// body, owned here because this system's API carries it) and
+// coordination/notice/v1 (the inbox item on coord.v1 and the console
+// stream, WP-10), each at
 // <family>/<name>/v1.json with $id https://schemas.uspace.ge/<family>/<name>/v1.json,
 // and their examples under examples/<family>/<name>/v1/ (valid ones at
 // the top, refused ones under invalid/). uspace-lab mirrors this

@@ -99,18 +99,35 @@ type Job struct {
 	// policy's Window (a subscriber notification's NotifyWindow); the
 	// count bound is what fits in it.
 	Window time.Duration
+	// Subject and Key name a job that carries no restriction version (an
+	// occurrence report, WP-10): its subject_ref (the report id) and its
+	// idempotency key (the report_ref). Empty for a restriction's job.
+	Subject string
+	Key     string
 }
 
-// SubjectRef is "<restriction_id>.<version>".
+// SubjectRef is "<restriction_id>.<version>", or Subject for a job of
+// no restriction.
 func (j Job) SubjectRef() string {
+	if j.Subject != "" {
+		return j.Subject
+	}
 	return j.RestrictionID + "." + strconv.FormatInt(j.AnspVersion, 10)
 }
 
 // IdempotencyKey is the pair (ansp_ref, ansp_version) (D5, M4) as one
-// string; with the kind and the target it is unique.
+// string, or Key for a job of no restriction; with the kind and the
+// target it is unique.
 func (j Job) IdempotencyKey() string {
+	if j.Key != "" {
+		return j.Key
+	}
 	return IdempotencyKey(j.AnspRef, j.AnspVersion)
 }
+
+// OfRestriction reports whether the job carries a restriction version:
+// every kind but occurrence does.
+func (j Job) OfRestriction() bool { return j.Kind != KindOccurrence }
 
 // IdempotencyKey renders the pair (ansp_ref, ansp_version).
 func IdempotencyKey(anspRef string, version int64) string {
@@ -271,6 +288,12 @@ const (
 	AlarmCISPNotPublished AlarmKind = "cisp_not_published"
 	AlarmFailed           AlarmKind = "delivery_failed"
 	AlarmAbandoned        AlarmKind = "delivery_abandoned"
+	// AlarmOccurrenceUndelivered: an occurrence report not delivered to
+	// the authority OccurrenceAlarmAfter (60 h) after its reporter became
+	// aware of the occurrence, 12 h before the 72 h of 376/2014 Art.
+	// 4(8) (WP-10); open until the delivery is sent, whatever a person
+	// acknowledges.
+	AlarmOccurrenceUndelivered AlarmKind = "occurrence_undelivered"
 )
 
 // Alarm is one delivery_alarms row.

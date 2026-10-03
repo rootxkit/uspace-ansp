@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.uspace.ge/coordination/notice/v1.json",
+  "title": "coordination/notice/v1",
+  "description": "An Annex V notice in the ANSP's inbox and its state (2021/664 Art. 13(2), Annex V; spec 02 F13), in the common envelope (04 §2): on the internal subject coord.v1.<kind>.<ack_id> and as a frame of GET /v1/coordination/stream, one per change (received, each escalation, the acknowledgement). Owned by uspace-ansp, the producer (decision record M14). It is not coordination/annex_v/v1, the USSP's request body, which it carries as payload: the body of a frame is the message its schema names (envelope/v1), and the inbox item is not a request body (docs/PLAN.md section 15 row 24). state is received (the receipt, ack_id), escalated (a nonconformance or contingent notice no person acknowledged within notice_escalation_s, repeated every 30 s until acknowledged) or acknowledged (by a person; acknowledged_by is the role, never a name). The members of the body mirror the CoordinationNotice component of api/openapi.yaml; a test holds them equal.",
+  "allOf": [{ "$ref": "https://schemas.uspace.ge/envelope/v1.json" }],
+  "properties": {
+    "schema": { "const": "coordination/notice/v1" },
+    "body": { "$ref": "#/$defs/body" }
+  },
+  "$defs": {
+    "ulid": {
+      "type": "string",
+      "pattern": "^[0-7][0-9A-HJKMNP-TV-Z]{25}$"
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "body": {
+      "type": "object",
+      "required": ["ack_id", "kind", "sender_client_id", "ussp_id", "notice_ref", "intent_refs", "authorisation_numbers", "received_at", "state"],
+      "properties": {
+        "ack_id": { "$ref": "#/$defs/ulid" },
+        "kind": { "enum": ["intent_notice", "nonconformance", "contingent", "ended"] },
+        "sender_client_id": { "type": "string", "minLength": 1 },
+        "ussp_id": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "notice_ref": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "intent_refs": { "type": "array", "items": { "type": "string", "format": "uuid" } },
+        "authorisation_numbers": { "type": "array", "items": { "type": "string" } },
+        "received_at": { "$ref": "#/$defs/timestamp" },
+        "state": { "enum": ["received", "acknowledged", "escalated"] },
+        "acknowledged_by": { "enum": ["watch_supervisor", "viewer", "admin"] },
+        "acknowledged_at": { "$ref": "#/$defs/timestamp" },
+        "escalated_at": { "$ref": "#/$defs/timestamp" },
+        "acknowledgement_required": { "type": "boolean" },
+        "sender_unverified": { "type": "boolean" },
+        "acknowledgement_note": { "type": "string", "maxLength": 500 },
+        "last_escalated_at": { "$ref": "#/$defs/timestamp" },
+        "escalations": { "type": "integer", "minimum": 0 },
+        "restriction_ids": { "type": "array", "items": { "$ref": "#/$defs/ulid" } },
+        "payload": { "$ref": "https://schemas.uspace.ge/coordination/annex_v/v1.json" }
+      },
+      "if": { "properties": { "state": { "const": "acknowledged" } }, "required": ["state"] },
+      "then": { "required": ["acknowledged_by", "acknowledged_at"] }
+    }
+  }
+}

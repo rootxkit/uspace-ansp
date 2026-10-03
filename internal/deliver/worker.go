@@ -35,11 +35,14 @@ type Worker struct {
 	Direct *Direct
 	// DSS sends the F3548 jobs (WP-9); Outbox queues the subscriber
 	// notifications a DSS write names, in the write's transaction.
-	DSS    *DSS
-	Outbox *Outbox
-	Events *Events
-	Policy Policy
-	Logger *slog.Logger
+	DSS *DSS
+	// Occurrences sends the occurrence jobs (WP-10); nil in a process
+	// without them (the job is then retried and alarmed).
+	Occurrences OccurrenceSender
+	Outbox      *Outbox
+	Events      *Events
+	Policy      Policy
+	Logger      *slog.Logger
 	// Counters are the outbox's (shared with Outbox).
 	Counters *core.Counters
 	// Clock times the attempts (the log's duration_ms); nil is time.Now.
@@ -248,7 +251,22 @@ func (w *Worker) send(ctx context.Context, d *Delivery, token string) (sent, err
 		if w.DSS == nil {
 			return sent{resp: Response{Err: "no DSS channel in this process"}}, nil
 		}
-	case KindCISPHeartbeat, KindOccurrence:
+	case KindOccurrence:
+		if d.Method == "" {
+			// No body is kept on the row: the report's body carries the
+			// reporter's reference in clear (M13), which is sealed at rest
+			// and built into each attempt by the sender.
+			p, err := w.Repo.Prepare(ctx, d.ID, token, "POST", PathOccurrences, nil)
+			if err != nil {
+				return sent{}, fmt.Errorf("the request cannot be recorded: %w", err)
+			}
+			*d = p
+		}
+		if w.Occurrences == nil {
+			return sent{resp: Response{Err: "no occurrence sender in this process"}}, nil
+		}
+		return sent{resp: w.Occurrences.SendOccurrence(ctx, *d)}, nil
+	case KindCISPHeartbeat:
 	}
 	switch d.Kind {
 	case KindDSSPut:

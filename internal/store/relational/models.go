@@ -264,6 +264,33 @@ type CisNotificationsSeen struct {
 	ExpiresAt time.Time
 }
 
+type CoordinationNotice struct {
+	ID                   string
+	Kind                 string
+	SenderClientID       string
+	UsspID               string
+	NoticeRef            string
+	Payload              json.RawMessage
+	PayloadSha256        []byte
+	IntentRefs           []uuid.UUID
+	AuthorisationNumbers []string
+	ReceivedAt           time.Time
+	State                string
+	AckRequired          bool
+	SenderUnverified     bool
+	AcknowledgedBy       *string
+	AcknowledgedUser     *string
+	AcknowledgedAt       *time.Time
+	AckNote              *string
+	EscalatedAt          *time.Time
+	LastEscalatedAt      *time.Time
+	Escalations          int32
+	RestrictionIds       []string
+	CisVersion           *string
+	EventSeq             int32
+	BusSeq               int32
+}
+
 type Delivery struct {
 	ID              string
 	Kind            DeliveryKind
@@ -395,6 +422,26 @@ type OauthClientsSeen struct {
 	FirstSeenAt time.Time
 	LastSeenAt  time.Time
 	ScopesSeen  []string
+}
+
+type OccurrenceReport struct {
+	ID                      string
+	ReportRef               string
+	Channel                 string
+	OccurredAt              time.Time
+	BecameAwareAt           time.Time
+	Category                string
+	Aircraft                json.RawMessage
+	Manned                  json.RawMessage
+	IntentRefs              []uuid.UUID
+	MinSeparation           json.RawMessage
+	Narrative               string
+	ReporterPersonRefSealed []byte
+	ReporterKeyID           *string
+	CreatedBy               string
+	CreatedAt               time.Time
+	DeliveryID              string
+	DeadlineAt              time.Time
 }
 
 type Restriction struct {

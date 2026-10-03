@@ -29,6 +29,7 @@ var owned = map[string]func() any{
 	"track/manned/v1":         func() any { return new(gen.MannedTrackMessage) },
 	"restriction/state/v1":    func() any { return new(gen.RestrictionStateMessage) },
 	"coordination/annex_v/v1": func() any { return new(gen.AnnexVNotice) },
+	"coordination/notice/v1":  func() any { return new(gen.CoordinationNoticeMessage) },
 }
 
 func readJSON(t *testing.T, path string) any {

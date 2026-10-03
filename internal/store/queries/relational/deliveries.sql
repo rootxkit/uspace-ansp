@@ -184,12 +184,12 @@ RETURNING *;
 
 -- name: AcknowledgeAlarm :one
 -- A person's acknowledgement: it closes a failed or abandoned delivery's
--- alarm; a cisp_not_published or uss_notify_late alarm stays open until
--- what resolves it.
+-- alarm; a cisp_not_published, uss_notify_late or occurrence_undelivered
+-- alarm stays open until what resolves it.
 UPDATE delivery_alarms SET
     acknowledged_by = sqlc.arg(by), acknowledged_at = clock_timestamp(), ack_reason = sqlc.arg(reason),
-    cleared_at = CASE WHEN kind IN ('cisp_not_published', 'uss_notify_late') THEN cleared_at ELSE clock_timestamp() END,
-    clear_reason = CASE WHEN kind IN ('cisp_not_published', 'uss_notify_late') THEN clear_reason ELSE 'acknowledged' END
+    cleared_at = CASE WHEN kind IN ('cisp_not_published', 'uss_notify_late', 'occurrence_undelivered') THEN cleared_at ELSE clock_timestamp() END,
+    clear_reason = CASE WHEN kind IN ('cisp_not_published', 'uss_notify_late', 'occurrence_undelivered') THEN clear_reason ELSE 'acknowledged' END
 WHERE id = sqlc.arg(id) AND acknowledged_at IS NULL AND cleared_at IS NULL
 RETURNING *;
 

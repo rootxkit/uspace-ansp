@@ -137,8 +137,13 @@ func (o *Outbox) log() *slog.Logger {
 // anything is published) and returns its id; inserted is false when the
 // same job (kind, idempotency key, target) was queued before.
 func (o *Outbox) Enqueue(ctx context.Context, tx Tx, j Job) (string, bool, error) {
-	if !j.Kind.Valid() || j.Target == "" || j.Op == "" || j.RestrictionID == "" || j.AnspVersion < 1 || j.AnspRef == "" {
+	switch {
+	case !j.Kind.Valid() || j.Target == "" || j.Op == "":
 		return "", false, fmt.Errorf("an incomplete delivery job %+v", j)
+	case j.OfRestriction() && (j.RestrictionID == "" || j.AnspVersion < 1 || j.AnspRef == ""):
+		return "", false, fmt.Errorf("an incomplete delivery job %+v", j)
+	case !j.OfRestriction() && (j.RestrictionID != "" || j.AnspVersion != 0 || j.Subject == "" || j.Key == ""):
+		return "", false, fmt.Errorf("a job of no restriction needs its subject and key, and no version: %+v", j)
 	}
 	if len(j.Body) > o.Policy.MaxBodyBytes {
 		return "", false, fmt.Errorf("the body is %d bytes, more than %d", len(j.Body), o.Policy.MaxBodyBytes)

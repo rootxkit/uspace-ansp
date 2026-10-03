@@ -23,7 +23,11 @@
 // version queues its CISP publication in its own transaction; the worker
 // signs and sends it, the monitor raises cisp_not_published and the
 // degraded direct delivery, the heartbeat and the reconciliation keep
-// the CISP in step, and the delivery-signing key is in the JWKS.
+// the CISP in step, and the delivery-signing key is in the JWKS. It
+// serves the Annex V inbox (WP-10, cmd/api/wire_coord.go): notices with
+// their receipts, the person's acknowledgement, the escalation of the
+// silent ones, the console stream, and occurrence reports queued to the
+// authority through the outbox.
 package main
 
 import (
@@ -127,6 +131,11 @@ func run(ctx context.Context, args, environ []string, stdout io.Writer) int {
 		return 2
 	}
 	attachDeliver(rw, dw)
+	co, err := wireCoord(cfg, db, b, aw.guard.Sessions, ussps(cw.proj), dw, coordOptions{}, reg, logger)
+	if err != nil {
+		logger.Error("coordination inbox refused", slog.String("error", err.Error()))
+		return 2
+	}
 	// Every operation of api/openapi.yaml, behind its x-auth (WP-3).
 	sw, err := wireSources(db, b, reg, logger)
 	if err != nil {
@@ -137,12 +146,12 @@ func run(ctx context.Context, args, environ []string, stdout io.Writer) int {
 		logger.Error("live sessions refused", slog.String("error", err.Error()))
 		return 2
 	}
-	if _, err := mountAPI(mux, aw.guard, aw.handlers, rw.api, sw.api, cw.receiver, aw.realIP); err != nil {
+	if _, err := mountParts(mux, aw.guard, apiParts{auth: aw.handlers, rs: rw.api, src: sw.api, cis: cw.receiver, co: co.api}, aw.realIP); err != nil {
 		logger.Error("routes refused", slog.String("error", err.Error()))
 		return 2
 	}
 	checks = append(append(append(checks, aw.checks...), cw.checks...), dw.checks...)
-	for _, fn := range append(append(append(append(aw.run, rw.run...), sw.run...), cw.run...), dw.run...) {
+	for _, fn := range append(append(append(append(append(aw.run, rw.run...), sw.run...), cw.run...), dw.run...), co.run...) {
 		go fn(ctx)
 	}
 

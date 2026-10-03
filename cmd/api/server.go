@@ -45,24 +45,41 @@ type apiServer struct {
 	// cis is the CIS change-notification receiver (WP-7); nil while it
 	// is not configured, and the operation then answers 503.
 	cis http.Handler
+	// co is the coordination inbox and the occurrence outbox (WP-10);
+	// nil without the relational database (its operations answer 503).
+	co *coordAPI
 }
 
-func newAPIServer(h *auth.Handlers, rs *restrictionAPI, src *sourcesAPI, cisH http.Handler) apiServer {
+// apiParts are the served parts of api.
+type apiParts struct {
+	auth *auth.Handlers
+	rs   *restrictionAPI
+	src  *sourcesAPI
+	cis  http.Handler
+	co   *coordAPI
+}
+
+func newAPIServer(p apiParts) apiServer {
 	strict := gen.NewStrictHandlerWithOptions(gen.Unimplemented{}, nil, gen.StrictHTTPServerOptions{
 		RequestErrorHandlerFunc:  requestError,
 		ResponseErrorHandlerFunc: responseError,
 	})
-	return apiServer{ServerInterface: strict, auth: h, rs: rs, src: src, cis: cisH}
+	return apiServer{ServerInterface: strict, auth: p.auth, rs: p.rs, src: p.src, cis: p.cis, co: p.co}
 }
 
 // mountAPI registers every operation of api on mux through the
 // generated router, each behind its x-auth (auth.Routes), and returns
 // the routes or why they cannot be served.
-func mountAPI(mux *http.ServeMux, guard *auth.Guard, h *auth.Handlers, rs *restrictionAPI, src *sourcesAPI, cisH http.Handler,
+func mountAPI(mux *http.ServeMux, guard *auth.Guard, h *auth.Handlers, rs *restrictionAPI, cisH http.Handler,
 	middlewares ...func(http.Handler) http.Handler,
 ) (*auth.Routes, error) {
+	return mountParts(mux, guard, apiParts{auth: h, rs: rs, cis: cisH}, middlewares...)
+}
+
+// mountParts is mountAPI with every part, the coordination inbox too.
+func mountParts(mux *http.ServeMux, guard *auth.Guard, p apiParts, middlewares ...func(http.Handler) http.Handler) (*auth.Routes, error) {
 	rt := auth.NewRoutes(mux, process, guard, maxBodyBytes, operations(), middlewares...)
-	gen.HandlerWithOptions(newAPIServer(h, rs, src, cisH), gen.StdHTTPServerOptions{BaseRouter: rt, ErrorHandlerFunc: requestError})
+	gen.HandlerWithOptions(newAPIServer(p), gen.StdHTTPServerOptions{BaseRouter: rt, ErrorHandlerFunc: requestError})
 	err := rt.Err()
 	return rt, err
 }

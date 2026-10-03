@@ -59,6 +59,13 @@ type deliverWiring struct {
 	details *dss.Details
 	// dssClient is the DSS client, nil without ANSP_DSS_URL.
 	dssClient *dss.Client
+	// outbox, worker, tokens, policy and roots are what the occurrence
+	// outbox (WP-10, wireCoord) rides on.
+	outbox *deliver.Outbox
+	worker *deliver.Worker
+	tokens deliver.Tokens
+	policy deliver.Policy
+	roots  *x509.CertPool
 }
 
 // wireDeliver builds the outbox on the relational database and the bus:
@@ -98,7 +105,7 @@ func wireDeliver(cfg config.Config, db *store.Relational, b *bus.Bus, keys *auth
 		return nil, err
 	}
 	repo := store.DeliverRepo{DB: db}
-	w := &deliverWiring{api: &deliveryAPI{repo: repo, keys: keys}}
+	w := &deliverWiring{api: &deliveryAPI{repo: repo, keys: keys}, policy: pol, roots: roots}
 
 	var signer deliver.Signer
 	if cfg.DeliveryKeyFile == "" {
@@ -200,6 +207,7 @@ func wireDeliver(cfg config.Config, db *store.Relational, b *bus.Bus, keys *auth
 	}
 	channel := &deliver.DSS{Client: dc, Notifier: notifier, USSBaseURL: cfg.PublicBaseURL, Logger: dssLogger, Counters: counters}
 	worker := &deliver.Worker{Repo: repo, CISP: cisp, Direct: direct, DSS: channel, Outbox: outbox, Events: events, Policy: pol, Logger: logger, Counters: counters}
+	w.outbox, w.worker, w.tokens = outbox, worker, tokens
 	detailCounters := &core.Counters{}
 	if err := obs.Counters(reg, "", detailCounters); err != nil {
 		return nil, err

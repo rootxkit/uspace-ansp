@@ -294,7 +294,7 @@ func newDeliverStack(t *testing.T) *deliverStack {
 		go func() { defer wg.Done(); fn(runCtx) }()
 	}
 	mux := http.NewServeMux()
-	if _, err := mountAPI(mux, aw.guard, aw.handlers, rw.api, nil, nil, aw.realIP); err != nil {
+	if _, err := mountAPI(mux, aw.guard, aw.handlers, rw.api, nil, aw.realIP); err != nil {
 		t.Fatal(err)
 	}
 	s.api = httptest.NewServer(mux)
