@@ -187,3 +187,18 @@ additively within `/v1`. One line per work package.
   `constraint_reference` and in each version's `constraint`, relational
   migration `0060` (`dss_constraint_writes`, `dss_notifications`, the
   restriction's DSS standing) (PLAN section 15 row 41).
+- WP-11 console-restrictions: `web/`, the supervisor console on
+  `@rootxkit/uspace-ui` `0.1.0-rc.1` (pinned release tarball): sign-in
+  with mandatory MFA through the three-route BFF (`uspace_session`,
+  `uspace_csrf`, the enrolment QR at a first sign-in), the restrictions
+  list with the delivery state per channel and the open alarms live on
+  `/v1/restrictions/stream`, the map editor (polygon or circle, AMSL or
+  WGS84 with AGL shown unavailable, the API's problems on their fields,
+  the chain proposal for long windows), plan, activate, extend, end and
+  cancel each confirmed with what is sent to whom and a reason, the
+  restriction detail (versions, ED-318 feature, F3548 reference, alarms),
+  restriction requests by id with accept and decline, and the adapters
+  with disabled, silent and running told apart; `ka` and `en`
+  catalogues, the lint rules against a geometry import, a hard-coded
+  string and server code outside the BFF, vitest, a Playwright smoke run
+  against a fixture API, the web image's Dockerfile and the `web` CI job.
