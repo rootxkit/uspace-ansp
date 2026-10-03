@@ -391,6 +391,7 @@ func restrictionFromRow(row relational.RestrictionFullRow) (restriction.Restrict
 		EndedAtActual: utc(row.EndedAtActual), RequestID: row.RequestID, SupersedesID: row.SupersedesID,
 		PublishedVersion: row.PublishedVersion, DSSVersion: row.DssVersion, CISVersion: row.CisVersion,
 		Feature: row.Feature, Constraint: row.Constraint,
+		DSSState: row.DssState, DSSPendingSince: utc(row.DssPendingSince), DSSReference: row.DssReference, DSSPutVersion: row.DssPutVersion,
 	}
 	if row.DssConstraintID != nil {
 		out.DSSConstraintID = row.DssConstraintID.String()

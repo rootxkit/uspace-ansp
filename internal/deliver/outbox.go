@@ -150,7 +150,11 @@ func (o *Outbox) Enqueue(ctx context.Context, tx Tx, j Job) (string, bool, error
 		}
 		j.ID = restriction.NewULID(now)
 	}
-	ok, err := tx.Insert(ctx, j, o.Policy.MaxAttempts(), o.Policy.Window)
+	window := o.Policy.Window
+	if j.Window > 0 {
+		window = j.Window
+	}
+	ok, err := tx.Insert(ctx, j, o.Policy.MaxAttemptsIn(window), window)
 	if err != nil {
 		return "", false, err
 	}
@@ -183,16 +187,27 @@ func PublicationOp(op restriction.Op) string {
 	return ""
 }
 
-// EnqueueVersion queues the CISP publication of version v made by op,
-// in the transaction that wrote v.
+// EnqueueVersion queues what version v made by op is delivered as, in
+// the transaction that wrote v: its CISP publication (none for an
+// expiry, which the CISP judges on its own clock) and, in parallel (D6),
+// its DSS write (a put on an activation or extension, a delete on an end
+// or expiry; WP-9), with the restriction's DSS standing set to pending.
 func (o *Outbox) EnqueueVersion(ctx context.Context, tx Tx, v restriction.Version, op restriction.Op, policyVersion int64) error {
-	pop := PublicationOp(op)
-	if pop == "" {
+	if pop := PublicationOp(op); pop != "" {
+		if _, _, err := o.Enqueue(ctx, tx, Job{Kind: KindCISPPublish, RestrictionID: v.RestrictionID, AnspRef: v.AnspRef,
+			AnspVersion: v.Version, Op: pop, Target: TargetCISP, PolicyVersion: policyVersion}); err != nil {
+			return err
+		}
+	}
+	kind, dop := DSSOp(op)
+	if kind == "" {
 		return nil
 	}
-	_, _, err := o.Enqueue(ctx, tx, Job{Kind: KindCISPPublish, RestrictionID: v.RestrictionID, AnspRef: v.AnspRef,
-		AnspVersion: v.Version, Op: pop, Target: TargetCISP, PolicyVersion: policyVersion})
-	return err
+	if _, _, err := o.Enqueue(ctx, tx, Job{Kind: kind, RestrictionID: v.RestrictionID, AnspRef: v.AnspRef,
+		AnspVersion: v.Version, Op: dop, Target: TargetDSS, PolicyVersion: policyVersion}); err != nil {
+		return err
+	}
+	return tx.SettleDSS(ctx, v.RestrictionID, false)
 }
 
 // Committed publishes the queued rows of the committed versions; what it

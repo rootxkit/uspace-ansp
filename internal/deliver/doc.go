@@ -52,6 +52,17 @@
 // Reconciler, which re-queues every active restriction the CISP does not
 // hold at its current version.
 //
+// The DSS channel (WP-9, dss.go; internal/dss) rides the same outbox
+// beside the CISP publication and never waits for it (D6): dss_put on an
+// activation or extension and dss_delete on an end or expiry, queued in
+// the version's transaction, ordered per restriction as one channel; one
+// re-read of a stale ovn, then a failure with an alarm; what the DSS
+// accepted recorded with the attempt, and one uss_notify per subscriber
+// it named queued in the same transaction and published at once (a
+// notification still queued past NotifyLatency raises uss_notify_late).
+// The restriction's DSS standing (none, pending since T, written,
+// deleted, failed) is on restr.v1 and on the restriction.
+//
 // Every refusal, retry, cancellation and repaired gap is a counter
 // (E-09); the package logs only through the logger the process gives it.
 package deliver

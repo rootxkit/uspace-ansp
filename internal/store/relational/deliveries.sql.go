@@ -13,8 +13,8 @@ import (
 const acknowledgeAlarm = `-- name: AcknowledgeAlarm :one
 UPDATE delivery_alarms SET
     acknowledged_by = $1, acknowledged_at = clock_timestamp(), ack_reason = $2,
-    cleared_at = CASE WHEN kind = 'cisp_not_published' THEN cleared_at ELSE clock_timestamp() END,
-    clear_reason = CASE WHEN kind = 'cisp_not_published' THEN clear_reason ELSE 'acknowledged' END
+    cleared_at = CASE WHEN kind IN ('cisp_not_published', 'uss_notify_late') THEN cleared_at ELSE clock_timestamp() END,
+    clear_reason = CASE WHEN kind IN ('cisp_not_published', 'uss_notify_late') THEN clear_reason ELSE 'acknowledged' END
 WHERE id = $3 AND acknowledged_at IS NULL AND cleared_at IS NULL
 RETURNING id, kind, restriction_id, ansp_version, delivery_id, raised_at, since, detail, cleared_at, clear_reason, acknowledged_by, acknowledged_at, ack_reason
 `
@@ -26,7 +26,8 @@ type AcknowledgeAlarmParams struct {
 }
 
 // A person's acknowledgement: it closes a failed or abandoned delivery's
-// alarm; a cisp_not_published alarm stays open until what resolves it.
+// alarm; a cisp_not_published or uss_notify_late alarm stays open until
+// what resolves it.
 func (q *Queries) AcknowledgeAlarm(ctx context.Context, arg AcknowledgeAlarmParams) (DeliveryAlarm, error) {
 	row := q.db.QueryRow(ctx, acknowledgeAlarm, arg.By, arg.Reason, arg.ID)
 	var i DeliveryAlarm
@@ -197,7 +198,8 @@ WHERE d.id = $3 AND d.state = 'queued'
   AND d.next_retry_at <= clock_timestamp()
   AND NOT EXISTS (
       SELECT 1 FROM deliveries p
-      WHERE p.kind = d.kind AND p.restriction_id = d.restriction_id AND p.target = d.target
+      WHERE (p.kind = d.kind OR (p.kind IN ('dss_put', 'dss_delete') AND d.kind IN ('dss_put', 'dss_delete')))
+        AND p.restriction_id = d.restriction_id AND p.target = d.target
         AND p.ansp_version < d.ansp_version AND p.state = 'queued')
 RETURNING d.id, d.kind, d.subject_ref, d.restriction_id, d.ansp_version, d.op, d.target, d.idempotency_key, d.state,
           d.attempt, d.max_attempts, d.queued_at, d.window_ends_at, d.next_retry_at, d.bus_seq, d.last_attempt_at,
@@ -240,7 +242,8 @@ type ClaimDeliveryRow struct {
 }
 
 // Leases a queued, due row whose earlier versions to the same target
-// are settled, for one attempt.
+// are settled, for one attempt. The DSS writes of a restriction (put and
+// delete) are one channel: a delete waits for the put before it (WP-9).
 func (q *Queries) ClaimDelivery(ctx context.Context, arg ClaimDeliveryParams) (ClaimDeliveryRow, error) {
 	row := q.db.QueryRow(ctx, claimDelivery, arg.Token, arg.LeaseS, arg.ID)
 	var i ClaimDeliveryRow
@@ -431,7 +434,8 @@ SELECT d.state, d.lease_until, d.next_retry_at, clock_timestamp()::timestamptz A
        -- the epoch when nothing earlier is queued
        COALESCE((SELECT min(GREATEST(p.next_retry_at, COALESCE(p.lease_until, p.next_retry_at)))
         FROM deliveries p
-        WHERE p.kind = d.kind AND p.restriction_id = d.restriction_id AND p.target = d.target
+        WHERE (p.kind = d.kind OR (p.kind IN ('dss_put', 'dss_delete') AND d.kind IN ('dss_put', 'dss_delete')))
+          AND p.restriction_id = d.restriction_id AND p.target = d.target
           AND p.ansp_version < d.ansp_version AND p.state = 'queued'), 'epoch'::timestamptz)::timestamptz AS blocked_until
 FROM deliveries d WHERE d.id = $1
 `
@@ -462,6 +466,7 @@ func (q *Queries) DeliveryClaimState(ctx context.Context, id string) (DeliveryCl
 const deliveryVersion = `-- name: DeliveryVersion :one
 SELECT r.id, r.ansp_ref, r.identifier, r.uspace_airspace_id, r.state AS current_state, r.ansp_version AS current_version,
        r.published_version, v.version, v.state, v.starts_at, v.ends_at, v.feature::text AS feature, v.changed_at,
+       r.dss_state, r.dss_pending_since, r.dss_put_version, r.dss_version,
        COALESCE((SELECT p.state::text FROM restriction_versions p
                  WHERE p.restriction_id = r.id AND p.version = v.version - 1), '')::text AS prev_state
 FROM restrictions r
@@ -489,6 +494,10 @@ type DeliveryVersionRow struct {
 	EndsAt           time.Time
 	Feature          string
 	ChangedAt        time.Time
+	DssState         string
+	DssPendingSince  *time.Time
+	DssPutVersion    *int64
+	DssVersion       *int64
 	PrevState        string
 }
 
@@ -512,6 +521,10 @@ func (q *Queries) DeliveryVersion(ctx context.Context, arg DeliveryVersionParams
 		&i.EndsAt,
 		&i.Feature,
 		&i.ChangedAt,
+		&i.DssState,
+		&i.DssPendingSince,
+		&i.DssPutVersion,
+		&i.DssVersion,
 		&i.PrevState,
 	)
 	return i, err

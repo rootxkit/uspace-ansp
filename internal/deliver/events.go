@@ -78,6 +78,7 @@ type outcomeBody struct {
 	Published  *bool      `json:"published,omitempty"`
 	Alarm      *AlarmBody `json:"alarm,omitempty"`
 	Deliveries *Summary   `json:"deliveries,omitempty"`
+	DSS        *DSSStatus `json:"dss,omitempty"`
 }
 
 // Events puts delivery outcomes on restr.v1 (the console stream and the
@@ -103,6 +104,13 @@ func (e *Events) count(name string) {
 // Published says the CISP confirmed version of rid.
 func (e *Events) Published(ctx context.Context, rid string, version int64) {
 	e.emit(ctx, rid, "published."+itoa(version), nil)
+}
+
+// DSS says the restriction's standing in the DSS changed (written,
+// deleted, or pending since T while the DSS does not answer); suffix
+// makes the message id unique.
+func (e *Events) DSS(ctx context.Context, rid, suffix string) {
+	e.emit(ctx, rid, suffix, nil)
 }
 
 // Alarm says a changed (raised, cleared or acknowledged).
@@ -132,6 +140,10 @@ func (e *Events) emit(ctx context.Context, rid, suffix string, alarm *AlarmBody)
 		return
 	}
 	sum := Summarise(rows)
+	dssStatus := v.DSS
+	if dssStatus.State == "" {
+		dssStatus.State = DSSNone
+	}
 	published := v.PublishedVersion != nil && *v.PublishedVersion >= v.CurrentVersion
 	now := time.Now()
 	if e.Now != nil {
@@ -145,7 +157,7 @@ func (e *Events) emit(ctx context.Context, rid, suffix string, alarm *AlarmBody)
 		Body: outcomeBody{StateBody: restriction.StateBody{
 			RestrictionID: rid, AnspRef: v.AnspRef, State: state, StartsAt: restriction.Stamp(v.StartsAt),
 			EndsAt: restriction.Stamp(v.EndsAt), AnspVersion: v.CurrentVersion, Feature: v.Feature,
-		}, Published: &published, Alarm: alarm, Deliveries: &sum},
+		}, Published: &published, Alarm: alarm, Deliveries: &sum, DSS: &dssStatus},
 	})
 	if err != nil {
 		e.fail(rid, err)

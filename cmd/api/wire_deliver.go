@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/x509"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -21,6 +22,7 @@ import (
 	"github.com/rootxkit/uspace-ansp/internal/cis"
 	"github.com/rootxkit/uspace-ansp/internal/config"
 	"github.com/rootxkit/uspace-ansp/internal/deliver"
+	"github.com/rootxkit/uspace-ansp/internal/dss"
 	"github.com/rootxkit/uspace-ansp/internal/obs"
 	"github.com/rootxkit/uspace-ansp/internal/restriction"
 	"github.com/rootxkit/uspace-ansp/internal/store"
@@ -30,6 +32,9 @@ import (
 const (
 	depCISPPublisher = "cisp_publisher"
 	depDeliveryKey   = "delivery_key"
+	// depDSS is the DSS (WP-9): ok, or unreachable since T; a DSS
+	// outage never holds the CISP publication (D6).
+	depDSS = "dss"
 )
 
 // workerConsumer is the durable pull consumer every api replica shares
@@ -50,6 +55,8 @@ type deliverWiring struct {
 	api    *deliveryAPI
 	checks []obs.Check
 	run    []func(ctx context.Context)
+	// dssClient is the DSS client, nil without ANSP_DSS_URL.
+	dssClient *dss.Client
 }
 
 // wireDeliver builds the outbox on the relational database and the bus:
@@ -169,7 +176,33 @@ func wireDeliver(cfg config.Config, db *store.Relational, b *bus.Bus, keys *auth
 	events := &deliver.Events{Repo: repo, Bus: pub, Producer: producer, Logger: logger, Counters: counters}
 	w.hook = deliver.RestrictionHook{Outbox: outbox, TxOf: store.DeliverTxOf}
 	w.api.alarms = &deliver.Alarms{Repo: repo, Events: events, Logger: logger, Counters: counters}
-	worker := &deliver.Worker{Repo: repo, CISP: cisp, Direct: direct, Events: events, Policy: pol, Logger: logger, Counters: counters}
+	dssLogger := logger.With(slog.String("component", "dss"))
+	var dc *dss.Client
+	if cfg.DSSURL != "" {
+		dc = &dss.Client{BaseURL: cfg.DSSURL, HTTP: deliver.NewHTTPClient(pol.HTTPTimeout, nil, roots), MaxResponseBytes: pol.MaxDSSResponseBytes,
+			MaxSubscribers: pol.MaxSubscribers, ExcerptBytes: pol.ExcerptBytes, MaxRetryAfter: pol.BackoffMax}
+		if tokens != nil {
+			dc.Tokens = tokens
+		} else {
+			dssLogger.Error("no token client (ANSP_TOKEN_URL, ANSP_CLIENT_SECRET_FILE): every DSS write is retried and alarmed")
+		}
+	} else {
+		dssLogger.Error("no DSS (ANSP_DSS_URL): constraint references are queued with every activation, extension and end, retried and alarmed, never written; the CISP publication is not held (D6)")
+	}
+	if cfg.PublicBaseURL == "" {
+		dssLogger.Error("no ANSP_PUBLIC_BASE_URL: a constraint reference has no uss_base_url; the DSS writes wait")
+	}
+	notifier := &dss.Notifier{HTTP: deliver.NewHTTPClient(pol.HTTPTimeout, nil, roots), ExcerptBytes: pol.ExcerptBytes, MaxResponseBytes: int(pol.MaxResponseBytes)}
+	if tokens != nil {
+		notifier.Tokens = tokens
+	}
+	channel := &deliver.DSS{Client: dc, Notifier: notifier, USSBaseURL: cfg.PublicBaseURL, Logger: dssLogger, Counters: counters}
+	worker := &deliver.Worker{Repo: repo, CISP: cisp, Direct: direct, DSS: channel, Outbox: outbox, Events: events, Policy: pol, Logger: logger, Counters: counters}
+	w.dssClient = dc
+	w.checks = append(w.checks, obs.Check{Name: depDSS, Probe: dssProbe(dc, repo)})
+	if dc != nil {
+		w.run = append(w.run, func(ctx context.Context) { runDSSPing(ctx, dc, pol.DSSPingEvery, dssLogger) })
+	}
 
 	cached := &cachedPolicy{latest: store.PolicyRepo{DB: db}.Latest}
 	monitor := &deliver.Monitor{Repo: repo, Outbox: outbox, Events: events, Policy: pol, PublicBase: issuer, Logger: logger, Counters: counters,
@@ -209,6 +242,52 @@ func attachDeliver(rw *restrictionWiring, dw *deliverWiring) {
 	}
 	rw.api.svc.Outbox = dw.hook
 	rw.api.dl = dw.api
+}
+
+// dssProbe is the readiness line dss: ok, or unreachable since T (never
+// "lost": the writes are queued and retried), with the writes waiting;
+// down when no DSS is configured.
+func dssProbe(c *dss.Client, repo deliver.Repo) func(ctx context.Context) (obs.State, string) {
+	return func(ctx context.Context) (obs.State, string) {
+		backlog := ""
+		if n, oldest, err := repo.DSSBacklog(ctx); err != nil {
+			backlog = "; the DSS writes waiting are unknown"
+		} else if n > 0 && oldest != nil {
+			backlog = fmt.Sprintf("; %d DSS writes waiting, pending since %s", n, restriction.Stamp(*oldest))
+		}
+		if c == nil {
+			return obs.StateDown, "ANSP_DSS_URL is not set: constraint references are queued and alarmed, never written" + backlog
+		}
+		h := c.Health()
+		switch {
+		case !h.Known:
+			return obs.StateDegraded, "no DSS answer yet" + backlog
+		case !h.Up:
+			return obs.StateDown, fmt.Sprintf("unreachable since %s (%s); constraint writes are queued and retried, the CISP publication is not held",
+				restriction.Stamp(h.Since), h.Reason) + backlog
+		}
+		return obs.StateOK, "ok (last answer at " + restriction.Stamp(h.Last) + ")" + backlog
+	}
+}
+
+// runDSSPing reads the DSS's reachability at start and every period, so
+// the readiness line knows the DSS before and between writes.
+func runDSSPing(ctx context.Context, c *dss.Client, every time.Duration, logger *slog.Logger) {
+	t := time.NewTicker(every)
+	defer t.Stop()
+	for {
+		pctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		err := c.Ping(pctx)
+		cancel()
+		if err != nil && ctx.Err() == nil {
+			logger.Warn("dss: the DSS did not answer the reachability read", slog.String("error", err.Error()))
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+		}
+	}
 }
 
 func seconds(s float64) time.Duration { return time.Duration(s * float64(time.Second)) }
