@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
@@ -158,6 +159,45 @@ func TestCachedPolicy(t *testing.T) {
 	}
 	if (&cachedPolicy{}).get(context.Background()) != policy.Defaults() {
 		t.Fatal("no database: not the defaults")
+	}
+}
+
+// The console streams read the policy through the cache: three status
+// frames, one database read (ansp audit N-6); a failed read past the
+// cache period still says policy_unreadable (the degraded twin).
+func TestStreamsReadTheCachedPolicy(t *testing.T) {
+	calls, fail := 0, false
+	c := &cachedPolicy{latest: func(context.Context) (policy.Policy, error) {
+		calls++
+		if fail {
+			return policy.Policy{}, errors.New("db down")
+		}
+		return policy.Policy{Version: 4, Thresholds: policy.Defaults()}, nil
+	}}
+	st := newRestrictionStream(&restriction.Service{Airspaces: restriction.NoProjection{}}, c.policy, nil, producer)
+	cl := &streamClient{send: make(chan []byte, 1)}
+	for range 3 {
+		var env struct {
+			Body statusBody `json:"body"`
+		}
+		_ = json.Unmarshal(st.status(context.Background(), "conn-1", cl), &env)
+		if env.Body.PolicyVersion != "4" {
+			t.Fatalf("%+v", env.Body)
+		}
+	}
+	if calls != 1 {
+		t.Fatalf("%d policy reads for 3 status frames", calls)
+	}
+	c.mu.Lock()
+	c.atPolicy = time.Now().Add(-2 * policyCacheFor)
+	c.mu.Unlock()
+	fail = true
+	var env struct {
+		Body statusBody `json:"body"`
+	}
+	_ = json.Unmarshal(st.status(context.Background(), "conn-1", cl), &env)
+	if !contains(env.Body.Degraded, "policy_unreadable") {
+		t.Fatalf("%+v", env.Body)
 	}
 }
 

@@ -54,6 +54,10 @@ type cachedPolicy struct {
 	at   time.Time
 	have policy.Thresholds
 	ok   bool
+	// The whole row, for the streams' status frames (policy).
+	atPolicy   time.Time
+	havePolicy policy.Policy
+	okPolicy   bool
 }
 
 func (c *cachedPolicy) get(ctx context.Context) policy.Thresholds {
@@ -75,6 +79,29 @@ func (c *cachedPolicy) get(ctx context.Context) policy.Thresholds {
 		return c.have
 	}
 	return policy.Defaults()
+}
+
+// policy is the newest ansp_policy row, read at most every
+// policyCacheFor (the console streams' status frames, ansp audit N-6);
+// a failed read past the cache period is an error, which the frame
+// says (policy_unreadable).
+func (c *cachedPolicy) policy(ctx context.Context) (policy.Policy, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.okPolicy && time.Since(c.atPolicy) < policyCacheFor {
+		return c.havePolicy, nil
+	}
+	if c.latest == nil {
+		return policy.Policy{}, errors.New("no policy store")
+	}
+	qctx, cancel := context.WithTimeout(ctx, time.Second)
+	p, err := c.latest(qctx)
+	cancel()
+	if err != nil {
+		return policy.Policy{}, err
+	}
+	c.havePolicy, c.okPolicy, c.atPolicy = p, true, time.Now()
+	return p, nil
 }
 
 // projectionAirspaces is restriction.Airspaces on the projection.
