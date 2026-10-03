@@ -68,7 +68,7 @@ func newDSSHarness(t *testing.T) *dssHarness {
 	pol := h.outbox.Policy
 	client := NewHTTPClient(pol.HTTPTimeout, nil, nil)
 	h.worker.DSS = &DSS{Client: &dss.Client{BaseURL: h.dss.URL(), HTTP: client, Tokens: h.tokens, MaxSubscribers: pol.MaxSubscribers},
-		Notifier: &dss.Notifier{HTTP: client, Tokens: h.tokens}, USSBaseURL: "https://ansp.test", Logger: h.worker.Logger, Counters: h.counters}
+		Notifier: &dss.Notifier{HTTP: client, Tokens: h.tokens, AllowPrivate: true}, USSBaseURL: "https://ansp.test", Logger: h.worker.Logger, Counters: h.counters}
 	h.worker.Outbox = h.outbox
 	h.monitor = &Monitor{Repo: h.repo, Outbox: h.outbox, Events: h.events, Policy: pol, Logger: h.worker.Logger, Counters: h.counters,
 		AlarmAfter: func(context.Context) time.Duration { return time.Hour }}
@@ -479,6 +479,34 @@ func TestDSSNotificationSupersededAndRefused(t *testing.T) {
 	h.deliver(nb)
 	if r := h.repo.row(nb); r.State != StateFailed {
 		t.Fatalf("%+v", r.Delivery)
+	}
+}
+
+// A subscriber whose uss_base_url is not https on a public address
+// (here loopback http, with private targets not allowed) is refused
+// before any request: failed at once with one alarm, counted, never
+// retried for the notification window (ansp audit S-2). Its twin is
+// every notification test above, with private targets allowed.
+func TestDSSNotificationToANonPublicTargetFails(t *testing.T) {
+	h := newDSSHarness(t)
+	h.worker.DSS.Notifier.AllowPrivate = false
+	h.deliver(h.step(2, "active", restriction.OpActivate, testStart.Add(4*time.Hour)))
+	nb := h.notifyJobs(2)[h.ussB.URL()]
+	m := h.deliver(nb)
+	if r := h.repo.row(nb); r.State != StateFailed || r.Attempt != 1 || !m.acked || !strings.Contains(r.LastError, "public address") {
+		t.Fatalf("%+v", r.Delivery)
+	}
+	if len(h.ussB.Requests()) != 0 || h.counters.Get(CounterNotifyTargetRefused) != 1 {
+		t.Fatalf("requests %d, counters %v", len(h.ussB.Requests()), h.counters.Snapshot())
+	}
+	alarms := 0
+	for _, a := range h.repo.alarms {
+		if a.DeliveryID == nb && a.Kind == AlarmFailed {
+			alarms++
+		}
+	}
+	if alarms != 1 {
+		t.Fatalf("alarms %+v", h.repo.alarms)
 	}
 }
 

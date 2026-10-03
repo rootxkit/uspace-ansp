@@ -70,6 +70,9 @@ const (
 	CounterNotifyLate            = "deliver_uss_notify_late"
 	CounterNotifySent            = "deliver_uss_notify_sent"
 	CounterNotifySuperseded      = "deliver_uss_notify_superseded"
+	// CounterNotifyTargetRefused counts notifications whose uss_base_url
+	// is not https on a public address: failed at once, alarmed.
+	CounterNotifyTargetRefused = "deliver_uss_notify_target_refused"
 )
 
 // DSSStatus is a restriction's standing in the DSS: the dss member of
@@ -426,7 +429,17 @@ func (c *DSS) notify(ctx context.Context, repo Repo, d *Delivery, token string, 
 	if c == nil || c.Notifier == nil {
 		return sent{resp: Response{Err: "no subscriber notifier configured"}, verdict: verdict(Retry)}, nil
 	}
-	r := responseOf(c.Notifier.Notify(ctx, d.Target, d.Body))
+	call := c.Notifier.Notify(ctx, d.Target, d.Body)
+	r := responseOf(call)
+	if call.Refused {
+		// Not https on a public address: no retry changes that, and a
+		// participant-written uss_base_url is never retried towards this
+		// system's own network (ansp audit S-2). One failure, one alarm.
+		c.count(CounterNotifyTargetRefused)
+		c.log().Error("dss: a subscriber's uss_base_url is refused; the notification is failed and alarmed",
+			slog.String("delivery_id", d.ID), slog.String("error", r.Err))
+		return sent{resp: r, verdict: verdict(Permanent)}, nil
+	}
 	if r.Status == http.StatusConflict {
 		// The standard's 409: the subscriber holds a newer notification
 		// of the constraint; this one will never be taken.

@@ -36,6 +36,9 @@ type Call struct {
 	RetryAfter time.Duration
 	// Err is the transport or local failure, without a token or a body.
 	Err string
+	// Refused is a notification target refused before any request (not
+	// https on a public address): no retry changes it.
+	Refused bool
 }
 
 // The kinds of failure of a DSS call (errors.Is on the *Error).

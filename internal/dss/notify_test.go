@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -69,7 +71,7 @@ func TestNotifier(t *testing.T) {
 	u := dsstest.NewUSS()
 	defer u.Close()
 	tk := &tokens{}
-	n := &Notifier{HTTP: noRedirect(), Tokens: tk}
+	n := &Notifier{HTTP: noRedirect(), Tokens: tk, AllowPrivate: true}
 	call := n.Notify(context.Background(), u.URL(), []byte(`{"constraint_id":"x","subscriptions":[]}`))
 	if call.Status != http.StatusNoContent || call.Err != "" {
 		t.Fatalf("%+v", call)
@@ -89,14 +91,60 @@ func TestNotifier(t *testing.T) {
 	if call := n.Notify(context.Background(), "not a url", nil); !strings.HasPrefix(call.Err, "target") {
 		t.Fatalf("%+v", call)
 	}
-	if call := (&Notifier{HTTP: noRedirect()}).Notify(context.Background(), u.URL(), nil); !strings.Contains(call.Err, "no token client") {
+	if call := (&Notifier{HTTP: noRedirect(), AllowPrivate: true}).Notify(context.Background(), u.URL(), nil); !strings.Contains(call.Err, "no token client") {
 		t.Fatalf("%+v", call)
 	}
-	if call := (&Notifier{HTTP: noRedirect(), Tokens: &tokens{err: errors.New("x")}}).Notify(context.Background(), u.URL(), nil); !strings.HasPrefix(call.Err, "token") {
+	if call := (&Notifier{HTTP: noRedirect(), Tokens: &tokens{err: errors.New("x")}, AllowPrivate: true}).Notify(context.Background(), u.URL(), nil); !strings.HasPrefix(call.Err, "token") {
 		t.Fatalf("%+v", call)
 	}
 	u.Close()
 	if call := n.Notify(context.Background(), u.URL(), nil); call.Status != 0 || call.Err == "" {
 		t.Fatalf("closed: %+v", call)
+	}
+}
+
+// A uss_base_url is whatever a DSS participant wrote: without
+// AllowPrivate (production) a notification goes only to https on a
+// public address, checked on the literal and again at dial time on the
+// resolved address, and a refused target is reported Refused with no
+// request and no token asked (ansp audit S-2). Its twin: the same
+// loopback subscriber is notified when AllowPrivate is set (above).
+func TestNotifierRefusesNonPublicTargets(t *testing.T) {
+	u := dsstest.NewUSS()
+	defer u.Close()
+	tls := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) }))
+	defer tls.Close()
+	_, port, _ := net.SplitHostPort(strings.TrimPrefix(tls.URL, "https://"))
+	tk := &tokens{}
+	client := tls.Client()
+	GuardTransport(client)
+	n := &Notifier{HTTP: client, Tokens: tk}
+	for _, base := range []string{
+		u.URL(),                      // http
+		"http://10.0.0.5:9200",       // http, RFC 1918
+		"https://169.254.169.254",    // link-local (metadata)
+		"https://10.1.2.3",           // RFC 1918
+		"https://[fd00::1]",          // ULA
+		"https://[::ffff:127.0.0.1]", // mapped loopback
+		tls.URL,                      // https, loopback literal
+		"https://localhost:" + port,  // https, a name that resolves to loopback
+	} {
+		call := n.Notify(context.Background(), base, []byte(`{}`))
+		if !call.Refused || call.Status != 0 || !strings.HasPrefix(call.Err, "target") {
+			t.Fatalf("%s: %+v", base, call)
+		}
+	}
+	if len(u.Requests()) != 0 || len(tk.asked()) != 0 {
+		t.Fatalf("a refused target was called: %d requests, tokens %v", len(u.Requests()), tk.asked())
+	}
+	for _, a := range []string{"93.184.216.34:443", "[2606:2800:220:1:248:1893:25c8:1946]:443"} {
+		if err := refuseNonPublic("tcp", a, nil); err != nil {
+			t.Fatalf("%s: %v", a, err)
+		}
+	}
+	for _, a := range []string{"127.0.0.1:443", "[::1]:443", "192.168.1.1:443", "100.64.0.1:443", "0.0.0.0:443", "224.0.0.1:443"} {
+		if err := refuseNonPublic("tcp", a, nil); !errors.Is(err, ErrTargetRefused) {
+			t.Fatalf("%s: %v", a, err)
+		}
 	}
 }
