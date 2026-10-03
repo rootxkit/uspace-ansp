@@ -453,7 +453,7 @@ func TestDSSSubscriberRetriedAndLateAlarm(t *testing.T) {
 
 // A notification still queued when the DSS names the subscriber for a
 // newer version is superseded by the newer one (its rows cancelled); a
-// subscriber's 409 (it holds a newer one) fails it at once.
+// subscriber's 409 (it holds a newer one) settles it as superseded there.
 func TestDSSNotificationSupersededAndRefused(t *testing.T) {
 	h := newDSSHarness(t)
 	h.ussB.Answer(func(int, dsstest.Request) int { return http.StatusServiceUnavailable })
@@ -476,9 +476,21 @@ func TestDSSNotificationSupersededAndRefused(t *testing.T) {
 	}
 	h.ussB.Answer(func(int, dsstest.Request) int { return http.StatusConflict })
 	nb := h.notifyJobs(3)[h.ussB.URL()]
-	h.deliver(nb)
-	if r := h.repo.row(nb); r.State != StateFailed {
+	alarms := len(h.repo.alarms)
+	m := h.deliver(nb)
+	// The standard's 409: the subscriber holds a newer notification, a
+	// normal condition; settled at once as superseded there, no alarm a
+	// person must acknowledge (ansp audit N-5).
+	if r := h.repo.row(nb); r.State != StateCancelled || r.CancelReason != CancelSupersededAtSubscriber || !m.acked {
 		t.Fatalf("%+v", r.Delivery)
+	}
+	if len(h.repo.alarms) != alarms || len(h.ussB.Requests()) == 0 {
+		t.Fatalf("alarms %+v", h.repo.alarms)
+	}
+	for _, n := range h.repo.notificationRows() {
+		if n.DeliveryID == nb && n.status != StateCancelled {
+			t.Fatalf("%+v", n)
+		}
 	}
 }
 

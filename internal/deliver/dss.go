@@ -41,6 +41,10 @@ const (
 	// newer carries the state (the subscriber sees the gap in
 	// notification_index and reads the details).
 	CancelSupersededByNewer = "superseded_by_newer"
+	// CancelSupersededAtSubscriber: the subscriber answered 409, it holds
+	// a newer notification of the constraint (the standard's normal
+	// case); nothing is left to deliver.
+	CancelSupersededAtSubscriber = "superseded_at_subscriber"
 )
 
 // AlarmNotifyLate is a subscriber notification not delivered within
@@ -442,8 +446,9 @@ func (c *DSS) notify(ctx context.Context, repo Repo, d *Delivery, token string, 
 	}
 	if r.Status == http.StatusConflict {
 		// The standard's 409: the subscriber holds a newer notification
-		// of the constraint; this one will never be taken.
-		return sent{resp: r, verdict: verdict(Permanent)}, nil
+		// of the constraint; this one will never be taken, and nothing is
+		// wrong (ansp audit N-5): settled, not failed and alarmed.
+		return sent{cancel: CancelSupersededAtSubscriber}, nil
 	}
 	return sent{resp: r}, nil
 }
