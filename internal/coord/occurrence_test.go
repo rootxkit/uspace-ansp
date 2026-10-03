@@ -97,7 +97,9 @@ type authorityStub struct {
 	hdr  []http.Header
 	code int
 	echo bool
-	srv  *httptest.Server
+	// reply, when set, is written as the answer.
+	reply []byte
+	srv   *httptest.Server
 }
 
 func newAuthority(t *testing.T) *authorityStub {
@@ -107,9 +109,12 @@ func newAuthority(t *testing.T) *authorityStub {
 		b, _ := io.ReadAll(r.Body)
 		a.mu.Lock()
 		a.got, a.hdr = append(a.got, b), append(a.hdr, r.Header.Clone())
-		code, echo := a.code, a.echo
+		code, echo, reply := a.code, a.echo, a.reply
 		a.mu.Unlock()
 		w.WriteHeader(code)
+		if reply != nil {
+			_, _ = w.Write(reply)
+		}
 		if echo {
 			_, _ = w.Write(b)
 		}
@@ -201,12 +206,17 @@ func TestOccurrenceCreateAndSend(t *testing.T) {
 	if strings.Contains(string(f.auth.got[0]), "acct-3") || f.auth.hdr[0].Get("Authorization") != "Bearer tok" || f.tokens.scope != deliver.ScopeOccurrences {
 		t.Fatal("a name or the wrong credential")
 	}
-	// An authority that echoes the body never returns the reference into
-	// the delivery log.
-	f.auth.echo, f.auth.code = true, http.StatusBadRequest
-	resp = f.occ.SendOccurrence(context.Background(), deliver.Delivery{ID: j.ID})
-	if strings.Contains(resp.Excerpt, "staff-0042") || !strings.Contains(resp.Excerpt, redacted) {
-		t.Fatalf("%+v", resp)
+	// An authority that echoes the body, byte-identical, JSON-escaped or
+	// percent-encoded, never returns the reference into the delivery log:
+	// nothing of an occurrence answer is kept but its status code
+	// (ansp audit S-7).
+	f.auth.code = http.StatusBadRequest
+	for _, reply := range []string{"", `{"detail":"staff-0042"}`, `{"detail":"staff%2D0042"}`, `{"detail":"staff-004"}`} {
+		f.auth.echo, f.auth.reply = reply == "", []byte(reply)
+		resp = f.occ.SendOccurrence(context.Background(), deliver.Delivery{ID: j.ID})
+		if resp.Status != http.StatusBadRequest || resp.Excerpt != "" || resp.Err != "" {
+			t.Fatalf("%q: %+v", reply, resp)
+		}
 	}
 }
 

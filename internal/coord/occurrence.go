@@ -360,14 +360,10 @@ type OccurrenceMessage struct {
 	ReportedAt    string          `json:"reported_at"`
 }
 
-// redacted stands for the reporter's reference in what the authority
-// answered, should it echo it.
-const redacted = "[reporter reference]"
-
 // SendOccurrence is one attempt of an occurrence job: the report read
 // by its delivery, the reporter reference opened, the occurrence/v1 body
-// posted to the authority. The reference never leaves in the answer's
-// excerpt or error.
+// posted to the authority. No excerpt of the answer is returned, so the
+// reference never reaches the delivery log.
 func (o *Occurrences) SendOccurrence(ctx context.Context, d deliver.Delivery) deliver.Response {
 	rec, err := o.Repo.OccurrenceByDelivery(ctx, d.ID)
 	if err != nil {
@@ -395,10 +391,11 @@ func (o *Occurrences) SendOccurrence(ctx context.Context, d deliver.Delivery) de
 		return deliver.Response{Err: "no authority configured (ANSP_AUTHORITY_URL)"}
 	}
 	resp := o.Authority.Post(ctx, deliver.PathOccurrences, body)
-	if person != "" {
-		resp.Excerpt = strings.ReplaceAll(resp.Excerpt, person, redacted)
-		resp.Err = strings.ReplaceAll(resp.Err, person, redacted)
-	}
+	// Nothing the authority answered is kept, only its status code: an
+	// echo of the reporter reference, escaped, encoded or cut, would
+	// survive any redaction (ansp audit S-7). resp.Err is this system's
+	// own transport reason and never carries what the peer sent.
+	resp.Excerpt = ""
 	return resp
 }
 
