@@ -155,6 +155,22 @@ additively within `/v1`. One line per work package.
   /v1/delivery-alarms/{id}/acknowledge`, `published` and `alarm` on
   `restriction/state/v1`, the deliveries summary on every restriction,
   and `api/outbound.md` (PLAN section 15 rows 39, 40).
+- WP-10 coordination-inbox: `internal/coord` (the Annex V intake
+  `POST /v1/coordination/notices`, M2: the sender judged against the CIS
+  USSP list, 403 with an audit row, or accepted as `sender_unverified`
+  while no list is projected; the body checked member by member through
+  uspace-core's f3548 checks and bounded; the restrictions its volumes
+  intersect recorded; 202 with the receipt after the commit, 200 for a
+  repeat, 409 for a reused `notice_ref`; the two-state acknowledgement by
+  a watch supervisor, read by the sender as a role; the escalation of an
+  unacknowledged nonconformance or contingent notice after
+  `notice_escalation_s` and every 30 s, kept on the row; coord.v1 and
+  `GET /v1/coordination/stream` with `coordination/notice/v1`, owned here
+  and settling PLAN row 24; the audited inbox; occurrence reports with
+  the reporter reference sealed at rest and sent in clear to the
+  authority through the outbox, and `occurrence_undelivered` at 60 h),
+  `migrations/relational/0070` (`coordination_notices`,
+  `occurrence_reports`), `FuzzAnnexVNotice` and `FuzzOccurrence`.
 - WP-9 dss-constraints: `internal/dss` (the F3548 constraint manager:
   the DSS client for `PUT`, `DELETE` and `GET
   /dss/v1/constraint_references/...` with `ovn` handling and typed
