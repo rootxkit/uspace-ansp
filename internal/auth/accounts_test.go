@@ -83,6 +83,41 @@ func TestSignInEnrolsThenSession(t *testing.T) {
 	}
 }
 
+// The first enrolment and a later sign-in, a wrong code and a failed
+// password take every lockout-row lock before their first audit event
+// (ansp audit S-6: an enrolment that audited, then cleared the lockout
+// row, deadlocked against a failed sign-in holding the row). Twin: the
+// recorder sees the row locks the failure path takes before its audit.
+func TestRowLocksBeforeTheAudit(t *testing.T) {
+	w := newWorld(t)
+	w.addUser(t, "sup1", pw, RoleWatchSupervisor)
+	_, secret := w.signIn(t, "sup1", pw)
+	w.clock.Add(TOTPPeriod)
+	lr, err := w.accounts.Login(context.Background(), "sup1", pw, RequestInfo{})
+	must(t, err)
+	wrong := "000000"
+	if wrong == w.code(t, secret) {
+		wrong = "111111"
+	}
+	if _, err := w.accounts.VerifyMFA(context.Background(), lr.MFAToken, wrong, RequestInfo{}); err == nil {
+		t.Fatal("a wrong code accepted")
+	}
+	if _, err := w.accounts.VerifyMFA(context.Background(), lr.MFAToken, w.code(t, secret), RequestInfo{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.accounts.Login(context.Background(), "sup1", "wrong-password", RequestInfo{}); err == nil {
+		t.Fatal("a wrong password accepted")
+	}
+	w.store.mu.Lock()
+	defer w.store.mu.Unlock()
+	if len(w.store.lockAfterAudit) != 0 {
+		t.Fatalf("lockout-row locks after an audit in one transaction: %v", w.store.lockAfterAudit)
+	}
+	if _, ok := w.store.data.lockouts["sup1"]; !ok {
+		t.Fatal("the failed sign-in took no lockout row")
+	}
+}
+
 // A pending enrolment shows the same secret again until confirmed.
 func TestPendingEnrolmentShownAgain(t *testing.T) {
 	w := newWorld(t)

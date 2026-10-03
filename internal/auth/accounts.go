@@ -614,12 +614,14 @@ func (s *Accounts) VerifyMFA(ctx context.Context, mfaToken, code string, ri Requ
 			return refuse(u.ID, u.Username, reason, mfaRefused("the code is wrong or was already used"))
 		}
 		m.LastStep = step
-		if m.EnrolledAt == nil {
+		enrolled := m.EnrolledAt == nil
+		if enrolled {
 			m.EnrolledAt = &now
-			if err := tx.Record(ctx, userEvent(u.ID, u.Username, EventMFAEnrolled, map[string]any{})); err != nil {
-				return err
-			}
 		}
+		// Every row lock (the lockout row above all) before the first
+		// audit event: an audit holds the month's advisory lock to the
+		// commit, and a failed sign-in holds the lockout row while it
+		// waits for that lock (ansp audit S-6).
 		if err := tx.SaveMFA(ctx, m, now); err != nil {
 			return err
 		}
@@ -631,6 +633,11 @@ func (s *Accounts) VerifyMFA(ctx context.Context, mfaToken, code string, ri Requ
 		}
 		if err := tx.TouchLogin(ctx, u.ID, now); err != nil {
 			return err
+		}
+		if enrolled {
+			if err := tx.Record(ctx, userEvent(u.ID, u.Username, EventMFAEnrolled, map[string]any{})); err != nil {
+				return err
+			}
 		}
 		u.LastLoginAt = &now
 		out, err = s.startSession(ctx, tx, u, ri, now)

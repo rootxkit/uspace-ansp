@@ -148,6 +148,14 @@ type memStore struct {
 	fail map[string]error
 	// writes counts the operations that wrote.
 	clientsSeen [][]ClientSeen
+	// recorded is whether the open transaction audited already;
+	// lockAfterAudit lists the lockout-row locks taken after an audit in
+	// one transaction. The audit takes the month's advisory lock to the
+	// end of the transaction, so a row lock after it, against a failed
+	// sign-in that holds the row and waits for the month, deadlocks
+	// (ansp audit S-6): every row lock comes before the first audit.
+	recorded       bool
+	lockAfterAudit []string
 }
 
 type memData struct {
@@ -190,6 +198,7 @@ func (m *memStore) InTx(ctx context.Context, fn func(ctx context.Context, tx Tx)
 		return err
 	}
 	saved := m.data.clone()
+	m.recorded = false
 	if err := fn(ctx, memTx{m}); err != nil {
 		m.data = saved
 		return err
@@ -271,7 +280,15 @@ func (t memTx) Record(_ context.Context, ev audit.Event) error {
 		return err
 	}
 	t.d().events = append(t.d().events, ev)
+	t.m.recorded = true
 	return nil
+}
+
+// rowLock notes a lockout-row lock taken after an audit.
+func (t memTx) rowLock(name string) {
+	if t.m.recorded {
+		t.m.lockAfterAudit = append(t.m.lockAfterAudit, name)
+	}
 }
 
 func (t memTx) UserByUsername(_ context.Context, username string) (User, error) {
@@ -345,6 +362,7 @@ func (t memTx) Lockout(_ context.Context, username string, _ time.Time) (Lockout
 	if err := t.m.failing("lockout"); err != nil {
 		return Lockout{}, err
 	}
+	t.rowLock("Lockout")
 	l, ok := t.d().lockouts[username]
 	if !ok {
 		l = Lockout{Username: username}
@@ -362,11 +380,13 @@ func (t memTx) PeekLockout(_ context.Context, username string) (Lockout, error) 
 }
 
 func (t memTx) SetLockout(_ context.Context, l Lockout, _ time.Time) error {
+	t.rowLock("SetLockout")
 	t.d().lockouts[l.Username] = l
 	return nil
 }
 
 func (t memTx) ClearLockout(_ context.Context, username string) error {
+	t.rowLock("ClearLockout")
 	delete(t.d().lockouts, username)
 	return nil
 }
