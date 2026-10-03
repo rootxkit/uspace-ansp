@@ -320,15 +320,16 @@ func TestNotificationUnavailable(t *testing.T) {
 	}
 }
 
-// Without a pull_url guard every pull_url is counted, the configured
-// URL still pulled.
+// Without a pull_url guard every pull_url is counted as unchecked, not
+// as a mismatch (ansp audit N-7: the mismatch counter means a pull_url
+// off the configured CISP); the configured URL is still pulled.
 func TestNoGuardCountsEveryPullURL(t *testing.T) {
 	f := newReceiver(t, func(c *cis.ReceiverConfig) { c.Guard = nil })
 	if w := f.post(f.valid(t, cis.USpaceAirspace, 3, "publication", ""), cis.ContentTypeJOSE); w.Code != http.StatusAccepted {
 		t.Fatal(w.Code)
 	}
-	if f.p.Counters().Get(cis.CounterPullURLMismatch) != 1 {
-		t.Fatal("not counted")
+	if f.p.Counters().Get(cis.CounterPullURLUnchecked) != 1 || f.p.Counters().Get(cis.CounterPullURLMismatch) != 0 {
+		t.Fatalf("counters %v", f.p.Counters().Snapshot())
 	}
 }
 
