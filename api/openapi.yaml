@@ -3448,7 +3448,9 @@ paths:
         With no CIS USSP list projected the notice is accepted and flagged
         sender_unverified (never refused for lack of this system's data).
         The restrictions the notice's volumes intersect are recorded
-        with it (restriction_ids).
+        with it (restriction_ids). A notice carries at most 1000 volumes
+        in all (over its intents); more is refused 400 before anything is
+        read or stored.
       security:
         - ecosystemToken: [ansp.coordination]
       requestBody:

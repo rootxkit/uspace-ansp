@@ -28,6 +28,8 @@ const (
 	MaxIntents = 100
 	// MaxVolumes bounds the volumes of one intent.
 	MaxVolumes = 100
+	// MaxNoticeVolumes bounds the volumes of a notice in all.
+	MaxNoticeVolumes = 1000
 	// MaxNoticeRefBytes bounds notice_ref.
 	MaxNoticeRefBytes = 128
 	// MaxUSSPIDBytes bounds ussp_id.
@@ -325,13 +327,22 @@ func intents(e *errs, raw json.RawMessage) []Intent {
 		return nil
 	}
 	out := make([]Intent, 0, len(list))
+	total := 0
 	for i, r := range list {
 		if e.full() {
 			break
 		}
 		if in, ok := intent(e, r, fmt.Sprintf("intents[%d]", i)); ok {
 			out = append(out, in)
+			total += len(in.Volumes)
 		}
+	}
+	// Each volume is a box (two across the antimeridian) joined against
+	// every planned and active restriction in the intake transaction:
+	// the notice's volumes in all are bounded (ansp audit S-3).
+	if total > MaxNoticeVolumes {
+		e.add("intents", "have %d volumes in all; at most %d", total, MaxNoticeVolumes)
+		return nil
 	}
 	return out
 }

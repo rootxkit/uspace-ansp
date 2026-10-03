@@ -4172,7 +4172,9 @@ type ClientInterface interface {
 	// With no CIS USSP list projected the notice is accepted and flagged
 	// sender_unverified (never refused for lack of this system's data).
 	// The restrictions the notice's volumes intersect are recorded
-	// with it (restriction_ids).
+	// with it (restriction_ids). A notice carries at most 1000 volumes
+	// in all (over its intents); more is refused 400 before anything is
+	// read or stored.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -4198,7 +4200,9 @@ type ClientInterface interface {
 	// With no CIS USSP list projected the notice is accepted and flagged
 	// sender_unverified (never refused for lack of this system's data).
 	// The restrictions the notice's volumes intersect are recorded
-	// with it (restriction_ids).
+	// with it (restriction_ids). A notice carries at most 1000 volumes
+	// in all (over its intents); more is refused 400 before anything is
+	// read or stored.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -5107,7 +5111,9 @@ func (c *Client) AcknowledgeCoordinationNotice(ctx context.Context, id NoticeID,
 // With no CIS USSP list projected the notice is accepted and flagged
 // sender_unverified (never refused for lack of this system's data).
 // The restrictions the notice's volumes intersect are recorded
-// with it (restriction_ids).
+// with it (restriction_ids). A notice carries at most 1000 volumes
+// in all (over its intents); more is refused 400 before anything is
+// read or stored.
 //
 // Takes any type of body and a specified content type.
 //
@@ -5143,7 +5149,9 @@ func (c *Client) SubmitCoordinationNoticeWithBody(ctx context.Context, contentTy
 // With no CIS USSP list projected the notice is accepted and flagged
 // sender_unverified (never refused for lack of this system's data).
 // The restrictions the notice's volumes intersect are recorded
-// with it (restriction_ids).
+// with it (restriction_ids). A notice carries at most 1000 volumes
+// in all (over its intents); more is refused 400 before anything is
+// read or stored.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -8216,7 +8224,9 @@ type ClientWithResponsesInterface interface {
 	// With no CIS USSP list projected the notice is accepted and flagged
 	// sender_unverified (never refused for lack of this system's data).
 	// The restrictions the notice's volumes intersect are recorded
-	// with it (restriction_ids).
+	// with it (restriction_ids). A notice carries at most 1000 volumes
+	// in all (over its intents); more is refused 400 before anything is
+	// read or stored.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -8242,7 +8252,9 @@ type ClientWithResponsesInterface interface {
 	// With no CIS USSP list projected the notice is accepted and flagged
 	// sender_unverified (never refused for lack of this system's data).
 	// The restrictions the notice's volumes intersect are recorded
-	// with it (restriction_ids).
+	// with it (restriction_ids). A notice carries at most 1000 volumes
+	// in all (over its intents); more is refused 400 before anything is
+	// read or stored.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -12819,7 +12831,9 @@ func (c *ClientWithResponses) AcknowledgeCoordinationNoticeWithResponse(ctx cont
 // With no CIS USSP list projected the notice is accepted and flagged
 // sender_unverified (never refused for lack of this system's data).
 // The restrictions the notice's volumes intersect are recorded
-// with it (restriction_ids).
+// with it (restriction_ids). A notice carries at most 1000 volumes
+// in all (over its intents); more is refused 400 before anything is
+// read or stored.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -12851,7 +12865,9 @@ func (c *ClientWithResponses) SubmitCoordinationNoticeWithBodyWithResponse(ctx c
 // With no CIS USSP list projected the notice is accepted and flagged
 // sender_unverified (never refused for lack of this system's data).
 // The restrictions the notice's volumes intersect are recorded
-// with it (restriction_ids).
+// with it (restriction_ids). A notice carries at most 1000 volumes
+// in all (over its intents); more is refused 400 before anything is
+// read or stored.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //

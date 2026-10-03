@@ -153,6 +153,45 @@ func TestDecodeNoticeBounds(t *testing.T) {
 	}
 }
 
+// A notice's volumes in all are bounded too (ansp audit S-3): each one
+// is a box, split across the antimeridian, joined against every planned
+// and active restriction in the intake transaction. MaxNoticeVolumes is
+// accepted, one more refused before the database is touched.
+func TestDecodeNoticeTotalVolumesBounded(t *testing.T) {
+	m := noticeMap(t)
+	vols := make([]any, MaxVolumes)
+	for i := range vols {
+		vols[i] = volumeOf(m)
+	}
+	in := intentOf(m)
+	in["volumes"] = vols
+	n := MaxNoticeVolumes / MaxVolumes
+	list := make([]any, n+1)
+	for i := range list {
+		list[i] = in
+	}
+	m["intents"] = list[:n]
+	body := encode(t, m)
+	if len(body) > MaxNoticeBytes {
+		t.Fatalf("the accepted case is %d bytes, past the body bound", len(body))
+	}
+	if _, errs := DecodeNotice(body); len(errs) > 0 {
+		t.Fatalf("%d volumes: %v", MaxNoticeVolumes, errs)
+	}
+	m["intents"] = list
+	errs := func() []string {
+		_, fe := DecodeNotice(encode(t, m))
+		out := []string{}
+		for _, e := range fe {
+			out = append(out, e.Field+": "+e.Reason)
+		}
+		return out
+	}()
+	if len(errs) != 1 || !strings.HasPrefix(errs[0], "intents: ") || !strings.Contains(errs[0], "volumes in all") {
+		t.Fatalf("%d volumes: %v", MaxNoticeVolumes+MaxVolumes, errs)
+	}
+}
+
 func TestDecodeNoticeRefusals(t *testing.T) {
 	for name, tc := range map[string]struct {
 		mutate func(m map[string]any)
