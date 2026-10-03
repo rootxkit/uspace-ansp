@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/coder/websocket"
 	"github.com/rootxkit/uspace-core/core"
 
 	"github.com/rootxkit/uspace-ansp/internal/apierr"
@@ -20,6 +21,7 @@ import (
 	"github.com/rootxkit/uspace-ansp/internal/auth"
 	"github.com/rootxkit/uspace-ansp/internal/bus"
 	"github.com/rootxkit/uspace-ansp/internal/config"
+	"github.com/rootxkit/uspace-ansp/internal/coord"
 	"github.com/rootxkit/uspace-ansp/internal/obs"
 	"github.com/rootxkit/uspace-ansp/internal/policy"
 	"github.com/rootxkit/uspace-ansp/internal/restriction"
@@ -349,4 +351,92 @@ func TestRestrictionWireMatchesTheContract(t *testing.T) {
 		Payload:    json.RawMessage(`{"client_ref":"GCAA-1","geometry":{"type":"Point","coordinates":[44.8,41.7]},"radius_m":500,"lower_m":0,"lower_ref":"AMSL","upper_m":120,"upper_ref":"AMSL","starts_at":"2026-10-02T12:00:00.000Z","ends_at":"2026-10-02T13:00:00.000Z","reason_text":"x"}`),
 		ReceivedAt: at, State: restriction.RequestReceived}))
 	validateResponse(t, http.MethodGet, "/v1/restriction-requests/{id}", http.StatusOK, raw)
+}
+
+// emptyRestrictions is a store that holds no restriction (only the
+// snapshot's reads are served).
+type emptyRestrictions struct{ restriction.Repo }
+
+func (emptyRestrictions) CurrentVersions(context.Context, restriction.State, int) ([]restriction.Version, bool, error) {
+	return nil, false, nil
+}
+
+// emptyNotices is an inbox store that holds no notice.
+type emptyNotices struct{ coord.Repo }
+
+func (emptyNotices) Notices(context.Context, coord.Filter) ([]coord.Notice, error) { return nil, nil }
+
+// A client that sends console/subscribe/v1 in a burst gets at most one
+// snapshot per StreamResubscribeEvery (each one is a database read of
+// every active and planned restriction, or every open notice); the
+// burst is counted and answered by one deferred snapshot, never dropped
+// in silence (ansp audit S-4). Twin: that snapshot is sent.
+func TestStreamResubscribeThrottled(t *testing.T) {
+	rs := testStream()
+	rs.svc.Repo = emptyRestrictions{}
+	cs := newCoordStream(&coord.Service{Repo: emptyNotices{}}, func(context.Context) (policy.Policy, error) {
+		return policy.Policy{Version: 3, Thresholds: policy.Defaults()}, nil
+	}, nil, producer)
+	t.Run("restrictions", func(t *testing.T) {
+		resubscribeBurst(t, rs.serve, func() uint64 { return rs.Counters().Get(CounterStreamResubscribeThrottled) })
+	})
+	t.Run("coordination", func(t *testing.T) {
+		resubscribeBurst(t, cs.serve, func() uint64 { return cs.Counters().Get(CounterCoordStreamResubscribeThrottled) })
+	})
+}
+
+func resubscribeBurst(t *testing.T, serve http.HandlerFunc, throttled func() uint64) {
+	t.Helper()
+	srv := httptest.NewServer(serve)
+	defer srv.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	ws, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(srv.URL, "http"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = ws.CloseNow() }()
+	snapshots := make(chan time.Time, 64)
+	go func() {
+		for {
+			_, data, err := ws.Read(ctx)
+			if err != nil {
+				return
+			}
+			var f struct {
+				Schema string `json:"schema"`
+			}
+			if json.Unmarshal(data, &f) == nil && f.Schema == schemaSnapshot {
+				snapshots <- time.Now()
+			}
+		}
+	}()
+	select {
+	case <-snapshots: // the snapshot on connect
+	case <-ctx.Done():
+		t.Fatal("no snapshot on connect")
+	}
+	start := time.Now()
+	for range 20 {
+		if err := ws.Write(ctx, websocket.MessageText, []byte(`{"schema":"console/subscribe/v1","body":{}}`)); err != nil {
+			t.Fatal(err)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	var got []time.Duration
+	deadline := time.After(StreamResubscribeEvery + 700*time.Millisecond)
+	for done := false; !done; {
+		select {
+		case at := <-snapshots:
+			got = append(got, at.Sub(start))
+		case <-deadline:
+			done = true
+		}
+	}
+	if len(got) != 1 || got[0] < StreamResubscribeEvery-300*time.Millisecond {
+		t.Fatalf("snapshots after a burst of 20 subscribes: %v", got)
+	}
+	if throttled() == 0 {
+		t.Fatal("the throttled subscribes are not counted")
+	}
 }

@@ -24,6 +24,75 @@ func (q *Queries) CountOpenRestrictionRequests(ctx context.Context, requester st
 	return n, err
 }
 
+const currentRestrictionVersions = `-- name: CurrentRestrictionVersions :many
+SELECT v.restriction_id, v.version, v.feature,
+       (CASE WHEN w.reference IS NULL THEN v."constraint"
+             ELSE COALESCE(v."constraint", '{}'::jsonb) || jsonb_build_object('reference', w.reference) END)::jsonb AS "constraint",
+       v.changed_by, v.changed_at, v.change_reason, v.state, v.starts_at, v.ends_at, v.msg_id, r.ansp_ref
+FROM restrictions r
+JOIN restriction_versions v ON v.restriction_id = r.id AND v.version = r.ansp_version
+LEFT JOIN dss_constraint_writes w ON w.restriction_id = v.restriction_id AND w.ansp_version = v.version AND w.op = 'put'
+WHERE r.state = $1::restriction_state
+ORDER BY r.created_at DESC, r.id DESC
+LIMIT $2
+`
+
+type CurrentRestrictionVersionsParams struct {
+	State    RestrictionState
+	PageSize int32
+}
+
+type CurrentRestrictionVersionsRow struct {
+	RestrictionID string
+	Version       int64
+	Feature       json.RawMessage
+	Constraint    json.RawMessage
+	ChangedBy     string
+	ChangedAt     time.Time
+	ChangeReason  string
+	State         RestrictionState
+	StartsAt      time.Time
+	EndsAt        time.Time
+	MsgID         string
+	AnspRef       string
+}
+
+// The current version of every restriction in the state, newest
+// first (as ListRestrictions), in one read (the console snapshot, ansp audit S-4); the
+// constraint as RestrictionVersion has it.
+func (q *Queries) CurrentRestrictionVersions(ctx context.Context, arg CurrentRestrictionVersionsParams) ([]CurrentRestrictionVersionsRow, error) {
+	rows, err := q.db.Query(ctx, currentRestrictionVersions, arg.State, arg.PageSize)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []CurrentRestrictionVersionsRow{}
+	for rows.Next() {
+		var i CurrentRestrictionVersionsRow
+		if err := rows.Scan(
+			&i.RestrictionID,
+			&i.Version,
+			&i.Feature,
+			&i.Constraint,
+			&i.ChangedBy,
+			&i.ChangedAt,
+			&i.ChangeReason,
+			&i.State,
+			&i.StartsAt,
+			&i.EndsAt,
+			&i.MsgID,
+			&i.AnspRef,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const decideRestrictionRequest = `-- name: DecideRestrictionRequest :execrows
 UPDATE restriction_requests SET
     state = $1, decided_by = $2, decided_at = $3,

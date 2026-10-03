@@ -34,6 +34,9 @@ const (
 	CounterCoordStreamDuplicates  = "coordination_stream_duplicates"
 	CounterCoordStreamClientFrame = "coordination_stream_client_frames_refused"
 	CounterCoordStreamSnapshot    = "coordination_stream_snapshot_failed"
+	// CounterCoordStreamResubscribeThrottled counts subscribe frames
+	// answered by a deferred snapshot.
+	CounterCoordStreamResubscribeThrottled = "coordination_stream_resubscribe_throttled"
 )
 
 // coordStream relays coordination/notice/v1 to console clients: the
@@ -179,6 +182,8 @@ func (st *coordStream) serve(w http.ResponseWriter, r *http.Request) {
 	if !write(st.status(ctx, connID, c)) || !write(st.snapshot(ctx)) {
 		return
 	}
+	gate := resubscribeGate{every: StreamResubscribeEvery, last: time.Now()}
+	defer gate.stop()
 	tick := time.NewTicker(StreamStatusPeriod)
 	defer tick.Stop()
 	for {
@@ -190,6 +195,15 @@ func (st *coordStream) serve(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		case <-subscribe:
+			if !gate.ask(time.Now()) {
+				st.counters.Inc(CounterCoordStreamResubscribeThrottled)
+				continue
+			}
+			if !write(st.snapshot(ctx)) {
+				return
+			}
+		case <-gate.due():
+			gate.served(time.Now())
 			if !write(st.snapshot(ctx)) {
 				return
 			}

@@ -124,6 +124,21 @@ FROM restriction_versions v JOIN restrictions r ON r.id = v.restriction_id
 LEFT JOIN dss_constraint_writes w ON w.restriction_id = v.restriction_id AND w.ansp_version = v.version AND w.op = 'put'
 WHERE v.restriction_id = sqlc.arg(restriction_id) AND v.version = sqlc.arg(version);
 
+-- name: CurrentRestrictionVersions :many
+-- The current version of every restriction in the state, newest
+-- first (as ListRestrictions), in one read (the console snapshot, ansp audit S-4); the
+-- constraint as RestrictionVersion has it.
+SELECT v.restriction_id, v.version, v.feature,
+       (CASE WHEN w.reference IS NULL THEN v."constraint"
+             ELSE COALESCE(v."constraint", '{}'::jsonb) || jsonb_build_object('reference', w.reference) END)::jsonb AS "constraint",
+       v.changed_by, v.changed_at, v.change_reason, v.state, v.starts_at, v.ends_at, v.msg_id, r.ansp_ref
+FROM restrictions r
+JOIN restriction_versions v ON v.restriction_id = r.id AND v.version = r.ansp_version
+LEFT JOIN dss_constraint_writes w ON w.restriction_id = v.restriction_id AND w.ansp_version = v.version AND w.op = 'put'
+WHERE r.state = sqlc.arg(state)::restriction_state
+ORDER BY r.created_at DESC, r.id DESC
+LIMIT sqlc.arg(page_size);
+
 -- name: RestrictionAreaM2 :one
 SELECT ST_Area(
     CASE WHEN sqlc.narg(radius_m)::float8 IS NULL

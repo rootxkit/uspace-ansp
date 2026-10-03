@@ -50,6 +50,9 @@ type Repo interface {
 	List(ctx context.Context, f ListFilter) ([]Restriction, bool, error)
 	Versions(ctx context.Context, id string, limit int) ([]Version, error)
 	Version(ctx context.Context, id string, version int64) (Version, error)
+	// CurrentVersions is the current version of every restriction in
+	// state, at most limit, in one read; more says others exist.
+	CurrentVersions(ctx context.Context, state State, limit int) ([]Version, bool, error)
 	Request(ctx context.Context, id string) (Request, error)
 	// DueActivations and DueExpiries are judged on the database's clock.
 	DueActivations(ctx context.Context, limit int) ([]string, error)
@@ -719,19 +722,15 @@ func (s *Service) Version(ctx context.Context, id string, v int64) (Version, err
 // state; truncated says more existed (the stream says so, never hides
 // it).
 func (s *Service) Snapshot(ctx context.Context, limit int) (msgs [][]byte, truncated bool, err error) {
+	// One read per state (ansp audit S-4: never a read per restriction).
 	for _, st := range []State{StateActive, StatePlanned} {
-		state := st
-		rs, more, err := s.Repo.List(ctx, ListFilter{State: &state, Limit: limit})
+		vs, more, err := s.Repo.CurrentVersions(ctx, st, limit)
 		if err != nil {
 			return nil, false, err
 		}
 		truncated = truncated || more
-		for i := range rs {
-			v, err := s.Repo.Version(ctx, rs[i].ID, rs[i].AnspVersion)
-			if err != nil {
-				return nil, false, err
-			}
-			msg, err := StateMessage(v, s.Producer, false)
+		for i := range vs {
+			msg, err := StateMessage(vs[i], s.Producer, false)
 			if err != nil {
 				return nil, false, err
 			}

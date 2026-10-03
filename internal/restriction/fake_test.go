@@ -40,6 +40,9 @@ type memRepo struct {
 	seqMax   int64
 	// fail makes the named Tx method fail (error-path tests).
 	fail map[string]error
+	// reads counts the store reads outside a transaction (List,
+	// Version, CurrentVersions): a snapshot's cost.
+	reads int
 }
 
 func (m *memRepo) failing(name string) error { return m.fail[name] }
@@ -94,6 +97,7 @@ func (m *memRepo) Get(_ context.Context, id string) (Restriction, error) {
 func (m *memRepo) List(_ context.Context, f ListFilter) ([]Restriction, bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.reads++
 	var out []Restriction
 	for id := range m.rs {
 		r := m.rs[id]
@@ -126,12 +130,39 @@ func (m *memRepo) Versions(_ context.Context, id string, limit int) ([]Version, 
 func (m *memRepo) Version(_ context.Context, id string, version int64) (Version, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.reads++
 	for i := range m.versions[id] {
 		if v := m.versions[id][i]; v.Version == version {
 			return v, nil
 		}
 	}
 	return Version{}, ErrNotFound
+}
+
+func (m *memRepo) CurrentVersions(_ context.Context, state State, limit int) ([]Version, bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.reads++
+	var ids []string
+	for id := range m.rs {
+		if m.rs[id].State == state {
+			ids = append(ids, id)
+		}
+	}
+	sort.Sort(sort.Reverse(sort.StringSlice(ids)))
+	more := len(ids) > limit
+	if more {
+		ids = ids[:limit]
+	}
+	out := make([]Version, 0, len(ids))
+	for _, id := range ids {
+		for i := range m.versions[id] {
+			if v := m.versions[id][i]; v.Version == m.rs[id].AnspVersion {
+				out = append(out, v)
+			}
+		}
+	}
+	return out, more, nil
 }
 
 func (m *memRepo) Request(_ context.Context, id string) (Request, error) {

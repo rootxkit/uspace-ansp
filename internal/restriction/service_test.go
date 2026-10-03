@@ -600,4 +600,20 @@ func TestSnapshot(t *testing.T) {
 	if _, truncated, _ := f.svc.Snapshot(ctx, 0); !truncated {
 		t.Fatal("not truncated")
 	}
+	// One read per state, whatever the number of restrictions: never a
+	// read per restriction (ansp audit S-4).
+	for range 3 {
+		_, _, _ = f.svc.Plan(ctx, supervisor, input(t0, t0.Add(time.Hour)), PlanOptions{})
+	}
+	f.repo.mu.Lock()
+	f.repo.reads = 0
+	f.repo.mu.Unlock()
+	if msgs, _, err := f.svc.Snapshot(ctx, 10); err != nil || len(msgs) != 5 {
+		t.Fatalf("%d %v", len(msgs), err)
+	}
+	f.repo.mu.Lock()
+	defer f.repo.mu.Unlock()
+	if f.repo.reads != 2 {
+		t.Fatalf("a snapshot of 5 restrictions made %d reads; want 2", f.repo.reads)
+	}
 }

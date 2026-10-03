@@ -94,6 +94,17 @@ func TestIntegrationRestrictionLifecycle(t *testing.T) {
 	if _, err := svc.Apply(ctx, supervisor, r.ID, restriction.OpExtend, "longer", &end); err != nil {
 		t.Fatal(err)
 	}
+	// The console snapshot's one read: the current version (3, active).
+	cur, _, err := (store.RestrictionRepo{DB: db}).CurrentVersions(ctx, restriction.StateActive, 1000)
+	found := false
+	for _, v := range cur {
+		if v.RestrictionID == r.ID {
+			found = v.Version == 3 && v.State == restriction.StateActive && v.EndsAt.Equal(end) && v.AnspRef == r.AnspRef
+		}
+	}
+	if err != nil || !found {
+		t.Fatalf("current versions: %+v %v", cur, err)
+	}
 	ended, err := svc.Apply(ctx, supervisor, r.ID, restriction.OpEnd, "done", nil)
 	if err != nil || ended.State != restriction.StateEnded || ended.AnspVersion != 4 || ended.EndedAtActual == nil {
 		t.Fatalf("ended: %+v %v", ended, err)
