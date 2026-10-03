@@ -9,10 +9,11 @@ on:
     tags: ["v*"]
   pull_request:
 
-# Nothing by default; each job names what it needs (read only: no job
-# here pushes, signs or writes). Every third-party action is pinned to a
-# full commit SHA with its version in a comment; a moved tag cannot
-# change what runs.
+# Nothing by default; each job names what it needs: read only, except
+# images and attest, which push and sign on main and v* tags and never
+# run for a pull request. Every third-party action is pinned to a full
+# commit SHA with its version in a comment; a moved tag cannot change
+# what runs.
 permissions: {}
 
 concurrency:
@@ -429,14 +430,14 @@ jobs:
           tar -xzf "$RUNNER_TEMP/$tarball" -C "$RUNNER_TEMP" gitleaks
           "$RUNNER_TEMP/gitleaks" git --no-banner --redact --verbose .
 
-  # The Go image is built, never pushed, in WP-0. WP-13 adds the push to
-  # GHCR on main and tags, cosign, the SBOM and the web image.
+  # On a pull request that touches the image, the Go image is built and
+  # never pushed: no registry credential reaches pull-request code.
   image:
     name: image (build only)
     permissions:
       contents: read
     needs: changes
-    if: needs.changes.outputs.image == 'true'
+    if: github.event_name == 'pull_request' && needs.changes.outputs.image == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -453,3 +454,170 @@ jobs:
           build-args: VERSION=${{ github.sha }}
           cache-from: type=gha,scope=go
           cache-to: type=gha,mode=max,scope=go
+
+  # On main and v* tags, after every gate (WP-13, PLAN §11), as the
+  # CISP, the authority and the USSP do: the Go image pushed to
+  # ghcr.io/rootxkit/uspace-ansp and the console image to
+  # ghcr.io/rootxkit/uspace-ansp-web, tagged with the short SHA (and the
+  # tag), each digest signed keyless with cosign and the signature
+  # verified. The SBOMs are made and attached by the two jobs after this
+  # one. web/Dockerfile arrives with WP-11: until it exists only the Go
+  # image is published, and the step summary says so.
+  images:
+    name: images
+    if: github.event_name == 'push'
+    needs: [lint-docs, build-vet-lint, test-race, generate-check, integration, contracts, vectors, fuzz-bench, web, govulncheck, gitleaks]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    outputs:
+      go_digest: ${{ steps.go.outputs.digest }}
+      web_digest: ${{ steps.web.outputs.digest }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - name: tags
+        id: tags
+        run: |
+          short="${GITHUB_SHA::7}"
+          go_tags="ghcr.io/rootxkit/uspace-ansp:${short}"
+          web_tags="ghcr.io/rootxkit/uspace-ansp-web:${short}"
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            go_tags+=",ghcr.io/rootxkit/uspace-ansp:${GITHUB_REF_NAME}"
+            web_tags+=",ghcr.io/rootxkit/uspace-ansp-web:${GITHUB_REF_NAME}"
+            version="$GITHUB_REF_NAME"
+          else
+            version="$short"
+          fi
+          if [ -f web/Dockerfile ]; then has_web=true; else has_web=false; fi
+          { echo "go=$go_tags"; echo "web=$web_tags"; echo "version=$version"; echo "has_web=$has_web"; } >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Go image (api, manned-adapter, manned-feed)
+        id: go
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
+        with:
+          context: .
+          file: deploy/Dockerfile
+          push: true
+          tags: ${{ steps.tags.outputs.go }}
+          build-args: VERSION=${{ steps.tags.outputs.version }}
+          cache-from: type=gha,scope=go
+          cache-to: type=gha,mode=max,scope=go
+      - name: web image (Next.js standalone, web/Dockerfile)
+        id: web
+        if: steps.tags.outputs.has_web == 'true'
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
+        with:
+          context: web
+          file: web/Dockerfile
+          push: true
+          tags: ${{ steps.tags.outputs.web }}
+          cache-from: type=gha,scope=web
+          cache-to: type=gha,mode=max,scope=web
+      - uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3.9.1
+      - name: sign the digests (cosign keyless), then verify them
+        env:
+          GO_DIGEST: ${{ steps.go.outputs.digest }}
+          WEB_DIGEST: ${{ steps.web.outputs.digest }}
+          HAS_WEB: ${{ steps.tags.outputs.has_web }}
+        run: |
+          [ -n "$GO_DIGEST" ] || { echo "the Go image has no digest"; exit 1; }
+          if [ "$HAS_WEB" = true ] && [ -z "$WEB_DIGEST" ]; then echo "the web image has no digest"; exit 1; fi
+          refs=("ghcr.io/rootxkit/uspace-ansp@${GO_DIGEST}")
+          if [ -n "$WEB_DIGEST" ]; then refs+=("ghcr.io/rootxkit/uspace-ansp-web@${WEB_DIGEST}"); fi
+          for ref in "${refs[@]}"; do
+            cosign sign --yes "$ref"
+            cosign verify "$ref" \
+              --certificate-identity "${GITHUB_SERVER_URL}/${GITHUB_WORKFLOW_REF}" \
+              --certificate-oidc-issuer https://token.actions.githubusercontent.com >/dev/null
+          done
+          {
+            echo '### Images (pushed, signed, signature verified)'
+            echo
+            for ref in "${refs[@]}"; do echo "- $ref"; done
+            if [ -z "$WEB_DIGEST" ]; then
+              echo "- ghcr.io/rootxkit/uspace-ansp-web: not published, there is no web/Dockerfile yet (WP-11)"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: forget the registry credential
+        if: always()
+        run: docker logout ghcr.io
+
+  # The SBOMs, apart from the push and the signing: the third-party SBOM
+  # action runs with a read-only package token and no OIDC token, never
+  # beside a registry credential that can push.
+  sbom:
+    name: SBOMs
+    if: github.event_name == 'push'
+    needs: images
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - name: read-only registry login
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: echo "$TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+      - name: SBOM of the Go image (syft, SPDX)
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        with:
+          image: ghcr.io/rootxkit/uspace-ansp@${{ needs.images.outputs.go_digest }}
+          format: spdx-json
+          output-file: sbom-uspace-ansp.spdx.json
+          upload-artifact: false
+      - name: SBOM of the web image (syft, SPDX)
+        if: needs.images.outputs.web_digest != ''
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        with:
+          image: ghcr.io/rootxkit/uspace-ansp-web@${{ needs.images.outputs.web_digest }}
+          format: spdx-json
+          output-file: sbom-uspace-ansp-web.spdx.json
+          upload-artifact: false
+      - name: forget the registry credential
+        if: always()
+        run: docker logout ghcr.io
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: sbom
+          path: sbom-*.spdx.json
+          if-no-files-found: error
+
+  # The SBOMs attached to the digests as signed attestations: cosign
+  # alone, with the write and OIDC permissions this needs.
+  attest:
+    name: attest SBOMs
+    if: github.event_name == 'push'
+    needs: [images, sbom]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: sbom
+      - uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3.9.1
+      - name: attach the SBOMs (cosign keyless)
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GO_DIGEST: ${{ needs.images.outputs.go_digest }}
+          WEB_DIGEST: ${{ needs.images.outputs.web_digest }}
+        run: |
+          echo "$TOKEN" | cosign login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+          cosign attest --yes --type spdxjson --predicate sbom-uspace-ansp.spdx.json "ghcr.io/rootxkit/uspace-ansp@${GO_DIGEST}"
+          if [ -n "$WEB_DIGEST" ]; then
+            cosign attest --yes --type spdxjson --predicate sbom-uspace-ansp-web.spdx.json "ghcr.io/rootxkit/uspace-ansp-web@${WEB_DIGEST}"
+          fi
