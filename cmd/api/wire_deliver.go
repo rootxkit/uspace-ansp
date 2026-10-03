@@ -55,6 +55,8 @@ type deliverWiring struct {
 	api    *deliveryAPI
 	checks []obs.Check
 	run    []func(ctx context.Context)
+	// details serves GET /uss/v1/constraints/{entityid} (WP-9).
+	details *dss.Details
 	// dssClient is the DSS client, nil without ANSP_DSS_URL.
 	dssClient *dss.Client
 }
@@ -198,6 +200,11 @@ func wireDeliver(cfg config.Config, db *store.Relational, b *bus.Bus, keys *auth
 	}
 	channel := &deliver.DSS{Client: dc, Notifier: notifier, USSBaseURL: cfg.PublicBaseURL, Logger: dssLogger, Counters: counters}
 	worker := &deliver.Worker{Repo: repo, CISP: cisp, Direct: direct, DSS: channel, Outbox: outbox, Events: events, Policy: pol, Logger: logger, Counters: counters}
+	detailCounters := &core.Counters{}
+	if err := obs.Counters(reg, "", detailCounters); err != nil {
+		return nil, err
+	}
+	w.details = &dss.Details{Store: store.DSSStore{DB: db}, Retention: pol.DetailsRetention, Counters: detailCounters}
 	w.dssClient = dc
 	w.checks = append(w.checks, obs.Check{Name: depDSS, Probe: dssProbe(dc, repo)})
 	if dc != nil {
@@ -242,6 +249,7 @@ func attachDeliver(rw *restrictionWiring, dw *deliverWiring) {
 	}
 	rw.api.svc.Outbox = dw.hook
 	rw.api.dl = dw.api
+	rw.api.details = dw.details
 }
 
 // dssProbe is the readiness line dss: ok, or unreachable since T (never

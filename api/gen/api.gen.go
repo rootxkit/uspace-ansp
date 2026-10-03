@@ -492,6 +492,7 @@ const (
 	DeliveryAlarmKindCispNotPublished  DeliveryAlarmKind = "cisp_not_published"
 	DeliveryAlarmKindDeliveryAbandoned DeliveryAlarmKind = "delivery_abandoned"
 	DeliveryAlarmKindDeliveryFailed    DeliveryAlarmKind = "delivery_failed"
+	DeliveryAlarmKindUssNotifyLate     DeliveryAlarmKind = "uss_notify_late"
 )
 
 // Valid indicates whether the value is a known member of the DeliveryAlarmKind enum.
@@ -502,6 +503,8 @@ func (e DeliveryAlarmKind) Valid() bool {
 	case DeliveryAlarmKindDeliveryAbandoned:
 		return true
 	case DeliveryAlarmKindDeliveryFailed:
+		return true
+	case DeliveryAlarmKindUssNotifyLate:
 		return true
 	default:
 		return false
@@ -550,6 +553,33 @@ func (e DeliveryChannelState) Valid() bool {
 	case DeliveryChannelStateQueued:
 		return true
 	case DeliveryChannelStateSent:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for DssStatusState.
+const (
+	DssStatusStateDeleted DssStatusState = "deleted"
+	DssStatusStateFailed  DssStatusState = "failed"
+	DssStatusStateNone    DssStatusState = "none"
+	DssStatusStatePending DssStatusState = "pending"
+	DssStatusStateWritten DssStatusState = "written"
+)
+
+// Valid indicates whether the value is a known member of the DssStatusState enum.
+func (e DssStatusState) Valid() bool {
+	switch e {
+	case DssStatusStateDeleted:
+		return true
+	case DssStatusStateFailed:
+		return true
+	case DssStatusStateNone:
+		return true
+	case DssStatusStatePending:
+		return true
+	case DssStatusStateWritten:
 		return true
 	default:
 		return false
@@ -1849,8 +1879,12 @@ type DeliveriesSummary struct {
 // DeliveryAlarm An alarm of the outbox (WP-8, 02 F2 failure rule): the alarm member
 // of a restriction/state/v1 body and an item of GET
 // /v1/delivery-alarms. state is open, acknowledged (an open
-// cisp_not_published a person has seen) or cleared; duration_s is
-// cleared_at minus since. The text never says "lost" (C-12).
+// cisp_not_published or uss_notify_late a person has seen) or
+// cleared; duration_s is cleared_at minus since. uss_notify_late
+// (WP-9) is a subscriber notification the DSS named not delivered
+// within CstrPublishedNotificationLatencySeconds of the DSS's
+// answer; it clears when the notification is delivered, superseded
+// or given up. The text never says "lost" (C-12).
 type DeliveryAlarm struct {
 	AckReason *string `json:"ack_reason,omitempty"`
 
@@ -1861,7 +1895,7 @@ type DeliveryAlarm struct {
 	AcknowledgedBy *Role  `json:"acknowledged_by,omitempty"`
 	AnspVersion    *int64 `json:"ansp_version,omitempty"`
 
-	// ClearReason published, restriction_not_active or acknowledged.
+	// ClearReason published, restriction_not_active or acknowledged; for uss_notify_late delivered, superseded, delivery_failed or delivery_abandoned.
 	ClearReason *string `json:"clear_reason,omitempty"`
 
 	// ClearedAt RFC 3339 UTC with Z, millisecond precision (02 §1).
@@ -1914,6 +1948,25 @@ type DeliveryChannel struct {
 
 // DeliveryChannelState defines model for DeliveryChannel.State.
 type DeliveryChannelState string
+
+// DssStatus A restriction's standing in the DSS (WP-9, 02 F2, 02 F6): none
+// (never written: planned or cancelled), pending since T while a
+// DSS write of it is queued (a DSS outage never holds the CISP
+// publication, D6), written, deleted, or failed since T (the DSS
+// refused it; a delivery alarm says why). ansp_version is the
+// version the DSS last accepted a put of, dss_version the DSS's
+// version of the reference.
+type DssStatus struct {
+	AnspVersion *int64 `json:"ansp_version,omitempty"`
+	DssVersion  *int64 `json:"dss_version,omitempty"`
+
+	// Since RFC 3339 UTC with Z, millisecond precision (02 §1).
+	Since *Timestamp     `json:"since,omitempty"`
+	State DssStatusState `json:"state"`
+}
+
+// DssStatusState defines model for DssStatus.State.
+type DssStatusState string
 
 // Ed318Feature The ED-318 Feature of a restriction as published to the CISP: a
 // GeoJSON Feature whose properties are a UASZone, with reason
@@ -2437,7 +2490,7 @@ type Restriction struct {
 	// CisVersion The CIS version of the projection; null before the first pull.
 	CisVersion *string `json:"cis_version"`
 
-	// ConstraintReference The F3548 reference as the DSS holds it; null before the first DSS write.
+	// ConstraintReference The F3548 reference as the DSS last accepted it (its ovn included; this system is the manager); null before the first DSS write.
 	ConstraintReference *ConstraintReference `json:"constraint_reference,omitempty"`
 
 	// CreatedAt RFC 3339 UTC with Z, millisecond precision (02 §1).
@@ -2452,6 +2505,15 @@ type Restriction struct {
 	// regulatory channel), the DSS write, the subscriber notifications
 	// and the degraded direct path (02 F2, D6).
 	Deliveries DeliveriesSummary `json:"deliveries"`
+
+	// Dss A restriction's standing in the DSS (WP-9, 02 F2, 02 F6): none
+	// (never written: planned or cancelled), pending since T while a
+	// DSS write of it is queued (a DSS outage never holds the CISP
+	// publication, D6), written, deleted, or failed since T (the DSS
+	// refused it; a delivery alarm says why). ansp_version is the
+	// version the DSS last accepted a put of, dss_version the DSS's
+	// version of the reference.
+	Dss *DssStatus `json:"dss,omitempty"`
 
 	// DssConstraintId The F3548 entity id, minted here.
 	DssConstraintId openapi_types.UUID `json:"dss_constraint_id"`
@@ -2726,8 +2788,12 @@ type RestrictionStateBody struct {
 	// Alarm An alarm of the outbox (WP-8, 02 F2 failure rule): the alarm member
 	// of a restriction/state/v1 body and an item of GET
 	// /v1/delivery-alarms. state is open, acknowledged (an open
-	// cisp_not_published a person has seen) or cleared; duration_s is
-	// cleared_at minus since. The text never says "lost" (C-12).
+	// cisp_not_published or uss_notify_late a person has seen) or
+	// cleared; duration_s is cleared_at minus since. uss_notify_late
+	// (WP-9) is a subscriber notification the DSS named not delivered
+	// within CstrPublishedNotificationLatencySeconds of the DSS's
+	// answer; it clears when the notification is delivered, superseded
+	// or given up. The text never says "lost" (C-12).
 	Alarm       *DeliveryAlarm `json:"alarm,omitempty"`
 	AnspRef     string         `json:"ansp_ref"`
 	AnspVersion int64          `json:"ansp_version"`
@@ -2736,6 +2802,15 @@ type RestrictionStateBody struct {
 	// regulatory channel), the DSS write, the subscriber notifications
 	// and the degraded direct path (02 F2, D6).
 	Deliveries *DeliveriesSummary `json:"deliveries,omitempty"`
+
+	// Dss A restriction's standing in the DSS (WP-9, 02 F2, 02 F6): none
+	// (never written: planned or cancelled), pending since T while a
+	// DSS write of it is queued (a DSS outage never holds the CISP
+	// publication, D6), written, deleted, or failed since T (the DSS
+	// refused it; a delivery alarm says why). ansp_version is the
+	// version the DSS last accepted a put of, dss_version the DSS's
+	// version of the reference.
+	Dss *DssStatus `json:"dss,omitempty"`
 
 	// EndsAt RFC 3339 UTC with Z, millisecond precision (02 §1).
 	EndsAt Timestamp `json:"ends_at"`
@@ -3877,8 +3952,15 @@ type ClientInterface interface {
 	// F3548's GetConstraintDetailsResponse and the Go type is
 	// uspace-core's (one struct); details.type is DAR and the ED-318
 	// feature is in details.geozone where uspace-core can map it (§15
-	// gap 16). Answered within CstrMaxTimeSendDetailsSeconds. Errors
-	// are this system's problem body.
+	// gap 16). What is served is the version the DSS last accepted
+	// (the standard: before the DSS answered the first write the
+	// constraint is unknown here, 404), its reference as the DSS
+	// answered it, ovn included, and its details exactly the
+	// restriction's F3548 volumes; after the restriction ended or was
+	// cancelled they stay served for ExternalDataMaxRetentionTimeHours,
+	// then 404. Answered within CstrMaxTimeSendDetailsSeconds. Errors
+	// are this system's problem body; 503 when this instance has no
+	// store to read them from (fail closed).
 	//
 	// Corresponds with GET /uss/v1/constraints/{entityid} (the `GetConstraintDetails` operationId).
 	GetConstraintDetails(ctx context.Context, entityid openapi_types.UUID, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -4650,8 +4732,15 @@ func (c *Client) GetReadyz(ctx context.Context, reqEditors ...RequestEditorFn) (
 // F3548's GetConstraintDetailsResponse and the Go type is
 // uspace-core's (one struct); details.type is DAR and the ED-318
 // feature is in details.geozone where uspace-core can map it (§15
-// gap 16). Answered within CstrMaxTimeSendDetailsSeconds. Errors
-// are this system's problem body.
+// gap 16). What is served is the version the DSS last accepted
+// (the standard: before the DSS answered the first write the
+// constraint is unknown here, 404), its reference as the DSS
+// answered it, ovn included, and its details exactly the
+// restriction's F3548 volumes; after the restriction ended or was
+// cancelled they stay served for ExternalDataMaxRetentionTimeHours,
+// then 404. Answered within CstrMaxTimeSendDetailsSeconds. Errors
+// are this system's problem body; 503 when this instance has no
+// store to read them from (fail closed).
 //
 // Corresponds with GET /uss/v1/constraints/{entityid} (the `GetConstraintDetails` operationId).
 func (c *Client) GetConstraintDetails(ctx context.Context, entityid openapi_types.UUID, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -7863,8 +7952,15 @@ type ClientWithResponsesInterface interface {
 	// F3548's GetConstraintDetailsResponse and the Go type is
 	// uspace-core's (one struct); details.type is DAR and the ED-318
 	// feature is in details.geozone where uspace-core can map it (§15
-	// gap 16). Answered within CstrMaxTimeSendDetailsSeconds. Errors
-	// are this system's problem body.
+	// gap 16). What is served is the version the DSS last accepted
+	// (the standard: before the DSS answered the first write the
+	// constraint is unknown here, 404), its reference as the DSS
+	// answered it, ovn included, and its details exactly the
+	// restriction's F3548 volumes; after the restriction ended or was
+	// cancelled they stay served for ExternalDataMaxRetentionTimeHours,
+	// then 404. Answered within CstrMaxTimeSendDetailsSeconds. Errors
+	// are this system's problem body; 503 when this instance has no
+	// store to read them from (fail closed).
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -8778,6 +8874,11 @@ type GetConstraintDetailsResponse429Headers struct {
 	RetryAfter int
 }
 
+// GetConstraintDetailsResponse503Headers the declared response headers of an HTTP 503 response for GetConstraintDetails
+type GetConstraintDetailsResponse503Headers struct {
+	RetryAfter int
+}
+
 type GetConstraintDetailsResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -8793,10 +8894,16 @@ type GetConstraintDetailsResponse struct {
 	ApplicationproblemJSON404 *NotFound
 	// ApplicationproblemJSON429 the response for an HTTP 429 `application/problem+json` response
 	ApplicationproblemJSON429 *RateLimited
+	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationproblemJSON500 *Internal
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *Unavailable
 	// Headers401 the parsed response headers for an HTTP 401 response
 	Headers401 *GetConstraintDetailsResponse401Headers
 	// Headers429 the parsed response headers for an HTTP 429 response
 	Headers429 *GetConstraintDetailsResponse429Headers
+	// Headers503 the parsed response headers for an HTTP 503 response
+	Headers503 *GetConstraintDetailsResponse503Headers
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -8827,6 +8934,16 @@ func (r GetConstraintDetailsResponse) GetApplicationproblemJSON404() *NotFound {
 // GetApplicationproblemJSON429 returns the response for an HTTP 429 `application/problem+json` response
 func (r GetConstraintDetailsResponse) GetApplicationproblemJSON429() *RateLimited {
 	return r.ApplicationproblemJSON429
+}
+
+// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r GetConstraintDetailsResponse) GetApplicationproblemJSON500() *Internal {
+	return r.ApplicationproblemJSON500
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r GetConstraintDetailsResponse) GetApplicationproblemJSON503() *Unavailable {
+	return r.ApplicationproblemJSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -12318,8 +12435,15 @@ func (c *ClientWithResponses) GetReadyzWithResponse(ctx context.Context, reqEdit
 // F3548's GetConstraintDetailsResponse and the Go type is
 // uspace-core's (one struct); details.type is DAR and the ED-318
 // feature is in details.geozone where uspace-core can map it (§15
-// gap 16). Answered within CstrMaxTimeSendDetailsSeconds. Errors
-// are this system's problem body.
+// gap 16). What is served is the version the DSS last accepted
+// (the standard: before the DSS answered the first write the
+// constraint is unknown here, 404), its reference as the DSS
+// answered it, ovn included, and its details exactly the
+// restriction's F3548 volumes; after the restriction ended or was
+// cancelled they stay served for ExternalDataMaxRetentionTimeHours,
+// then 404. Answered within CstrMaxTimeSendDetailsSeconds. Errors
+// are this system's problem body; 503 when this instance has no
+// store to read them from (fail closed).
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -13563,6 +13687,20 @@ func ParseGetConstraintDetailsResponse(rsp *http.Response) (*GetConstraintDetail
 		}
 		response.ApplicationproblemJSON429 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Internal
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
 	}
 
 	switch {
@@ -13586,6 +13724,16 @@ func ParseGetConstraintDetailsResponse(rsp *http.Response) (*GetConstraintDetail
 			headers.RetryAfter = value
 		}
 		response.Headers429 = &headers
+	case rsp.StatusCode == 503:
+		var headers GetConstraintDetailsResponse503Headers
+		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.RetryAfter = value
+		}
+		response.Headers503 = &headers
 	}
 
 	return response, nil
@@ -18408,6 +18556,39 @@ func (response GetConstraintDetails429ApplicationProblemPlusJSONResponse) VisitG
 	w.Header().Set("Content-Type", "application/problem+json")
 	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
 	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetConstraintDetails500ApplicationProblemPlusJSONResponse struct {
+	InternalApplicationProblemPlusJSONResponse
+}
+
+func (response GetConstraintDetails500ApplicationProblemPlusJSONResponse) VisitGetConstraintDetailsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(500)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetConstraintDetails503ApplicationProblemPlusJSONResponse struct {
+	UnavailableApplicationProblemPlusJSONResponse
+}
+
+func (response GetConstraintDetails503ApplicationProblemPlusJSONResponse) VisitGetConstraintDetailsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
+	w.WriteHeader(503)
 	_, err := buf.WriteTo(w)
 	return err
 }

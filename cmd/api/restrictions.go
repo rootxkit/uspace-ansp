@@ -18,7 +18,9 @@ import (
 	"github.com/rootxkit/uspace-ansp/internal/audit"
 	"github.com/rootxkit/uspace-ansp/internal/auth"
 	"github.com/rootxkit/uspace-ansp/internal/deliver"
+	"github.com/rootxkit/uspace-ansp/internal/dss"
 	"github.com/rootxkit/uspace-ansp/internal/restriction"
+	"github.com/rootxkit/uspace-ansp/internal/store"
 )
 
 // MaxRestrictionBodyBytes bounds a restriction or request body (E-10):
@@ -44,6 +46,9 @@ type restrictionAPI struct {
 	// dl is the outbox; nil while there is none (every channel "none",
 	// the alarm operations 503).
 	dl *deliveryAPI
+	// details serves the F3548 constraint details (WP-9); nil while
+	// there is no outbox (the operation answers 503).
+	details *dss.Details
 }
 
 // actorOf is the caller as the state machine records it: a console
@@ -447,40 +452,41 @@ func (rs *restrictionAPI) cisStatus(ctx context.Context) (*string, *float64) {
 // RestrictionRequest); numbers are float64, unlike the generated types.
 
 type restrictionJSON struct {
-	ID                  string          `json:"id"`
-	AnspRef             string          `json:"ansp_ref"`
-	Identifier          string          `json:"identifier"`
-	UspaceAirspaceID    string          `json:"uspace_airspace_id"`
-	ZoneType            string          `json:"zone_type"`
-	Geometry            json.RawMessage `json:"geometry"`
-	RadiusM             *float64        `json:"radius_m"`
-	LowerM              float64         `json:"lower_m"`
-	LowerRef            string          `json:"lower_ref"`
-	UpperM              float64         `json:"upper_m"`
-	UpperRef            string          `json:"upper_ref"`
-	StartsAt            string          `json:"starts_at"`
-	EndsAt              string          `json:"ends_at"`
-	ReasonText          string          `json:"reason_text"`
-	State               string          `json:"state"`
-	AnspVersion         int64           `json:"ansp_version"`
-	CreatedBy           string          `json:"created_by"`
-	ActivatedBy         *string         `json:"activated_by,omitempty"`
-	EndedBy             *string         `json:"ended_by,omitempty"`
-	CancelledBy         *string         `json:"cancelled_by,omitempty"`
-	CreatedAt           string          `json:"created_at"`
-	ActivatedAt         *string         `json:"activated_at"`
-	ActivateAt          *string         `json:"activate_at"`
-	EndedAtActual       *string         `json:"ended_at_actual"`
-	RequestID           *string         `json:"request_id"`
-	PublishedVersion    *int64          `json:"published_version"`
-	SupersedesID        *string         `json:"supersedes_id"`
-	DSSConstraintID     string          `json:"dss_constraint_id"`
-	DSSVersion          *int64          `json:"dss_version"`
-	Feature             json.RawMessage `json:"feature"`
-	ConstraintReference json.RawMessage `json:"constraint_reference"`
-	Deliveries          deliver.Summary `json:"deliveries"`
-	CISVersion          *string         `json:"cis_version"`
-	CISAgeS             *float64        `json:"cis_age_s"`
+	ID                  string            `json:"id"`
+	AnspRef             string            `json:"ansp_ref"`
+	Identifier          string            `json:"identifier"`
+	UspaceAirspaceID    string            `json:"uspace_airspace_id"`
+	ZoneType            string            `json:"zone_type"`
+	Geometry            json.RawMessage   `json:"geometry"`
+	RadiusM             *float64          `json:"radius_m"`
+	LowerM              float64           `json:"lower_m"`
+	LowerRef            string            `json:"lower_ref"`
+	UpperM              float64           `json:"upper_m"`
+	UpperRef            string            `json:"upper_ref"`
+	StartsAt            string            `json:"starts_at"`
+	EndsAt              string            `json:"ends_at"`
+	ReasonText          string            `json:"reason_text"`
+	State               string            `json:"state"`
+	AnspVersion         int64             `json:"ansp_version"`
+	CreatedBy           string            `json:"created_by"`
+	ActivatedBy         *string           `json:"activated_by,omitempty"`
+	EndedBy             *string           `json:"ended_by,omitempty"`
+	CancelledBy         *string           `json:"cancelled_by,omitempty"`
+	CreatedAt           string            `json:"created_at"`
+	ActivatedAt         *string           `json:"activated_at"`
+	ActivateAt          *string           `json:"activate_at"`
+	EndedAtActual       *string           `json:"ended_at_actual"`
+	RequestID           *string           `json:"request_id"`
+	PublishedVersion    *int64            `json:"published_version"`
+	SupersedesID        *string           `json:"supersedes_id"`
+	DSSConstraintID     string            `json:"dss_constraint_id"`
+	DSSVersion          *int64            `json:"dss_version"`
+	Feature             json.RawMessage   `json:"feature"`
+	ConstraintReference json.RawMessage   `json:"constraint_reference"`
+	DSS                 deliver.DSSStatus `json:"dss"`
+	Deliveries          deliver.Summary   `json:"deliveries"`
+	CISVersion          *string           `json:"cis_version"`
+	CISAgeS             *float64          `json:"cis_age_s"`
 }
 
 type listJSON struct {
@@ -511,8 +517,18 @@ func (rs *restrictionAPI) restrictionJSON(ctx context.Context, x restriction.Res
 		ActivatedAt: stampPtr(x.ActivatedAt), ActivateAt: stampPtr(x.ActivateAt), EndedAtActual: stampPtr(x.EndedAtActual),
 		RequestID: x.RequestID, PublishedVersion: x.PublishedVersion, SupersedesID: x.SupersedesID,
 		DSSConstraintID: x.DSSConstraintID, DSSVersion: x.DSSVersion, Feature: x.Feature,
-		ConstraintReference: json.RawMessage("null"), Deliveries: rs.deliveries(ctx, x), CISVersion: x.CISVersion, CISAgeS: age,
+		ConstraintReference: constraintReference(x), DSS: store.DSSStatusOf(x), Deliveries: rs.deliveries(ctx, x),
+		CISVersion: x.CISVersion, CISAgeS: age,
 	}
+}
+
+// constraintReference is the F3548 reference as the DSS last accepted
+// it (WP-9), null before the first write.
+func constraintReference(x restriction.Restriction) json.RawMessage {
+	if len(x.DSSReference) == 0 {
+		return json.RawMessage("null")
+	}
+	return x.DSSReference
 }
 
 type versionJSON struct {
@@ -531,7 +547,8 @@ type versionListJSON struct {
 }
 
 // toVersionJSON is v on the wire. constraint is the F3548 Constraint as
-// written to the DSS, which WP-9 does; until then it is null (the
+// written to the DSS (the reference the DSS accepted for this version
+// and its details, WP-9); null for a version the DSS never accepted (the
 // derived details stay in the store with their derivation).
 func toVersionJSON(v restriction.Version) versionJSON {
 	cons := json.RawMessage("null")

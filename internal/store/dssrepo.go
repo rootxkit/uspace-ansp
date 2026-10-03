@@ -11,11 +11,12 @@ import (
 	"github.com/rootxkit/uspace-core/f3548"
 
 	"github.com/rootxkit/uspace-ansp/internal/deliver"
+	"github.com/rootxkit/uspace-ansp/internal/dss"
 	"github.com/rootxkit/uspace-ansp/internal/store/relational"
 )
 
 // The DSS channel's rows (WP-9): deliver.Repo and deliver.Tx methods of
-// the F3548 constraint manager.
+// the F3548 constraint manager, and dss.Store for the details handler.
 
 // DSSInfo is what a DSS job of a version reads at its attempt.
 func (r DeliverRepo) DSSInfo(ctx context.Context, restrictionID string, version int64) (deliver.DSSInfo, error) {
@@ -194,4 +195,30 @@ func (t deliverTx) ClearAlarm(ctx context.Context, id, reason string) (deliver.A
 		return deliver.Alarm{}, false, err
 	}
 	return alarmFrom(row), true, nil
+}
+
+// DSSStore is dss.Store on the relational database.
+type DSSStore struct{ DB *Relational }
+
+var _ dss.Store = DSSStore{}
+
+// Written is the constraint id as the DSS last accepted it.
+func (s DSSStore) Written(ctx context.Context, id string, retention time.Duration) (dss.Written, error) {
+	cid, err := uuid.Parse(id)
+	if err != nil {
+		return dss.Written{}, dss.ErrUnknown
+	}
+	var out dss.Written
+	err = s.DB.Do(ctx, func(ctx context.Context, _ relational.DBTX, q *relational.Queries) error {
+		row, err := q.WrittenConstraint(ctx, relational.WrittenConstraintParams{RetentionS: secs(retention), ConstraintID: &cid})
+		if IsNoRows(err) {
+			return dss.ErrUnknown
+		}
+		if err != nil {
+			return err
+		}
+		out = dss.Written{Reference: row.Reference, Details: row.Details, Expired: row.Expired}
+		return nil
+	})
+	return out, err
 }

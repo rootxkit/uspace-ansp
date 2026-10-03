@@ -25,12 +25,12 @@
       }
     },
     "alarm": {
-      "description": "An alarm of the outbox (WP-8): cisp_not_published (active here, not yet published to the CISP for the current version after cisp_alarm_after_s), delivery_failed or delivery_abandoned; raised, acknowledged or cleared (duration_s = cleared_at - since). Never worded as lost (C-12).",
+      "description": "An alarm of the outbox (WP-8): cisp_not_published (active here, not yet published to the CISP for the current version after cisp_alarm_after_s), delivery_failed, delivery_abandoned, or uss_notify_late (WP-9: a subscriber notification the DSS named not delivered within CstrPublishedNotificationLatencySeconds of the DSS answer); raised, acknowledged or cleared (duration_s = cleared_at - since). Never worded as lost (C-12).",
       "type": "object",
       "required": ["id", "kind", "state", "since", "raised_at", "detail"],
       "properties": {
         "id": { "$ref": "#/$defs/ulid" },
-        "kind": { "enum": ["cisp_not_published", "delivery_failed", "delivery_abandoned"] },
+        "kind": { "enum": ["cisp_not_published", "delivery_failed", "delivery_abandoned", "uss_notify_late"] },
         "state": { "enum": ["open", "acknowledged", "cleared"] },
         "restriction_id": { "$ref": "#/$defs/ulid" },
         "ansp_version": { "type": "integer", "minimum": 1 },
@@ -44,6 +44,17 @@
         "acknowledged_by": { "type": "string" },
         "acknowledged_at": { "type": "string", "format": "date-time" },
         "ack_reason": { "type": "string", "maxLength": 1000 }
+      }
+    },
+    "dss": {
+      "description": "The restriction's standing in the DSS (WP-9): none, pending since T while a DSS write is queued (never holding the CISP publication, D6), written, deleted, or failed since T; ansp_version the version the DSS last accepted a put of, dss_version the DSS's version of the reference.",
+      "type": "object",
+      "required": ["state"],
+      "properties": {
+        "state": { "enum": ["none", "pending", "written", "deleted", "failed"] },
+        "since": { "type": "string", "format": "date-time" },
+        "ansp_version": { "type": "integer", "minimum": 1 },
+        "dss_version": { "type": "integer", "minimum": 0 }
       }
     },
     "body": {
@@ -93,7 +104,8 @@
           "description": "On a delivery outcome (WP-8), whether the CISP holds the current version.",
           "type": "boolean"
         },
-        "alarm": { "$ref": "#/$defs/alarm" }
+        "alarm": { "$ref": "#/$defs/alarm" },
+        "dss": { "$ref": "#/$defs/dss" }
       }
     }
   }
