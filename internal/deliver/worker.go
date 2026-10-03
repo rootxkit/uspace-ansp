@@ -155,7 +155,7 @@ func (w *Worker) Handle(ctx context.Context, m Msg) {
 	log = log.With(slog.String("restriction_id", d.RestrictionID), slog.Int64("ansp_version", d.AnspVersion),
 		slog.String("op", d.Op), slog.String("target", d.Target), slog.Int("attempt", d.Attempt))
 	a := Attempt{ID: d.ID, Token: token, Attempt: d.Attempt}
-	if d.Attempt > d.MaxAttempts || c.Now.After(d.WindowEndsAt) {
+	if d.Kind != KindOccurrence && (d.Attempt > d.MaxAttempts || c.Now.After(d.WindowEndsAt)) {
 		a.State, a.Outcome, a.Error = StateAbandoned, "abandoned",
 			fmt.Sprintf("not sent: %d attempts of at most %d, or the window ended at %s", d.Attempt-1, d.MaxAttempts, restriction.Stamp(d.WindowEndsAt))
 		w.finish(ctx, m, log, d, a, c.Now, nil)
@@ -179,6 +179,14 @@ func (w *Worker) Handle(ctx context.Context, m Msg) {
 		if out.verdict != nil {
 			v = *out.verdict
 		}
+		if d.Kind == KindOccurrence && intakeAbsent(resp) {
+			// The authority does not serve its intake yet: the report is
+			// held, not failed, and the row says why.
+			w.count(CounterOccurrenceIntakeAbsent)
+			v = Retry
+			a.Error = clip(fmt.Sprintf("authority intake not available (HTTP %d on %s): the report is held and tried again every %s",
+				resp.Status, PathOccurrences, w.Policy.OccurrenceHold), 1000)
+		}
 		switch v {
 		case Sent:
 			a.State, a.Outcome = StateSent, "sent"
@@ -186,10 +194,19 @@ func (w *Worker) Handle(ctx context.Context, m Msg) {
 			a.State, a.Outcome = StateFailed, "failed"
 		case Retry:
 			wait := max(w.Policy.Backoff(d.Attempt), resp.RetryAfter)
+			if d.Kind == KindOccurrence && (intakeAbsent(resp) || d.Attempt >= d.MaxAttempts || c.Now.After(d.WindowEndsAt)) {
+				wait = max(wait, w.Policy.OccurrenceHold)
+			}
 			a.RetryAt = c.Now.Add(a.Duration).Add(wait)
-			if d.Attempt >= d.MaxAttempts || a.RetryAt.After(d.WindowEndsAt) {
+			switch {
+			case d.Kind == KindOccurrence:
+				// Held until delivered, never abandoned (system audit F-2):
+				// a report under 376/2014 stays queued and visible
+				// (occurrence_undelivered), however long it waits.
+				a.State, a.Outcome = StateQueued, "retry"
+			case d.Attempt >= d.MaxAttempts || a.RetryAt.After(d.WindowEndsAt):
 				a.State, a.Outcome = StateAbandoned, "abandoned"
-			} else {
+			default:
 				a.State, a.Outcome = StateQueued, "retry"
 			}
 		}
@@ -198,6 +215,12 @@ func (w *Worker) Handle(ctx context.Context, m Msg) {
 		out.write = nil
 	}
 	w.finish(ctx, m, log, d, a, c.Now, out.write)
+}
+
+// intakeAbsent is whether the authority answered that it does not
+// serve the occurrence intake (404, 405 or 501).
+func intakeAbsent(r Response) bool {
+	return r.Status == http.StatusNotFound || r.Status == http.StatusMethodNotAllowed || r.Status == http.StatusNotImplemented
 }
 
 func statusPtr(s int) *int {

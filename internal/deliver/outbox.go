@@ -55,6 +55,10 @@ const (
 	// pair with another body, or a lower ansp_version for the ansp_ref,
 	// which no retry changes; each is failed at once with an alarm.
 	CounterCISPConflict = "deliver_cisp_conflict"
+	// CounterOccurrenceIntakeAbsent counts occurrence attempts the
+	// authority answered 404, 405 or 501 (its intake is not served): the
+	// report is held, queued, and tried again every OccurrenceHold.
+	CounterOccurrenceIntakeAbsent = "deliver_occurrence_intake_unavailable"
 )
 
 // BusPublisher puts a message on JetStream with a message id (the

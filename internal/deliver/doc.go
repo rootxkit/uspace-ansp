@@ -21,7 +21,11 @@
 // job is abandoned with an alarm; any other 4xx, and a CISP 409 on a
 // publication (deterministic: the pair with another body, or a lower
 // ansp_version), fails at once with the response excerpt and an alarm. Both alarms stay open until a person
-// acknowledges them with a reason (Alarms, audited). A message for a
+// acknowledges them with a reason (Alarms, audited). An occurrence
+// report is the exception to abandonment: it is held queued until the
+// authority takes or refuses it, every OccurrenceHold past its window,
+// and an authority that does not serve its intake (404, 405, 501) holds
+// it rather than failing it. A message for a
 // row that is already settled does nothing.
 //
 // CISP publications (02 F2, api/clients/cisp.yaml): POST

@@ -5,7 +5,9 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 )
 
 // occSender posts a fixed body through the Authority poster, as
@@ -127,5 +129,43 @@ func TestAuthorityPostRefusals(t *testing.T) {
 	}
 	if r := (&Authority{BaseURL: "https://authority.test", Tokens: &tokens{err: errors.New("down")}}).Post(ctx, PathOccurrences, nil); !strings.HasPrefix(r.Err, "token") {
 		t.Fatal(r)
+	}
+}
+
+// The authority's intake is not served yet (system audit F-2: a 404 on
+// /v1/occurrences): the report is held, queued and undelivered, with no
+// failure alarm per report, and is never abandoned, neither past its
+// attempt count nor past its window; it is retried every
+// OccurrenceHold. Its twin: once the authority takes it, it is sent.
+func TestOccurrenceHeldWhileIntakeAbsent(t *testing.T) {
+	h := newHarness(t, nil)
+	var served atomic.Bool
+	auth := newStub(t, func(int, recorded) (int, string) {
+		if served.Load() {
+			return http.StatusAccepted, `{}`
+		}
+		return http.StatusNotFound, `{"type":"https://schemas.uspace.ge/problems/not_found","status":404}`
+	})
+	pol := DefaultPolicy()
+	h.worker.Occurrences = &occSender{a: &Authority{BaseURL: auth.srv.URL, Client: NewHTTPClient(pol.HTTPTimeout, nil, nil), Tokens: h.tokens, Policy: pol}}
+	id := h.enqueueOccurrence("01K6P4B2C3D4E5F6G7H8J9KMNP", "ANSP-OCC-2026-0007")
+	h.repo.rows[id].MaxAttempts = 2
+	for i := range 3 {
+		m := h.deliver(id)
+		r := h.repo.row(id)
+		if r.State != StateQueued || m.acked || len(m.naked) != 1 || !strings.Contains(r.LastError, "intake") {
+			t.Fatalf("attempt %d: state %s acked %v naked %v error %q", i+1, r.State, m.acked, m.naked, r.LastError)
+		}
+		if want := testStart.Add(time.Duration(i) * 25 * time.Hour).Add(h.worker.Policy.OccurrenceHold); r.NextRetryAt.Before(want) {
+			t.Fatalf("attempt %d: next retry %s, before the hold %s", i+1, r.NextRetryAt, want)
+		}
+		h.clock.Advance(25 * time.Hour)
+	}
+	if len(h.repo.alarms) != 0 || h.counters.Get(CounterOccurrenceIntakeAbsent) != 3 {
+		t.Fatalf("alarms %+v counters %v", h.repo.alarms, h.counters.Snapshot())
+	}
+	served.Store(true)
+	if m := h.deliver(id); !m.acked || h.repo.row(id).State != StateSent {
+		t.Fatalf("not sent once the intake is served: %s", h.repo.row(id).State)
 	}
 }

@@ -68,6 +68,11 @@ type Policy struct {
 	// DSSPingEvery is how often the DSS's reachability is read while
 	// nothing is written (the readiness line).
 	DSSPingEvery time.Duration
+	// OccurrenceHold is the wait between attempts of an occurrence report
+	// the authority cannot take yet (its intake answers 404, 405 or 501),
+	// and of one past its window: an occurrence is held until delivered,
+	// never abandoned (system audit F-2).
+	OccurrenceHold time.Duration
 }
 
 // DefaultPolicy is the outbox's defaults.
@@ -84,6 +89,7 @@ func DefaultPolicy() Policy {
 		MaxDSSResponseBytes: f3548.MaxMessageBytes,
 		DetailsRetention:    f3548.ExternalDataMaxRetentionTimeHours * time.Hour,
 		DSSPingEvery:        30 * time.Second,
+		OccurrenceHold:      15 * time.Minute,
 	}
 }
 
@@ -110,6 +116,9 @@ func (p Policy) Validate() error {
 	}
 	if p.NotifyLatency <= 0 || p.NotifyWindow < p.BackoffMin || p.DetailsRetention <= 0 || p.DSSPingEvery <= 0 || p.MaxSubscribers < 1 {
 		errs = append(errs, core.Fieldf("dss", "latency, window, retention and ping period must be positive, the subscriber bound at least 1"))
+	}
+	if p.OccurrenceHold < p.BackoffMax {
+		errs = append(errs, core.Fieldf("occurrence_hold", "shorter than the longest backoff"))
 	}
 	return errors.Join(errs...)
 }
