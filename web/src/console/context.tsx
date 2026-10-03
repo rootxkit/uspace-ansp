@@ -5,7 +5,8 @@
 // shares (WS /v1/restrictions/stream, same origin, the session cookie on
 // the upgrade, M22). A 401 from any call, or a 4401 close of the stream,
 // is "signed out, sign in again"; the role shown here only arranges the
-// page, the API decides every request.
+// page, the API decides every request. A 2xx answer, or the stream live
+// again, after a sign-in elsewhere clears it.
 import { createContext, useCallback, useContext, useEffect, useEffectEvent, useMemo, useRef, useState, type ReactNode } from "react";
 import { useLang } from "@rootxkit/uspace-ui/i18n";
 import { useFeed, type ConsoleFrame, type LiveFeed } from "@rootxkit/uspace-ui/live";
@@ -49,12 +50,16 @@ export function ConsoleProvider({ children }: { children: ReactNode }) {
   const { lang } = useLang();
   const [signedOut, setSignedOut] = useState(false);
   const toSignedOut = useCallback(() => setSignedOut(true), []);
-  const client = useMemo(() => consoleClient(() => lang, toSignedOut), [lang, toSignedOut]);
+  // Signed in again (here or in another tab): the next 2xx clears it.
+  const toSignedIn = useCallback(() => setSignedOut(false), []);
+  const client = useMemo(() => consoleClient(() => lang, { onUnauthorized: toSignedOut, onAuthorized: toSignedIn }), [lang, toSignedOut, toSignedIn]);
   const [me, setMe] = useState<ApiMe | null>(null);
   const [meFailure, setMeFailure] = useState<CallFailure | null>(null);
   const listeners = useRef(new Set<FrameListener>());
 
+  // Read on mount and again when the console is signed in after a sign-out.
   useEffect(() => {
+    if (signedOut) return;
     let live = true;
     client
       .GET("/v1/auth/me")
@@ -72,7 +77,7 @@ export function ConsoleProvider({ children }: { children: ReactNode }) {
     return () => {
       live = false;
     };
-  }, [client]);
+  }, [client, signedOut]);
 
   const feed = useFeed({
     url: RESTRICTION_STREAM_PATH,
@@ -81,6 +86,14 @@ export function ConsoleProvider({ children }: { children: ReactNode }) {
     },
     onUnauthorized: toSignedOut,
   });
+
+  // The stream live again: its upgrade carried a session the API accepted.
+  // Adjusted while rendering, on the change only (no effect round trip).
+  const [connection, setConnection] = useState(feed.connection);
+  if (connection !== feed.connection) {
+    setConnection(feed.connection);
+    if (feed.connection === "live") setSignedOut(false);
+  }
 
   const onFrame = useCallback((listener: FrameListener) => {
     listeners.current.add(listener);

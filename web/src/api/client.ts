@@ -10,18 +10,34 @@ import type { Lang } from "@rootxkit/uspace-ui/i18n";
 import type { FieldError, Problem } from "@rootxkit/uspace-ui/model";
 import type { paths } from "./types";
 
+/** What the client tells the console about the session. */
+export interface SessionEvents {
+  /** A call answered 401: the session is gone. */
+  onUnauthorized(): void;
+  /** A call answered 2xx: the session is good (again, after a sign-in). */
+  onAuthorized?(): void;
+}
+
 /**
  * The console's client, on the BFF. `test` is for unit tests only: a
  * fetch and the origin a relative URL needs outside a browser.
  */
-export function consoleClient(lang: () => Lang, onUnauthorized: () => void, test?: { fetch: typeof fetch; origin: string }) {
-  return createClient<paths>({
+export function consoleClient(lang: () => Lang, session: SessionEvents, test?: { fetch: typeof fetch; origin: string }) {
+  const client = createClient<paths>({
     baseUrl: `${test?.origin ?? ""}${BFF_API_PREFIX}`,
     csrfToken: () => csrfToken(),
-    onUnauthorized,
+    onUnauthorized: () => session.onUnauthorized(),
     lang,
     ...(test === undefined ? {} : { fetch: test.fetch }),
   });
+  // A 2xx is a session the API accepted: the console is signed in (again).
+  client.use({
+    onResponse({ response }) {
+      if (response.ok) session.onAuthorized?.();
+      return undefined;
+    },
+  });
+  return client;
 }
 
 export type ConsoleClient = ReturnType<typeof consoleClient>;

@@ -37,7 +37,7 @@ async function sendTwice(first: () => Response | Promise<Response>): Promise<str
     if (n === 1) return first();
     return Response.json(created, { status: 201 });
   }) as unknown as typeof fetch;
-  const c = consoleClient(() => "en", () => undefined, { fetch: f, origin: "https://console.test" });
+  const c = consoleClient(() => "en", { onUnauthorized: () => undefined }, { fetch: f, origin: "https://console.test" });
   let held = "";
   for (let attempt = 0; attempt < 2; attempt++) {
     held = referenceFor(held);

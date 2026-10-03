@@ -230,6 +230,27 @@ test("a stale CIS projection says why nothing can be planned", async ({ page, re
   await expect(page.getByTestId("list-cis")).toContainText("projection age 400 s");
 });
 
+test("signed in again: the next 2xx clears the signed-out notice and reads /me again", async ({ page, context }) => {
+  await signIn(page, SUPER, true);
+  const good = await context.cookies();
+  await context.clearCookies();
+  // A session cookie the API does not know (the session ended elsewhere).
+  const exp = Math.floor(Date.now() / 1000) + 3600;
+  const payload = Buffer.from(JSON.stringify({ sub: "x", roles: ["watch_supervisor"], realm: "console", exp })).toString("base64url");
+  await context.addCookies([{ name: "uspace_session", value: `e30.${payload}.sig`, url: "http://127.0.0.1:3000", httpOnly: true, sameSite: "Strict" }]);
+  await page.goto("/en/restrictions");
+  await expect(page.getByTestId("signed-out")).toContainText("Signed out");
+  await expect(page.getByTestId("account")).toHaveCount(0);
+  // Signed in again in another tab: the browser holds a live session.
+  await context.clearCookies();
+  await context.addCookies(good);
+  // In-app navigation keeps the console mounted; its next call answers 2xx.
+  await page.getByRole("link", { name: "Surveillance adapters" }).click();
+  await expect(page).toHaveURL(/\/en\/adapters$/);
+  await expect(page.getByTestId("signed-out")).toHaveCount(0);
+  await expect(page.getByTestId("account")).toContainText("super1");
+});
+
 test("signed out: the stream's 4401 and the API's 401 say sign in again", async ({ page, context }) => {
   await signIn(page, SUPER, true);
   await context.clearCookies();

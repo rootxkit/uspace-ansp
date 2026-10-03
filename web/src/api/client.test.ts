@@ -20,7 +20,8 @@ function client(answer: () => Response | Promise<Response>) {
     calls.push(new Request(input, init));
     return answer();
   }) as unknown as typeof fetch;
-  return { c: consoleClient(() => "en", onUnauthorized, { fetch: f, origin: "https://console.test" }), onUnauthorized, calls };
+  const onAuthorized = vi.fn();
+  return { c: consoleClient(() => "en", { onUnauthorized, onAuthorized }, { fetch: f, origin: "https://console.test" }), onUnauthorized, onAuthorized, calls };
 }
 
 async function failureFrom(p: Promise<unknown>): Promise<CallFailure> {
@@ -65,6 +66,26 @@ describe("consoleClient", () => {
     const b = client(() => problem(403, "forbidden"));
     expect((await failureFrom(b.c.GET("/v1/auth/me"))).slug).toBe("forbidden");
     expect(b.onUnauthorized).not.toHaveBeenCalled();
+  });
+
+  it("calls onAuthorized on a 2xx after a 401 (signed in again), and not on the 401", async () => {
+    let status = 401;
+    const a = client(() => (status === 401 ? problem(401, "unauthenticated") : Response.json({ subject: "s", role: "supervisor" })));
+    expect((await failureFrom(a.c.GET("/v1/auth/me"))).status).toBe(401);
+    expect(a.onUnauthorized).toHaveBeenCalledTimes(1);
+    expect(a.onAuthorized).not.toHaveBeenCalled();
+    status = 200;
+    await a.c.GET("/v1/auth/me");
+    expect(a.onAuthorized).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not call onAuthorized on a refusal or an unreachable API", async () => {
+    const a = client(() => problem(403, "forbidden"));
+    await failureFrom(a.c.GET("/v1/auth/me"));
+    const b = client(() => Promise.reject(new TypeError("fetch failed")));
+    await failureFrom(b.c.GET("/v1/auth/me"));
+    expect(a.onAuthorized).not.toHaveBeenCalled();
+    expect(b.onAuthorized).not.toHaveBeenCalled();
   });
 
   it("maps an unreachable API to status 0, with nothing else claimed", async () => {
