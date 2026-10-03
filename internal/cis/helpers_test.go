@@ -109,6 +109,10 @@ type stubDataset struct {
 	body    []byte
 	// sig is the publisher's X-Publisher-Signature over body ("": none).
 	sig string
+	// current, when set, is served at GET /v1/{dataset} in place of
+	// body (body stays at /versions/{n}): a CISP or a proxy that
+	// alters one path and not the other.
+	current []byte
 }
 
 // stub is an in-test CISP (httptest, TLS) that records every request so
@@ -271,6 +275,10 @@ func (s *stub) serveDataset(w http.ResponseWriter, r *http.Request, d cis.Datase
 			}
 		}
 		_, _ = w.Write([]byte(`"}`))
+		return
+	}
+	if sd.current != nil {
+		_, _ = w.Write(sd.current)
 		return
 	}
 	_, _ = w.Write(sd.body)

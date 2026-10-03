@@ -1,6 +1,7 @@
 package cis_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -220,6 +221,45 @@ func TestUntrustedHeldThenSignedTaken(t *testing.T) {
 	}
 	if f.p.Version(cis.USpaceAirspace) != 4 || strings.Contains(f.p.Status(context.Background(), time.Now()).Line(), "held") {
 		t.Fatal("the signed version was not taken")
+	}
+}
+
+// The signature covers the bytes at /versions/{n}; a current read that
+// answers other bytes for the same version (a CISP that serves a signed
+// document on one path and a tampered one on the other, or a proxy that
+// alters one) is held, never installed. Its twin: the same bytes on
+// both paths are installed.
+func TestCurrentBodyDifferentFromSignedHeld(t *testing.T) {
+	f := newProjection(t, nil)
+	f.stub.publishAll()
+	f.pullAll(t)
+	f.stub.publish(cis.USpaceAirspace, 4, fixture(t, cis.USpaceAirspace, 4), "publisher")
+	// Version 4 still, and valid, but not the bytes the signature covers.
+	tampered := append(fixture(t, cis.USpaceAirspace, 4), '\n')
+	f.stub.mu.Lock()
+	f.stub.ds[cis.USpaceAirspace].current = tampered
+	f.stub.mu.Unlock()
+	var ue *cis.UntrustedError
+	if err := f.p.Pull(context.Background(), cis.USpaceAirspace, false); !errors.As(err, &ue) || ue.Version != 4 {
+		t.Fatalf("a current body other than the signed one: %v", err)
+	}
+	if f.p.Version(cis.USpaceAirspace) != 3 {
+		t.Fatal("the unsigned current body is in use")
+	}
+	if row, _ := f.store.row(cis.USpaceAirspace); row.Version != 3 {
+		t.Fatal("the unsigned current body was stored")
+	}
+	if !strings.Contains(ue.Reason, "differ") {
+		t.Fatalf("reason %q", ue.Reason)
+	}
+	f.stub.mu.Lock()
+	f.stub.ds[cis.USpaceAirspace].current = nil
+	f.stub.mu.Unlock()
+	if err := f.p.Pull(context.Background(), cis.USpaceAirspace, false); err != nil {
+		t.Fatal(err)
+	}
+	if row, _ := f.store.row(cis.USpaceAirspace); row.Version != 4 || !bytes.Equal(row.Body, fixture(t, cis.USpaceAirspace, 4)) {
+		t.Fatal("the signed version was not installed with its own bytes")
 	}
 }
 
