@@ -171,7 +171,7 @@ func TestCISReceiverMounted(t *testing.T) {
 	}
 	reached := false
 	mux := http.NewServeMux()
-	if _, err := mountAPI(mux, &auth.Guard{Machine: scopeVerifier{}, MTLS: mtls}, nil, nil, nil,
+	if _, err := mountAPI(mux, &auth.Guard{Machine: scopeVerifier{}, MTLS: mtls}, nil, nil,
 		http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { reached = true; w.WriteHeader(http.StatusAccepted) })); err != nil {
 		t.Fatal(err)
 	}

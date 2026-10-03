@@ -717,6 +717,7 @@ type mirror struct {
 var mirrors = []mirror{
 	{"MannedTrack", "../schemas/track/manned/v1.json", []string{"$defs", "body"}, nil, nil},
 	{"RestrictionStateBody", "../schemas/restriction/state/v1.json", []string{"$defs", "body"}, nil, nil},
+	{"CoordinationNotice", "../schemas/coordination/notice/v1.json", []string{"$defs", "body"}, nil, nil},
 	{"Problem", "../schemas/common/problem/v1/schema.json", nil, nil, nil},
 	{"EnvelopeHeader", "../schemas/common/envelope/v1/schema.json", nil, nil, []string{"schema", "body"}},
 	{"SourceStatusBody", "../schemas/common/source/status/v1/schema.json", []string{"$defs", "body"}, nil, nil},

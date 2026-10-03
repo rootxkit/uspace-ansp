@@ -109,7 +109,9 @@ package brief in `docs/WORKPACKAGES/`.
   with a `SOURCE` commit and a CI diff, bumped in a `build:` commit,
   never inside a feature PR; the lab aggregate replaces them.
 - **Schema ownership**: this repo owns `track/manned/v1`,
-  `restriction/state/v1` and `coordination/annex_v/v1`; it consumes
+  `restriction/state/v1`, `coordination/annex_v/v1` (the USSP's request
+  body) and `coordination/notice/v1` (the inbox item on `coord.v1` and the
+  console stream, PLAN section 15 row 24); it consumes
   `cis/*` from the CISP, `occurrence/v1` from the authority, and the
   envelope, `source/status/v1` and the console frames from the lab.
 

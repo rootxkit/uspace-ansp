@@ -44,7 +44,7 @@ func detailsServer(t *testing.T, st dss.Store) http.Handler {
 	}
 	mux := http.NewServeMux()
 	rs := &restrictionAPI{details: &dss.Details{Store: st}}
-	if _, err := mountAPI(mux, &auth.Guard{Machine: scopeVerifier{}, MTLS: mtls}, nil, rs, nil, nil); err != nil {
+	if _, err := mountAPI(mux, &auth.Guard{Machine: scopeVerifier{}, MTLS: mtls}, nil, rs, nil); err != nil {
 		t.Fatal(err)
 	}
 	return mux

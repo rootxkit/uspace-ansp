@@ -447,13 +447,13 @@ func (e CoordinationNoticeKind) Valid() bool {
 
 // Defines values for CoordinationNoticeMessageSchema.
 const (
-	CoordinationNoticeMessageSchemaCoordinationannexVv1 CoordinationNoticeMessageSchema = "coordination/annex_v/v1"
+	CoordinationNoticeMessageSchemaCoordinationnoticev1 CoordinationNoticeMessageSchema = "coordination/notice/v1"
 )
 
 // Valid indicates whether the value is a known member of the CoordinationNoticeMessageSchema enum.
 func (e CoordinationNoticeMessageSchema) Valid() bool {
 	switch e {
-	case CoordinationNoticeMessageSchemaCoordinationannexVv1:
+	case CoordinationNoticeMessageSchemaCoordinationnoticev1:
 		return true
 	default:
 		return false
@@ -489,10 +489,11 @@ func (e CoordinationNoticeMessageTimeSource) Valid() bool {
 
 // Defines values for DeliveryAlarmKind.
 const (
-	DeliveryAlarmKindCispNotPublished  DeliveryAlarmKind = "cisp_not_published"
-	DeliveryAlarmKindDeliveryAbandoned DeliveryAlarmKind = "delivery_abandoned"
-	DeliveryAlarmKindDeliveryFailed    DeliveryAlarmKind = "delivery_failed"
-	DeliveryAlarmKindUssNotifyLate     DeliveryAlarmKind = "uss_notify_late"
+	DeliveryAlarmKindCispNotPublished      DeliveryAlarmKind = "cisp_not_published"
+	DeliveryAlarmKindDeliveryAbandoned     DeliveryAlarmKind = "delivery_abandoned"
+	DeliveryAlarmKindDeliveryFailed        DeliveryAlarmKind = "delivery_failed"
+	DeliveryAlarmKindOccurrenceUndelivered DeliveryAlarmKind = "occurrence_undelivered"
+	DeliveryAlarmKindUssNotifyLate         DeliveryAlarmKind = "uss_notify_late"
 )
 
 // Valid indicates whether the value is a known member of the DeliveryAlarmKind enum.
@@ -503,6 +504,8 @@ func (e DeliveryAlarmKind) Valid() bool {
 	case DeliveryAlarmKindDeliveryAbandoned:
 		return true
 	case DeliveryAlarmKindDeliveryFailed:
+		return true
+	case DeliveryAlarmKindOccurrenceUndelivered:
 		return true
 	case DeliveryAlarmKindUssNotifyLate:
 		return true
@@ -1785,9 +1788,16 @@ type CoordinationInbox struct {
 	Truncated *bool                `json:"truncated,omitempty"`
 }
 
-// CoordinationNotice A notice as received and its state. acknowledged_by is the role of
-// the person, never a name. payload is the notice as received; it is
-// given to console sessions only.
+// CoordinationNotice A notice as received and its state (the body of
+// coordination/notice/v1, schemas/coordination/notice/v1.json).
+// acknowledged_by is the role of the person, never a name. payload
+// (the notice as received) and acknowledgement_note are given to
+// console sessions only. acknowledgement_required is true for a
+// nonconformance or contingent notice, which escalates when no person
+// acknowledges it within notice_escalation_s (escalated_at, then
+// again every 30 s: last_escalated_at, escalations); an intent_notice
+// or ended notice is informational. sender_unverified is true for a
+// notice accepted while no CIS USSP list was projected (WP-10).
 type CoordinationNotice struct {
 	// AckId Crockford base32, 26 characters (04 §2).
 	AckId ULID `json:"ack_id"`
@@ -1796,14 +1806,20 @@ type CoordinationNotice struct {
 	AcknowledgedAt *Timestamp `json:"acknowledged_at,omitempty"`
 
 	// AcknowledgedBy A console role (01 §4).
-	AcknowledgedBy       *Role    `json:"acknowledged_by,omitempty"`
-	AuthorisationNumbers []string `json:"authorisation_numbers"`
+	AcknowledgedBy          *Role    `json:"acknowledged_by,omitempty"`
+	AcknowledgementNote     *string  `json:"acknowledgement_note,omitempty"`
+	AcknowledgementRequired *bool    `json:"acknowledgement_required,omitempty"`
+	AuthorisationNumbers    []string `json:"authorisation_numbers"`
 
 	// EscalatedAt RFC 3339 UTC with Z, millisecond precision (02 §1).
 	EscalatedAt *Timestamp             `json:"escalated_at,omitempty"`
+	Escalations *int                   `json:"escalations,omitempty"`
 	IntentRefs  []openapi_types.UUID   `json:"intent_refs"`
 	Kind        CoordinationNoticeKind `json:"kind"`
-	NoticeRef   string                 `json:"notice_ref"`
+
+	// LastEscalatedAt RFC 3339 UTC with Z, millisecond precision (02 §1).
+	LastEscalatedAt *Timestamp `json:"last_escalated_at,omitempty"`
+	NoticeRef       string     `json:"notice_ref"`
 
 	// Payload An Annex V notice from a USSP to the ANSP (spec 02 F13, 04 §3.5; Reg. (EU) 2021/664 Art. 13(2), Annex V): intents touching controlled U-space airspace, non-conformance notices, contingent and ended notices, each with the intents' F3548 references, authorisation numbers, times and volumes. The request body of POST /v1/coordination/notices; uspace-ansp owns this schema because its API carries the body (decision record M14) and the USSP consumes it. This is an HTTP body, not an envelope message; it carries `schema` as every 04 message does. Volumes are F3548 Volume4D as uspace-core/f3548 generates them from the standard (W84 altitudes in metres, RFC3339 times). The schema is written without $defs so that api/openapi.yaml references it as a whole. Unknown members are ignored within the major (04 §4). A notice of kind nonconformance carries `nonconformance`.
 	Payload *AnnexVNotice `json:"payload,omitempty"`
@@ -1812,8 +1828,9 @@ type CoordinationNotice struct {
 	ReceivedAt Timestamp `json:"received_at"`
 
 	// RestrictionIds The restrictions the notice's volumes intersect, computed at receipt.
-	RestrictionIds *[]ULID `json:"restriction_ids,omitempty"`
-	SenderClientId string  `json:"sender_client_id"`
+	RestrictionIds   *[]ULID `json:"restriction_ids,omitempty"`
+	SenderClientId   string  `json:"sender_client_id"`
+	SenderUnverified *bool   `json:"sender_unverified,omitempty"`
 
 	// State received (the receipt), acknowledged (by a person, Art. 13(2)) or escalated (unacknowledged after notice_escalation_s).
 	State  NoticeState `json:"state"`
@@ -1823,13 +1840,23 @@ type CoordinationNotice struct {
 // CoordinationNoticeKind defines model for CoordinationNotice.Kind.
 type CoordinationNoticeKind string
 
-// CoordinationNoticeMessage A coordination/annex_v/v1 frame of the console stream; the body is the inbox item.
+// CoordinationNoticeMessage A coordination/notice/v1 frame of the console stream and of
+// coord.v1: the body is the inbox item (CoordinationNotice), not the
+// USSP's coordination/annex_v/v1 request body, which it carries as
+// payload (docs/PLAN.md section 15 row 24).
 type CoordinationNoticeMessage struct {
 	Backlog bool `json:"backlog"`
 
-	// Body A notice as received and its state. acknowledged_by is the role of
-	// the person, never a name. payload is the notice as received; it is
-	// given to console sessions only.
+	// Body A notice as received and its state (the body of
+	// coordination/notice/v1, schemas/coordination/notice/v1.json).
+	// acknowledged_by is the role of the person, never a name. payload
+	// (the notice as received) and acknowledgement_note are given to
+	// console sessions only. acknowledgement_required is true for a
+	// nonconformance or contingent notice, which escalates when no person
+	// acknowledges it within notice_escalation_s (escalated_at, then
+	// again every 30 s: last_escalated_at, escalations); an intent_notice
+	// or ended notice is informational. sender_unverified is true for a
+	// notice accepted while no CIS USSP list was projected (WP-10).
 	Body CoordinationNotice `json:"body"`
 
 	// CapturedAt RFC 3339 UTC with Z, millisecond precision (02 §1).
@@ -1884,7 +1911,11 @@ type DeliveriesSummary struct {
 // (WP-9) is a subscriber notification the DSS named not delivered
 // within CstrPublishedNotificationLatencySeconds of the DSS's
 // answer; it clears when the notification is delivered, superseded
-// or given up. The text never says "lost" (C-12).
+// or given up. occurrence_undelivered (WP-10) is an occurrence report
+// not delivered to the authority 60 h after its reporter became aware
+// (12 h before the 72 h of 376/2014 Art. 4(8)); a person's
+// acknowledgement leaves it open until the delivery is sent. The
+// text never says "lost" (C-12).
 type DeliveryAlarm struct {
 	AckReason *string `json:"ack_reason,omitempty"`
 
@@ -1895,7 +1926,7 @@ type DeliveryAlarm struct {
 	AcknowledgedBy *Role  `json:"acknowledged_by,omitempty"`
 	AnspVersion    *int64 `json:"ansp_version,omitempty"`
 
-	// ClearReason published, restriction_not_active or acknowledged; for uss_notify_late delivered, superseded, delivery_failed or delivery_abandoned.
+	// ClearReason published, restriction_not_active or acknowledged; for uss_notify_late delivered, superseded, delivery_failed or delivery_abandoned; for occurrence_undelivered delivered.
 	ClearReason *string `json:"clear_reason,omitempty"`
 
 	// ClearedAt RFC 3339 UTC with Z, millisecond precision (02 §1).
@@ -2793,7 +2824,11 @@ type RestrictionStateBody struct {
 	// (WP-9) is a subscriber notification the DSS named not delivered
 	// within CstrPublishedNotificationLatencySeconds of the DSS's
 	// answer; it clears when the notification is delivered, superseded
-	// or given up. The text never says "lost" (C-12).
+	// or given up. occurrence_undelivered (WP-10) is an occurrence report
+	// not delivered to the authority 60 h after its reporter became aware
+	// (12 h before the 72 h of 376/2014 Art. 4(8)); a person's
+	// acknowledgement leaves it open until the delivery is sent. The
+	// text never says "lost" (C-12).
 	Alarm       *DeliveryAlarm `json:"alarm,omitempty"`
 	AnspRef     string         `json:"ansp_ref"`
 	AnspVersion int64          `json:"ansp_version"`
@@ -3373,7 +3408,7 @@ func (t *CoordinationStreamFrame) FromCoordinationNoticeMessage(v CoordinationNo
 	if err != nil {
 		return err
 	}
-	b, err = runtime.JSONMerge(b, []byte(`{"schema":"coordination/annex_v/v1"}`))
+	b, err = runtime.JSONMerge(b, []byte(`{"schema":"coordination/notice/v1"}`))
 	t.union = b
 	return err
 }
@@ -3384,7 +3419,7 @@ func (t *CoordinationStreamFrame) MergeCoordinationNoticeMessage(v CoordinationN
 	if err != nil {
 		return err
 	}
-	b, err = runtime.JSONMerge(b, []byte(`{"schema":"coordination/annex_v/v1"}`))
+	b, err = runtime.JSONMerge(b, []byte(`{"schema":"coordination/notice/v1"}`))
 	if err != nil {
 		return err
 	}
@@ -3480,7 +3515,7 @@ func (t CoordinationStreamFrame) ValueByDiscriminator() (interface{}, error) {
 		return t.AsConsoleSnapshotMessage()
 	case "console/status/v1":
 		return t.AsConsoleStatusMessage()
-	case "coordination/annex_v/v1":
+	case "coordination/notice/v1":
 		return t.AsCoordinationNoticeMessage()
 	default:
 		return nil, errors.New("unknown discriminator value: " + discriminator)
@@ -4130,7 +4165,14 @@ type ClientInterface interface {
 	// is bound per ANSP_MTLS_MODE (M25). The answer is a receipt
 	// (202 with ack_id, M2): a person's acknowledgement follows on
 	// GET /v1/coordination/notices/{ack_id}. A repeat with the same
-	// notice_ref from the same sender answers the same receipt.
+	// notice_ref and the same body from the same sender answers the
+	// same receipt with 200 (nothing is stored twice); the same
+	// notice_ref with another body is refused 409 notice_ref_reused, so
+	// a second notice is never answered with the first one's receipt.
+	// With no CIS USSP list projected the notice is accepted and flagged
+	// sender_unverified (never refused for lack of this system's data).
+	// The restrictions the notice's volumes intersect are recorded
+	// with it (restriction_ids).
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -4149,7 +4191,14 @@ type ClientInterface interface {
 	// is bound per ANSP_MTLS_MODE (M25). The answer is a receipt
 	// (202 with ack_id, M2): a person's acknowledgement follows on
 	// GET /v1/coordination/notices/{ack_id}. A repeat with the same
-	// notice_ref from the same sender answers the same receipt.
+	// notice_ref and the same body from the same sender answers the
+	// same receipt with 200 (nothing is stored twice); the same
+	// notice_ref with another body is refused 409 notice_ref_reused, so
+	// a second notice is never answered with the first one's receipt.
+	// With no CIS USSP list projected the notice is accepted and flagged
+	// sender_unverified (never refused for lack of this system's data).
+	// The restrictions the notice's volumes intersect are recorded
+	// with it (restriction_ids).
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -4173,9 +4222,10 @@ type ClientInterface interface {
 	// GET /v1/restrictions/stream is (cookie on a same-origin upgrade
 	// checked against the Origin allow-list, or a bearer; M22).
 	// Frames: console/snapshot/v1 on connect and on every
-	// console/subscribe/v1, coordination/annex_v/v1 for every new
-	// notice and every state change (received, acknowledged,
-	// escalated; the body is the inbox item), console/status/v1 on
+	// console/subscribe/v1 (its notices member is the open inbox),
+	// coordination/notice/v1 for every new notice and every state
+	// change (received, acknowledged, each escalation every 30 s until
+	// acknowledged; the body is the inbox item), console/status/v1 on
 	// connect and every 2 s. 4401 closes a session that ended.
 	//
 	// Corresponds with GET /v1/coordination/stream (the `StreamCoordination` operationId).
@@ -5050,7 +5100,14 @@ func (c *Client) AcknowledgeCoordinationNotice(ctx context.Context, id NoticeID,
 // is bound per ANSP_MTLS_MODE (M25). The answer is a receipt
 // (202 with ack_id, M2): a person's acknowledgement follows on
 // GET /v1/coordination/notices/{ack_id}. A repeat with the same
-// notice_ref from the same sender answers the same receipt.
+// notice_ref and the same body from the same sender answers the
+// same receipt with 200 (nothing is stored twice); the same
+// notice_ref with another body is refused 409 notice_ref_reused, so
+// a second notice is never answered with the first one's receipt.
+// With no CIS USSP list projected the notice is accepted and flagged
+// sender_unverified (never refused for lack of this system's data).
+// The restrictions the notice's volumes intersect are recorded
+// with it (restriction_ids).
 //
 // Takes any type of body and a specified content type.
 //
@@ -5079,7 +5136,14 @@ func (c *Client) SubmitCoordinationNoticeWithBody(ctx context.Context, contentTy
 // is bound per ANSP_MTLS_MODE (M25). The answer is a receipt
 // (202 with ack_id, M2): a person's acknowledgement follows on
 // GET /v1/coordination/notices/{ack_id}. A repeat with the same
-// notice_ref from the same sender answers the same receipt.
+// notice_ref and the same body from the same sender answers the
+// same receipt with 200 (nothing is stored twice); the same
+// notice_ref with another body is refused 409 notice_ref_reused, so
+// a second notice is never answered with the first one's receipt.
+// With no CIS USSP list projected the notice is accepted and flagged
+// sender_unverified (never refused for lack of this system's data).
+// The restrictions the notice's volumes intersect are recorded
+// with it (restriction_ids).
 //
 // Takes a body of the `application/json` content type.
 //
@@ -5123,9 +5187,10 @@ func (c *Client) GetCoordinationNotice(ctx context.Context, ackId AckID, reqEdit
 // GET /v1/restrictions/stream is (cookie on a same-origin upgrade
 // checked against the Origin allow-list, or a bearer; M22).
 // Frames: console/snapshot/v1 on connect and on every
-// console/subscribe/v1, coordination/annex_v/v1 for every new
-// notice and every state change (received, acknowledged,
-// escalated; the body is the inbox item), console/status/v1 on
+// console/subscribe/v1 (its notices member is the open inbox),
+// coordination/notice/v1 for every new notice and every state
+// change (received, acknowledged, each escalation every 30 s until
+// acknowledged; the body is the inbox item), console/status/v1 on
 // connect and every 2 s. 4401 closes a session that ended.
 //
 // Corresponds with GET /v1/coordination/stream (the `StreamCoordination` operationId).
@@ -8144,7 +8209,14 @@ type ClientWithResponsesInterface interface {
 	// is bound per ANSP_MTLS_MODE (M25). The answer is a receipt
 	// (202 with ack_id, M2): a person's acknowledgement follows on
 	// GET /v1/coordination/notices/{ack_id}. A repeat with the same
-	// notice_ref from the same sender answers the same receipt.
+	// notice_ref and the same body from the same sender answers the
+	// same receipt with 200 (nothing is stored twice); the same
+	// notice_ref with another body is refused 409 notice_ref_reused, so
+	// a second notice is never answered with the first one's receipt.
+	// With no CIS USSP list projected the notice is accepted and flagged
+	// sender_unverified (never refused for lack of this system's data).
+	// The restrictions the notice's volumes intersect are recorded
+	// with it (restriction_ids).
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -8163,7 +8235,14 @@ type ClientWithResponsesInterface interface {
 	// is bound per ANSP_MTLS_MODE (M25). The answer is a receipt
 	// (202 with ack_id, M2): a person's acknowledgement follows on
 	// GET /v1/coordination/notices/{ack_id}. A repeat with the same
-	// notice_ref from the same sender answers the same receipt.
+	// notice_ref and the same body from the same sender answers the
+	// same receipt with 200 (nothing is stored twice); the same
+	// notice_ref with another body is refused 409 notice_ref_reused, so
+	// a second notice is never answered with the first one's receipt.
+	// With no CIS USSP list projected the notice is accepted and flagged
+	// sender_unverified (never refused for lack of this system's data).
+	// The restrictions the notice's volumes intersect are recorded
+	// with it (restriction_ids).
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -8189,9 +8268,10 @@ type ClientWithResponsesInterface interface {
 	// GET /v1/restrictions/stream is (cookie on a same-origin upgrade
 	// checked against the Origin allow-list, or a bearer; M22).
 	// Frames: console/snapshot/v1 on connect and on every
-	// console/subscribe/v1, coordination/annex_v/v1 for every new
-	// notice and every state change (received, acknowledged,
-	// escalated; the body is the inbox item), console/status/v1 on
+	// console/subscribe/v1 (its notices member is the open inbox),
+	// coordination/notice/v1 for every new notice and every state
+	// change (received, acknowledged, each escalation every 30 s until
+	// acknowledged; the body is the inbox item), console/status/v1 on
 	// connect and every 2 s. 4401 closes a session that ended.
 	//
 	// Returns a wrapper object for the known response body format(s).
@@ -9774,6 +9854,8 @@ type SubmitCoordinationNoticeResponse503Headers struct {
 type SubmitCoordinationNoticeResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *NoticeReceipt
 	// JSON202 the response for an HTTP 202 `application/json` response
 	JSON202 *NoticeReceipt
 	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
@@ -9782,8 +9864,12 @@ type SubmitCoordinationNoticeResponse struct {
 	ApplicationproblemJSON401 *Unauthorized
 	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
 	ApplicationproblemJSON403 *Forbidden
+	// ApplicationproblemJSON409 the response for an HTTP 409 `application/problem+json` response
+	ApplicationproblemJSON409 *Conflict
 	// ApplicationproblemJSON413 the response for an HTTP 413 `application/problem+json` response
 	ApplicationproblemJSON413 *TooLarge
+	// ApplicationproblemJSON415 the response for an HTTP 415 `application/problem+json` response
+	ApplicationproblemJSON415 *UnsupportedMediaType
 	// ApplicationproblemJSON429 the response for an HTTP 429 `application/problem+json` response
 	ApplicationproblemJSON429 *RateLimited
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
@@ -9794,6 +9880,11 @@ type SubmitCoordinationNoticeResponse struct {
 	Headers429 *SubmitCoordinationNoticeResponse429Headers
 	// Headers503 the parsed response headers for an HTTP 503 response
 	Headers503 *SubmitCoordinationNoticeResponse503Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r SubmitCoordinationNoticeResponse) GetJSON200() *NoticeReceipt {
+	return r.JSON200
 }
 
 // GetJSON202 returns the response for an HTTP 202 `application/json` response
@@ -9816,9 +9907,19 @@ func (r SubmitCoordinationNoticeResponse) GetApplicationproblemJSON403() *Forbid
 	return r.ApplicationproblemJSON403
 }
 
+// GetApplicationproblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
+func (r SubmitCoordinationNoticeResponse) GetApplicationproblemJSON409() *Conflict {
+	return r.ApplicationproblemJSON409
+}
+
 // GetApplicationproblemJSON413 returns the response for an HTTP 413 `application/problem+json` response
 func (r SubmitCoordinationNoticeResponse) GetApplicationproblemJSON413() *TooLarge {
 	return r.ApplicationproblemJSON413
+}
+
+// GetApplicationproblemJSON415 returns the response for an HTTP 415 `application/problem+json` response
+func (r SubmitCoordinationNoticeResponse) GetApplicationproblemJSON415() *UnsupportedMediaType {
+	return r.ApplicationproblemJSON415
 }
 
 // GetApplicationproblemJSON429 returns the response for an HTTP 429 `application/problem+json` response
@@ -12711,7 +12812,14 @@ func (c *ClientWithResponses) AcknowledgeCoordinationNoticeWithResponse(ctx cont
 // is bound per ANSP_MTLS_MODE (M25). The answer is a receipt
 // (202 with ack_id, M2): a person's acknowledgement follows on
 // GET /v1/coordination/notices/{ack_id}. A repeat with the same
-// notice_ref from the same sender answers the same receipt.
+// notice_ref and the same body from the same sender answers the
+// same receipt with 200 (nothing is stored twice); the same
+// notice_ref with another body is refused 409 notice_ref_reused, so
+// a second notice is never answered with the first one's receipt.
+// With no CIS USSP list projected the notice is accepted and flagged
+// sender_unverified (never refused for lack of this system's data).
+// The restrictions the notice's volumes intersect are recorded
+// with it (restriction_ids).
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -12736,7 +12844,14 @@ func (c *ClientWithResponses) SubmitCoordinationNoticeWithBodyWithResponse(ctx c
 // is bound per ANSP_MTLS_MODE (M25). The answer is a receipt
 // (202 with ack_id, M2): a person's acknowledgement follows on
 // GET /v1/coordination/notices/{ack_id}. A repeat with the same
-// notice_ref from the same sender answers the same receipt.
+// notice_ref and the same body from the same sender answers the
+// same receipt with 200 (nothing is stored twice); the same
+// notice_ref with another body is refused 409 notice_ref_reused, so
+// a second notice is never answered with the first one's receipt.
+// With no CIS USSP list projected the notice is accepted and flagged
+// sender_unverified (never refused for lack of this system's data).
+// The restrictions the notice's volumes intersect are recorded
+// with it (restriction_ids).
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -12774,9 +12889,10 @@ func (c *ClientWithResponses) GetCoordinationNoticeWithResponse(ctx context.Cont
 // GET /v1/restrictions/stream is (cookie on a same-origin upgrade
 // checked against the Origin allow-list, or a bearer; M22).
 // Frames: console/snapshot/v1 on connect and on every
-// console/subscribe/v1, coordination/annex_v/v1 for every new
-// notice and every state change (received, acknowledged,
-// escalated; the body is the inbox item), console/status/v1 on
+// console/subscribe/v1 (its notices member is the open inbox),
+// coordination/notice/v1 for every new notice and every state
+// change (received, acknowledged, each escalation every 30 s until
+// acknowledged; the body is the inbox item), console/status/v1 on
 // connect and every 2 s. 4401 closes a session that ended.
 //
 // Returns a wrapper object for the known response body format(s).
@@ -14474,6 +14590,13 @@ func ParseSubmitCoordinationNoticeResponse(rsp *http.Response) (*SubmitCoordinat
 	}
 
 	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest NoticeReceipt
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 202:
 		var dest NoticeReceipt
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -14502,12 +14625,26 @@ func ParseSubmitCoordinationNoticeResponse(rsp *http.Response) (*SubmitCoordinat
 		}
 		response.ApplicationproblemJSON403 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Conflict
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON409 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 413:
 		var dest TooLarge
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
 		response.ApplicationproblemJSON413 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 415:
+		var dest UnsupportedMediaType
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON415 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
 		var dest RateLimited
@@ -19460,6 +19597,20 @@ type SubmitCoordinationNoticeResponseObject interface {
 	VisitSubmitCoordinationNoticeResponse(w http.ResponseWriter) error
 }
 
+type SubmitCoordinationNotice200JSONResponse NoticeReceipt
+
+func (response SubmitCoordinationNotice200JSONResponse) VisitSubmitCoordinationNoticeResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type SubmitCoordinationNotice202JSONResponse NoticeReceipt
 
 func (response SubmitCoordinationNotice202JSONResponse) VisitSubmitCoordinationNoticeResponse(w http.ResponseWriter) error {
@@ -19525,6 +19676,22 @@ func (response SubmitCoordinationNotice403ApplicationProblemPlusJSONResponse) Vi
 	return err
 }
 
+type SubmitCoordinationNotice409ApplicationProblemPlusJSONResponse struct {
+	ConflictApplicationProblemPlusJSONResponse
+}
+
+func (response SubmitCoordinationNotice409ApplicationProblemPlusJSONResponse) VisitSubmitCoordinationNoticeResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type SubmitCoordinationNotice413ApplicationProblemPlusJSONResponse struct {
 	TooLargeApplicationProblemPlusJSONResponse
 }
@@ -19537,6 +19704,22 @@ func (response SubmitCoordinationNotice413ApplicationProblemPlusJSONResponse) Vi
 	}
 	w.Header().Set("Content-Type", "application/problem+json")
 	w.WriteHeader(413)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SubmitCoordinationNotice415ApplicationProblemPlusJSONResponse struct {
+	UnsupportedMediaTypeApplicationProblemPlusJSONResponse
+}
+
+func (response SubmitCoordinationNotice415ApplicationProblemPlusJSONResponse) VisitSubmitCoordinationNoticeResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(415)
 	_, err := buf.WriteTo(w)
 	return err
 }

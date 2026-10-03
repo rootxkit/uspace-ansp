@@ -126,7 +126,8 @@ type Config struct {
 	CISPClientKeyFile  string `env:"ANSP_CISP_CLIENT_KEY_FILE"`
 
 	// SessionKeyFile is the PEM RSA key that signs console sessions;
-	// SecretsKeyFile the 32-byte key that seals TOTP secrets at rest.
+	// SecretsKeyFile the 32-byte key that seals TOTP secrets and the
+	// occurrence reporter references (WP-10) at rest.
 	SessionKeyFile string `env:"ANSP_SESSION_KEY_FILE"`
 	SecretsKeyFile string `env:"ANSP_SECRETS_KEY_FILE"`
 	// Sign-in limits (S-15): per address and per username per minute in

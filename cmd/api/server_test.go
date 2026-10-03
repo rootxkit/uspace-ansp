@@ -37,7 +37,7 @@ func testServer(t *testing.T, h *auth.Handlers) (*auth.Routes, http.Handler) {
 		t.Fatal(err)
 	}
 	mux := http.NewServeMux()
-	rt, err := mountAPI(mux, &auth.Guard{Machine: scopeVerifier{}, MTLS: mtls}, h, nil, nil, nil)
+	rt, err := mountAPI(mux, &auth.Guard{Machine: scopeVerifier{}, MTLS: mtls}, h, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -96,8 +96,9 @@ func TestUnimplementedAndRefusals(t *testing.T) {
 		code                                   int
 		slug                                   string
 	}{
-		// Presence: a caller the rule admits reaches the (501) handler.
-		{"token admitted", "GET", "/v1/coordination/notices/01K6P3Q8Y2D6W4Z1V7R5T9X3MB", "scopes:ansp.coordination", "", "", 501, apierr.SlugNotImplemented},
+		// Presence: a caller the rule admits reaches the handler; WP-10
+		// serves the inbox, which without the database says so.
+		{"token admitted", "GET", "/v1/coordination/notices/01K6P3Q8Y2D6W4Z1V7R5T9X3MB", "scopes:ansp.coordination", "", "", 503, apierr.SlugUnavailable},
 		// WP-5 serves the restrictions; without the database they say so.
 		{"restrictions without a database", "GET", "/v1/restrictions", "scopes:ansp.coordination", "", "", 503, apierr.SlugUnavailable},
 		{"restriction request without a database", "POST", "/v1/restriction-requests", "scopes:ansp.requests", "application/json", "{}", 503, apierr.SlugUnavailable},

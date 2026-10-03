@@ -608,6 +608,9 @@ components:
         authorisation_numbers: [GEO-UAS-2026-000183]
         received_at: "2026-10-02T12:31:02.118Z"
         state: received
+        acknowledgement_required: true
+        sender_unverified: false
+        escalations: 0
         restriction_ids: [01K6P0A1B2C3D4E5F6G7H8J9KM]
         payload: *AnnexVNonconformance
     CoordinationNoticeAcknowledged:
@@ -622,8 +625,11 @@ components:
         authorisation_numbers: [GEO-UAS-2026-000183]
         received_at: "2026-10-02T12:31:02.118Z"
         state: acknowledged
+        acknowledgement_required: true
+        sender_unverified: false
         acknowledged_by: watch_supervisor
         acknowledged_at: "2026-10-02T12:31:40.000Z"
+        escalations: 0
         restriction_ids: [01K6P0A1B2C3D4E5F6G7H8J9KM]
     RestrictionPlanned:
       summary: A planned restriction
@@ -944,9 +950,9 @@ components:
           ansp_version: 2
           feature: *Ed318Feature
     CoordinationNoticeFrame:
-      summary: A coordination/annex_v/v1 frame of the console stream
+      summary: A coordination/notice/v1 frame of the console stream
       value: &CoordinationNoticeFrame
-        schema: coordination/annex_v/v1
+        schema: coordination/notice/v1
         msg_id: 01K6P3Q8Y2D6W4Z1V7R5T9X3MC
         producer: ansp/api
         ts: "2026-10-02T12:31:02.118Z"
@@ -1673,9 +1679,16 @@ components:
     CoordinationNotice:
       type: object
       description: |
-        A notice as received and its state. acknowledged_by is the role of
-        the person, never a name. payload is the notice as received; it is
-        given to console sessions only.
+        A notice as received and its state (the body of
+        coordination/notice/v1, schemas/coordination/notice/v1.json).
+        acknowledged_by is the role of the person, never a name. payload
+        (the notice as received) and acknowledgement_note are given to
+        console sessions only. acknowledgement_required is true for a
+        nonconformance or contingent notice, which escalates when no person
+        acknowledges it within notice_escalation_s (escalated_at, then
+        again every 30 s: last_escalated_at, escalations); an intent_notice
+        or ended notice is informational. sender_unverified is true for a
+        notice accepted while no CIS USSP list was projected (WP-10).
       required: [ack_id, kind, sender_client_id, ussp_id, notice_ref, intent_refs, authorisation_numbers, received_at, state]
       properties:
         ack_id:
@@ -1708,6 +1721,18 @@ components:
           $ref: "#/components/schemas/Timestamp"
         escalated_at:
           $ref: "#/components/schemas/Timestamp"
+        acknowledgement_required:
+          type: boolean
+        sender_unverified:
+          type: boolean
+        acknowledgement_note:
+          type: string
+          maxLength: 500
+        last_escalated_at:
+          $ref: "#/components/schemas/Timestamp"
+        escalations:
+          type: integer
+          minimum: 0
         restriction_ids:
           type: array
           description: The restrictions the notice's volumes intersect, computed at receipt.
@@ -2349,14 +2374,18 @@ components:
         (WP-9) is a subscriber notification the DSS named not delivered
         within CstrPublishedNotificationLatencySeconds of the DSS's
         answer; it clears when the notification is delivered, superseded
-        or given up. The text never says "lost" (C-12).
+        or given up. occurrence_undelivered (WP-10) is an occurrence report
+        not delivered to the authority 60 h after its reporter became aware
+        (12 h before the 72 h of 376/2014 Art. 4(8)); a person's
+        acknowledgement leaves it open until the delivery is sent. The
+        text never says "lost" (C-12).
       required: [id, kind, state, since, raised_at, detail]
       properties:
         id:
           $ref: "#/components/schemas/ULID"
         kind:
           type: string
-          enum: [cisp_not_published, delivery_failed, delivery_abandoned, uss_notify_late]
+          enum: [cisp_not_published, delivery_failed, delivery_abandoned, uss_notify_late, occurrence_undelivered]
         state:
           type: string
           enum: [open, acknowledged, cleared]
@@ -2379,7 +2408,7 @@ components:
           $ref: "#/components/schemas/Timestamp"
         clear_reason:
           type: string
-          description: published, restriction_not_active or acknowledged; for uss_notify_late delivered, superseded, delivery_failed or delivery_abandoned.
+          description: published, restriction_not_active or acknowledged; for uss_notify_late delivered, superseded, delivery_failed or delivery_abandoned; for occurrence_undelivered delivered.
         duration_s:
           type: number
           minimum: 0
@@ -2422,7 +2451,11 @@ components:
             body:
               $ref: "#/components/schemas/RestrictionStateBody"
     CoordinationNoticeMessage:
-      description: A coordination/annex_v/v1 frame of the console stream; the body is the inbox item.
+      description: |
+        A coordination/notice/v1 frame of the console stream and of
+        coord.v1: the body is the inbox item (CoordinationNotice), not the
+        USSP's coordination/annex_v/v1 request body, which it carries as
+        payload (docs/PLAN.md section 15 row 24).
       allOf:
         - $ref: "#/components/schemas/EnvelopeHeader"
         - type: object
@@ -2430,7 +2463,7 @@ components:
           properties:
             schema:
               type: string
-              enum: [coordination/annex_v/v1]
+              enum: [coordination/notice/v1]
             body:
               $ref: "#/components/schemas/CoordinationNotice"
     SourceStatusBody:
@@ -2685,7 +2718,7 @@ components:
       discriminator:
         propertyName: schema
         mapping:
-          coordination/annex_v/v1: "#/components/schemas/CoordinationNoticeMessage"
+          coordination/notice/v1: "#/components/schemas/CoordinationNoticeMessage"
           console/status/v1: "#/components/schemas/ConsoleStatusMessage"
           console/snapshot/v1: "#/components/schemas/ConsoleSnapshotMessage"
 
@@ -3408,7 +3441,14 @@ paths:
         is bound per ANSP_MTLS_MODE (M25). The answer is a receipt
         (202 with ack_id, M2): a person's acknowledgement follows on
         GET /v1/coordination/notices/{ack_id}. A repeat with the same
-        notice_ref from the same sender answers the same receipt.
+        notice_ref and the same body from the same sender answers the
+        same receipt with 200 (nothing is stored twice); the same
+        notice_ref with another body is refused 409 notice_ref_reused, so
+        a second notice is never answered with the first one's receipt.
+        With no CIS USSP list projected the notice is accepted and flagged
+        sender_unverified (never refused for lack of this system's data).
+        The restrictions the notice's volumes intersect are recorded
+        with it (restriction_ids).
       security:
         - ecosystemToken: [ansp.coordination]
       requestBody:
@@ -3429,14 +3469,28 @@ paths:
                 ack_id: 01K6P3Q8Y2D6W4Z1V7R5T9X3MB
                 state: received
                 received_at: "2026-10-02T12:31:02.118Z"
+        "200":
+          description: A repeat of a notice received before; its first receipt.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NoticeReceipt"
+              example:
+                ack_id: 01K6P3Q8Y2D6W4Z1V7R5T9X3MB
+                state: received
+                received_at: "2026-10-02T12:31:02.118Z"
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
         "413":
           $ref: "#/components/responses/TooLarge"
+        "415":
+          $ref: "#/components/responses/UnsupportedMediaType"
         "429":
           $ref: "#/components/responses/RateLimited"
         "503":
@@ -3581,9 +3635,10 @@ paths:
         GET /v1/restrictions/stream is (cookie on a same-origin upgrade
         checked against the Origin allow-list, or a bearer; M22).
         Frames: console/snapshot/v1 on connect and on every
-        console/subscribe/v1, coordination/annex_v/v1 for every new
-        notice and every state change (received, acknowledged,
-        escalated; the body is the inbox item), console/status/v1 on
+        console/subscribe/v1 (its notices member is the open inbox),
+        coordination/notice/v1 for every new notice and every state
+        change (received, acknowledged, each escalation every 30 s until
+        acknowledged; the body is the inbox item), console/status/v1 on
         connect and every 2 s. 4401 closes a session that ended.
       security:
         - consoleSession: []

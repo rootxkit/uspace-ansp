@@ -22,8 +22,6 @@ var epoch = time.Unix(0, 0)
 
 func secs(d time.Duration) float64 { return d.Seconds() }
 
-func ptr[T any](v T) *T { return &v }
-
 func deref[T any](p *T) T {
 	var z T
 	if p == nil {
@@ -370,8 +368,8 @@ func (t deliverTx) Insert(ctx context.Context, j deliver.Job, maxAttempts int, w
 		pv = &j.PolicyVersion
 	}
 	_, err := t.tx.Q.InsertDelivery(ctx, relational.InsertDeliveryParams{
-		ID: j.ID, Kind: relational.DeliveryKind(j.Kind), SubjectRef: j.SubjectRef(), RestrictionID: ptr(j.RestrictionID),
-		AnspVersion: ptr(j.AnspVersion), Op: j.Op, Target: j.Target, IdempotencyKey: j.IdempotencyKey(),
+		ID: j.ID, Kind: relational.DeliveryKind(j.Kind), SubjectRef: j.SubjectRef(), RestrictionID: textPtr(j.RestrictionID),
+		AnspVersion: nonZero(j.AnspVersion), Op: j.Op, Target: j.Target, IdempotencyKey: j.IdempotencyKey(),
 		MaxAttempts: i32(maxAttempts), WindowS: secs(window), Body: j.Body, PolicyVersion: pv,
 	})
 	if IsNoRows(err) {
