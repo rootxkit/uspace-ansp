@@ -3,6 +3,7 @@ package obs
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -221,5 +222,47 @@ func TestServeCountsInternalErrorsOnMetrics(t *testing.T) {
 	}
 	if !strings.Contains(string(metrics), "\nhttp_internal_errors 1\n") || !strings.Contains(logs.String(), MsgInternalError) {
 		t.Fatalf("metrics:\n%s\nlog:\n%s", metrics, logs.String())
+	}
+}
+
+// A Server served twice (a restart in the same process) registers its
+// error counters once: the second Serve starts and /metrics still
+// gathers, without a duplicate-metric error. No Mux: Serve's own routes
+// go on a fresh mux each time.
+func TestServeTwiceStillGathersMetrics(t *testing.T) {
+	c := cfg()
+	reg := Metrics()
+	s := &Server{Config: c, Logger: LoggerTo(io.Discard, c), Registry: reg}
+	for round := 1; round <= 2; round++ {
+		addrCh := make(chan string, 1)
+		s.ready = func(a string) { addrCh <- a }
+		ctx, cancel := context.WithCancel(context.Background())
+		done := make(chan error, 1)
+		go func() { done <- s.Serve(ctx) }()
+		var base string
+		select {
+		case a := <-addrCh:
+			base = "http://" + a
+		case err := <-done:
+			cancel()
+			t.Fatalf("round %d: Serve returned %v", round, err)
+		}
+		s.errs.Inc(CounterInternalErrors)
+		resp, err := http.Get(base + "/metrics")
+		if err != nil {
+			t.Fatal(err)
+		}
+		metrics, _ := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		cancel()
+		if err := <-done; err != nil {
+			t.Fatal(err)
+		}
+		if want := fmt.Sprintf("\nhttp_internal_errors %d\n", round); resp.StatusCode != http.StatusOK || !strings.Contains(string(metrics), want) {
+			t.Fatalf("round %d: %d, no %q in:\n%s", round, resp.StatusCode, want, metrics)
+		}
+		if _, err := reg.Gather(); err != nil {
+			t.Fatalf("round %d: gather: %v", round, err)
+		}
 	}
 }

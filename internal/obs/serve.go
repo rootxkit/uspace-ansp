@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -41,8 +42,13 @@ type Server struct {
 	// ready, when set, receives the bound address once listening (tests).
 	ready func(addr string)
 
-	// errs are ServerErrors' counters, exported on Registry.
-	errs core.Counters
+	// errs are ServerErrors' counters, exported on Registry once
+	// (errsOnce) however many times Serve runs: the collector is
+	// unchecked, so a second Register would succeed and every scrape
+	// would then fail on duplicate metrics.
+	errs       core.Counters
+	errsOnce   sync.Once
+	errsRegErr error
 }
 
 // Serve listens and serves until ctx ends, then stops accepting, lets
@@ -65,8 +71,9 @@ func (s *Server) Serve(ctx context.Context) error {
 	mux.Handle("GET /readyz", h.Readiness(s.Checks...))
 	mux.Handle("GET /metrics", MetricsHandler(s.Registry))
 	// Every route of the process, these three included: no 500 silent.
-	if err := Counters(s.Registry, "", &s.errs); err != nil {
-		return fmt.Errorf("register the server error counters: %w", err)
+	s.errsOnce.Do(func() { s.errsRegErr = Counters(s.Registry, "", &s.errs) })
+	if s.errsRegErr != nil {
+		return fmt.Errorf("register the server error counters: %w", s.errsRegErr)
 	}
 
 	var lc net.ListenConfig
