@@ -16,6 +16,18 @@ complete.
 
 ### Fixed
 
+- `POST /v1/restrictions` answered a bare `500` with no log line to an
+  `Idempotency-Key` outside the contract's `^[A-Za-z0-9._:-]{1,128}$`
+  (seen in uspace-lab `ussp-wp12-restriction`, whose runner sent
+  `${time:0}` unexpanded): the key reached the
+  `restrictions.idempotency_key` check and the insert's error became
+  internal. The key is now judged before the transaction and refused
+  `400 restriction_invalid` naming `Idempotency-Key`, counted as
+  `restriction_refused` and `restriction_refused_<slug>`. Every process
+  now logs and counts every `500` on every route (`obs.ServerErrors`:
+  `http_internal_errors`, the route, the cause the handler noted;
+  `http_panics` for a recovered panic, answered `500 internal`).
+
 - WP-12 review: `POST /v1/occurrences` takes an optional `Idempotency-Key`
   (additive; migration `0071`): a repeat with the key and body answers
   `200` with the first receipt, another body `409`. The console sends one
