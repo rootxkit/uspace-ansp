@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -167,5 +168,58 @@ func TestOccurrenceHeldWhileIntakeAbsent(t *testing.T) {
 	served.Store(true)
 	if m := h.deliver(id); !m.acked || h.repo.row(id).State != StateSent {
 		t.Fatalf("not sent once the intake is served: %s", h.repo.row(id).State)
+	}
+}
+
+// The authority's 409 (report_ref_conflict: this report_ref was taken
+// with another body) is permanent: the same report sent again gets the
+// same answer forever. It fails on its first attempt, past neither its
+// attempt count nor its window, with a failure alarm that says why, is
+// counted, and is never retried. Its twin: a 503 on the same report is
+// held and tried again (E-01 pair).
+func TestOccurrenceConflictFailsWithAlarm(t *testing.T) {
+	h := newHarness(t, nil)
+	var status atomic.Int32
+	status.Store(http.StatusConflict)
+	auth := newStub(t, func(int, recorded) (int, string) {
+		s := int(status.Load())
+		return s, `{"type":"https://schemas.uspace.ge/problems/report_ref_conflict","status":` + strconv.Itoa(s) + `}`
+	})
+	pol := DefaultPolicy()
+	h.worker.Occurrences = &occSender{a: &Authority{BaseURL: auth.srv.URL, Client: NewHTTPClient(pol.HTTPTimeout, nil, nil), Tokens: h.tokens, Policy: pol}}
+
+	id := h.enqueueOccurrence("01K6P4B2C3D4E5F6G7H8J9KMNP", "ANSP-OCC-2026-0007")
+	m := h.deliver(id)
+	r := h.repo.row(id)
+	if r.State != StateFailed || !m.acked || len(m.naked) != 0 || r.Attempt != 1 {
+		t.Fatalf("state %s acked %v naked %v attempt %d", r.State, m.acked, m.naked, r.Attempt)
+	}
+	if !strings.Contains(r.LastError, "409") || !strings.Contains(r.LastError, "not retried") {
+		t.Fatalf("last error %q", r.LastError)
+	}
+	var alarm *Alarm
+	for _, a := range h.repo.alarms {
+		if a.DeliveryID == id {
+			alarm = a
+		}
+	}
+	if alarm == nil || alarm.Kind != AlarmFailed || alarm.RestrictionID != "" || !strings.Contains(alarm.Detail, "not retried") {
+		t.Fatalf("alarm %+v", alarm)
+	}
+	if h.counters.Get(CounterOccurrenceConflict) != 1 || h.counters.Get(CounterRetried) != 0 {
+		t.Fatalf("counters %v", h.counters.Snapshot())
+	}
+	// A repeated message after the failure sends nothing more.
+	if m := h.deliver(id); !m.acked || len(auth.requests()) != 1 {
+		t.Fatalf("sent again after a 409: %d requests", len(auth.requests()))
+	}
+
+	status.Store(http.StatusServiceUnavailable)
+	id2 := h.enqueueOccurrence("01K6P4B2C3D4E5F6G7H8J9KMNQ", "ANSP-OCC-2026-0008")
+	if m := h.deliver(id2); m.acked || len(m.naked) != 1 || h.repo.row(id2).State != StateQueued {
+		t.Fatalf("a 503 is not held for a retry: %s", h.repo.row(id2).State)
+	}
+	if h.counters.Get(CounterOccurrenceConflict) != 1 {
+		t.Fatalf("a 503 counted as a conflict: %v", h.counters.Snapshot())
 	}
 }
