@@ -31,7 +31,7 @@ VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 
 .PHONY: all build vet fmt fmt-check tools staticcheck lint tidy test race cover \
         integration dss-live vectors generate generate-check lint-api check-contracts fuzz-smoke bench lint-docs vulncheck \
-        secrets web-install web-lint web-build web-types image compose-up \
+        secrets web-install web-lint web-test web-build web-e2e web-types image compose-up \
         compose-down ci clean
 
 all: ci
@@ -155,20 +155,33 @@ secrets:
 	git ls-files -z -co --exclude-standard | tar --null -T - -cf - | tar -xf - -C "$$tmp"; \
 	gitleaks detect --no-banner --redact --no-git --source "$$tmp"
 
-# web/ is WP-11's. Until it exists these say so and do nothing else.
-WEB_GUARD = if [ ! -f web/package.json ]; then echo "$@: SKIPPED, no web/package.json (web/ arrives with WP-11)"; exit 0; fi
+# web/ (WP-11): the console. Node 22 and pnpm through corepack; every
+# target installs nothing but web-install, which is frozen to the lockfile.
+WEB_GUARD = if [ ! -f web/package.json ]; then echo "$@: SKIPPED, no web/package.json"; exit 0; fi
 
 web-install:
 	@$(WEB_GUARD); cd web && pnpm install --frozen-lockfile
 
+# The kit's ESLint config and the three project rules (no geometry
+# import, no hard-coded string, no server code outside the BFF), then
+# next typegen before tsc.
 web-lint:
 	@$(WEB_GUARD); cd web && pnpm run lint && pnpm exec next typegen && pnpm exec tsc --noEmit
 
-web-build:
-	@$(WEB_GUARD); cd web && pnpm exec next build
+web-test:
+	@$(WEB_GUARD); cd web && pnpm run test
 
+web-build:
+	@$(WEB_GUARD); cd web && pnpm exec next build && pnpm run check:bundle
+
+# The Playwright smoke run against the fixture server (after web-build).
+web-e2e:
+	@$(WEB_GUARD); cd web && pnpm run e2e
+
+# The committed API types equal what uspace-ui-gen-api makes of
+# api/openapi.yaml now (a changed or a new file fails).
 web-types:
-	@$(WEB_GUARD); cd web && pnpm run types && git diff --exit-code -- src/api
+	@$(WEB_GUARD); cd web && pnpm run types:check
 
 image:
 	docker build -f deploy/Dockerfile --build-arg VERSION=$(VERSION) -t $(IMAGE):$(VERSION) .
@@ -194,7 +207,7 @@ compose-down:
 	if [ -n "$$left" ]; then echo "compose-down: $(PROJECT) left containers or volumes behind"; exit 1; fi; \
 	echo "compose-down: no container or volume of $(PROJECT) left"
 
-ci: lint-docs build lint tidy race generate-check lint-api check-contracts vectors fuzz-smoke bench vulncheck secrets integration web-lint web-build
+ci: lint-docs build lint tidy race generate-check lint-api check-contracts vectors fuzz-smoke bench vulncheck secrets integration web-types web-lint web-test web-build
 
 clean:
 	rm -f coverage.out integration.log bench.txt
