@@ -45,7 +45,11 @@ export const NAV_ITEMS: readonly NavItem[] = [
   { path: "/picture", labelKey: "ansp.nav.picture" },
   { path: "/inbox", labelKey: "ansp.nav.inbox" },
   { path: "/requests", labelKey: "ansp.nav.requests" },
+  { path: "/occurrences/new", labelKey: "ansp.nav.occurrence" },
   { path: "/adapters", labelKey: "ansp.nav.adapters" },
+  { path: "/sources", labelKey: "ansp.nav.sources" },
+  { path: "/policy", labelKey: "ansp.nav.policy", adminOnly: true },
+  { path: "/audit", labelKey: "ansp.nav.audit", adminOnly: true },
 ];
 
 /** The navigation a role is shown. */

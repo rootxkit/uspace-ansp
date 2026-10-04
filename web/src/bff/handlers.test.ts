@@ -234,6 +234,9 @@ describe("proxy", () => {
     "/v1/restriction-requests/q1",
     "/v1/coordination/inbox",
     "/v1/coordination/inbox/01K6P0N0000000000000000001/acknowledge",
+    "/v1/occurrences",
+    "/v1/policy",
+    "/v1/audit",
   ])("forwards /_bff/api%s with the session cookie as the bearer", async (p) => {
     const api = mockApi(() => Response.json({ ok: true }));
     const res = await bffWith(api.fetch).proxy(req(`/_bff/api${p}?state=active`, { method: "GET", headers: { cookie } }));
@@ -288,7 +291,7 @@ describe("proxy", () => {
     expect(api.calls[0]?.headers.get("authorization")).toBe("Bearer tok123");
   });
 
-  it.each(["/v1/users", "/v1/policy", "/v1/audit", "/v1/coordination/notices", "/v1/coordination/inboxX", "/v1/manned-traffic/snapshot", "/v1/auth/login", "/v1/auth/mfa", "/v1/auth/logout", "/metrics", "/v1/restrictionsX"])(
+  it.each(["/v1/users", "/v1/policy/1", "/v1/auditX", "/v1/occurrences/01K6P0", "/v1/coordination/notices", "/v1/coordination/inboxX", "/v1/manned-traffic/snapshot", "/v1/auth/login", "/v1/auth/mfa", "/v1/auth/logout", "/metrics", "/v1/restrictionsX"])(
     "refuses %s, which is not on the console's list",
     async (p) => {
       const api = mockApi(() => Response.json({ ok: true }));

@@ -57,6 +57,7 @@ export const API_LOGOUT_PATH = "/v1/auth/logout";
 export const PROXY_ALLOW_PATHS: RegExp[] = [
   /^\/v1\/(restrictions|restriction-requests|delivery-alarms|adapters|sources)(\/|$)/,
   /^\/v1\/coordination\/inbox(\/|$)/,
+  /^\/v1\/(occurrences|policy|audit)$/,
   /^\/v1\/auth\/me$/,
 ];
 

@@ -123,6 +123,8 @@ export function ProblemNotice({ failure }: { failure: CallFailure }) {
           ? t("ansp.problem.forbidden")
           : failure.status === 404
             ? t("ansp.problem.not_found")
+            : failure.status === 501
+              ? t("ansp.problem.not_served")
             : failure.slug === "cis_stale"
               ? t("ansp.problem.cis_stale")
               : t("ansp.problem.refused", { status: failure.status });

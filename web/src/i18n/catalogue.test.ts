@@ -8,6 +8,8 @@ import { describe, expect, it } from "vitest";
 import en from "./en.json";
 import ka from "./ka.json";
 import { LOGIN_SLUGS } from "../console/login";
+import { CATEGORIES, CHANNELS } from "../console/occurrence";
+import { THRESHOLDS } from "../console/policy";
 
 const GEORGIAN = /[Ⴀ-ჿᲐ-Ჿⴀ-⴯]/u;
 const web = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
@@ -53,6 +55,13 @@ const DYNAMIC: Record<string, readonly string[]> = {
   "ansp.inbox.filter": ["all", "escalated", "received", "acknowledged"],
   "ansp.inbox.group": ["escalated", "awaiting", "informational", "acknowledged"],
   "ansp.inbox.notify": ["unsupported", "denied", "start", "stop"],
+  "ansp.policy.name": [...THRESHOLDS, "default_zone_type", "country"],
+  "ansp.policy.unit": ["m", "s"],
+  "ansp.policy.problem": ["number", "positive", "zone_type", "country"],
+  "ansp.occurrence.channel": [...CHANNELS],
+  "ansp.occurrence.category": [...CATEGORIES],
+  "ansp.occurrence.aircraft": ["serial", "operator_reg", "flight_id", "authorisation_number"],
+  "ansp.occurrence.problem": ["required", "enum", "icao24", "uuid", "number", "too_many", "too_long"],
 };
 
 describe("catalogues", () => {
