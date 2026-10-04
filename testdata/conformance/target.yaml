@@ -1,0 +1,38 @@
+# What uspace-lab's conformance suite (its WP-L7, L-M4) needs to know about
+# the ANSP under test. This repository's own description, not a
+# uss_qualifier configuration: the lab owns that format and pins its
+# InterUSS commit, and maps these values into it (E-04: no configuration
+# key of another tool written from memory here).
+#
+# `make conformance-target` brings the stack up with these values and
+# prints them again with the lab's own values filled in.
+system: ansp
+role: f3548_constraint_manager
+base_url_env: ANSP_CONFORMANCE_BASE_URL   # default http://127.0.0.1:58080
+feed_url_env: ANSP_CONFORMANCE_FEED_URL   # default http://127.0.0.1:58081
+
+# Participant ids are client ids (decision M24), audiences are hosts (M18).
+clients:
+  ansp: ansp-01        # the ANSP's own client at the lab issuer (DSS writes, subscriber notifications)
+  suite: lab-01        # the suite's client, calling the ANSP
+
+# What the suite exercises here, with the scope each call carries.
+constraint_management:
+  dss: lab             # the lab DSS (ANSP_DSS_URL)
+  dss_scope: utm.constraint_management
+  details: GET /uss/v1/constraints/{entityid}
+  details_scope: utm.constraint_processing
+national:
+  openapi: api/openapi.yaml
+  operations_needing_a_session: [restrictions, restriction-requests, coordination/inbox, sources, policy, users]
+  machine_operations:
+    - POST /v1/coordination/notices        # ansp.coordination (+mTLS per ANSP_MTLS_MODE)
+    - GET /v1/coordination/notices/{ack_id}
+    - GET /v1/manned-traffic/snapshot      # ansp.traffic (+mTLS)
+    - GET /v1/manned-traffic/stream
+    - GET /uss/v1/constraints/{entityid}
+    - POST /v1/cis/notifications           # the CISP's token only
+    - GET /.well-known/jwks.json           # no token
+# Restrictions are created by a supervisor's console session (TOTP), not
+# by a machine client: the suite needs a supervisor account on the target
+# (created by the operator of the run; never in this file).

@@ -45,6 +45,7 @@ jobs:
       image: ${{ github.event_name != 'pull_request' || steps.filter.outputs.image == 'true' }}
       web: ${{ github.event_name != 'pull_request' || steps.filter.outputs.web == 'true' }}
       contracts: ${{ github.event_name != 'pull_request' || steps.filter.outputs.contracts == 'true' }}
+      deploy: ${{ github.event_name != 'pull_request' || steps.filter.outputs.deploy == 'true' }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         if: github.event_name == 'pull_request'
@@ -100,6 +101,13 @@ jobs:
               - 'internal/manned/dump1090/SOURCE'
               - 'scripts/check-contracts.sh'
               - 'scripts/lint-api.sh'
+              - '.github/workflows/ci.yml'
+            deploy:
+              - 'deploy/**'
+              - 'scripts/check-deploy.sh'
+              - 'scripts/conformance-target.sh'
+              - 'testdata/replay/**'
+              - 'Makefile'
               - '.github/workflows/ci.yml'
 
   lint-docs:
@@ -431,6 +439,31 @@ jobs:
       - name: govulncheck
         run: go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...
 
+  # deploy/ (WP-13): shellcheck, the production compose rendered and read
+  # back, and the Caddy site proved against the pinned Caddy with stub
+  # upstreams and throwaway client certificates (scripts/check-deploy.sh).
+  deploy:
+    name: deploy (compose, Caddy proof)
+    permissions:
+      contents: read
+    needs: changes
+    if: needs.changes.outputs.deploy == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - name: tool versions (E-05)
+        run: |
+          shellcheck --version | sed -n 2p
+          docker compose version
+          curl -V | head -n 1
+          jq --version
+          openssl version
+      - name: make check-deploy
+        run: make check-deploy
+
   # Never filtered: a secret in a docs file is still a leak.
   gitleaks:
     name: gitleaks
@@ -513,7 +546,7 @@ jobs:
   images:
     name: images
     if: github.event_name == 'push'
-    needs: [lint-docs, build-vet-lint, test-race, generate-check, integration, contracts, vectors, fuzz-bench, web, govulncheck, gitleaks]
+    needs: [lint-docs, build-vet-lint, test-race, generate-check, integration, contracts, vectors, fuzz-bench, web, govulncheck, gitleaks, deploy]
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
