@@ -43,6 +43,7 @@ export const NAV_ITEMS: readonly NavItem[] = [
   { path: "/restrictions", labelKey: "ansp.nav.restrictions" },
   { path: "/restrictions/new", labelKey: "ansp.nav.plan" },
   { path: "/picture", labelKey: "ansp.nav.picture" },
+  { path: "/inbox", labelKey: "ansp.nav.inbox" },
   { path: "/requests", labelKey: "ansp.nav.requests" },
   { path: "/adapters", labelKey: "ansp.nav.adapters" },
 ];

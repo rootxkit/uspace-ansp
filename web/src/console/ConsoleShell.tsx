@@ -12,6 +12,7 @@ import { useLang, useT } from "@rootxkit/uspace-ui/i18n";
 import type { SessionDisplay } from "@rootxkit/uspace-ui/model";
 import { Button } from "@rootxkit/uspace-ui/ui";
 import { ConsoleProvider, loginPath, useConsole } from "./context";
+import { InboxProvider } from "./InboxProvider";
 import { navFor } from "./roles";
 import { StatusBar } from "./StatusBar";
 import { Loading, ProblemNotice } from "./ui";
@@ -99,7 +100,9 @@ export function ConsoleShell({ session, children }: { session: SessionDisplay | 
   return (
     <SessionProvider session={session}>
       <ConsoleProvider>
-        <Frame>{children}</Frame>
+        <InboxProvider>
+          <Frame>{children}</Frame>
+        </InboxProvider>
       </ConsoleProvider>
     </SessionProvider>
   );
