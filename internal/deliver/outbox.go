@@ -59,6 +59,11 @@ const (
 	// authority answered 404, 405 or 501 (its intake is not served): the
 	// report is held, queued, and tried again every OccurrenceHold.
 	CounterOccurrenceIntakeAbsent = "deliver_occurrence_intake_unavailable"
+	// CounterOccurrenceConflict counts authority 409 answers to an
+	// occurrence report (report_ref_conflict: the report_ref was taken
+	// with another body), which no retry changes; each is failed at once
+	// with an alarm.
+	CounterOccurrenceConflict = "deliver_occurrence_conflict"
 )
 
 // BusPublisher puts a message on JetStream with a message id (the

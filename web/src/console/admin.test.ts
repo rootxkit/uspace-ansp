@@ -9,7 +9,7 @@ import { describe, expect, it } from "vitest";
 import type { CallFailure } from "../api/client";
 import type { ApiAdapter, ApiSourceControl } from "./adapters";
 import { auditQuery, exportDocument, exportFileName, shortHash, type ApiAuditEvent } from "./audit";
-import { deadlinePreview, emptyForm, occurrenceBody, outcomeAfter, type OccurrenceForm } from "./occurrence";
+import { deadlinePreview, emptyForm, occurrenceBody, outcomeAfter, SingleFlight, type OccurrenceForm } from "./occurrence";
 import { changes, formOf, historyVersions, HISTORY_VERSIONS, policyAuditEntity, policyBody, unitOf, type ApiPolicyUpdate } from "./policy";
 import { isEnabled, switchAuditEntity, switchBody, switchRows } from "./sources";
 
@@ -188,7 +188,7 @@ describe("occurrence", () => {
     expect(deadlinePreview(null)).toBeNull();
   });
 
-  it("calls a refusal refused and no answer, a 502 or a 504 unknown", () => {
+  it("calls only a 4xx with a problem refused; no answer, any 5xx or a 4xx without a problem unknown", () => {
     const f = (status: number, problem: boolean): CallFailure => ({
       status,
       problem: problem ? { type: "", title: "x", status, detail: null, instance: null, errors: [] } : null,
@@ -197,9 +197,54 @@ describe("occurrence", () => {
       fieldErrors: [],
     });
     expect(outcomeAfter(f(400, true))).toBe("refused");
-    expect(outcomeAfter(f(503, true))).toBe("refused");
+    expect(outcomeAfter(f(409, true))).toBe("refused");
+    expect(outcomeAfter(f(413, true))).toBe("refused");
+    // A 500 or a 503 may come after the report was committed: never a blind re-send.
+    expect(outcomeAfter(f(500, true))).toBe("unknown");
+    expect(outcomeAfter(f(503, true))).toBe("unknown");
     expect(outcomeAfter(f(0, false))).toBe("unknown");
     expect(outcomeAfter(f(502, true))).toBe("unknown");
     expect(outcomeAfter(f(504, true))).toBe("unknown");
+    expect(outcomeAfter(f(404, false))).toBe("unknown");
+  });
+});
+
+describe("the occurrence send's single flight", () => {
+  it("runs one send at a time: a second submit while one is in flight sends nothing", async () => {
+    const flight = new SingleFlight();
+    let release: () => void = () => undefined;
+    let sends = 0;
+    const send = () => {
+      sends += 1;
+      return new Promise<void>((r) => {
+        release = r;
+      });
+    };
+    const first = flight.run(send);
+    expect(flight.busy).toBe(true);
+    expect(await flight.run(send)).toBe(false);
+    expect(sends).toBe(1);
+    release();
+    expect(await first).toBe(true);
+    expect(flight.busy).toBe(false);
+  });
+
+  it("takes the next send once the one in flight settled, failed included", async () => {
+    const flight = new SingleFlight();
+    let sends = 0;
+    await expect(
+      flight.run(() => {
+        sends += 1;
+        return Promise.reject(new Error("refused"));
+      }),
+    ).rejects.toThrow("refused");
+    expect(flight.busy).toBe(false);
+    expect(
+      await flight.run(() => {
+        sends += 1;
+        return Promise.resolve();
+      }),
+    ).toBe(true);
+    expect(sends).toBe(2);
   });
 });

@@ -35,7 +35,7 @@ import {
   type ApiNotice,
   type Group,
 } from "./inbox";
-import { useInbox } from "./InboxProvider";
+import { MAX_NOTICES, useInbox } from "./InboxProvider";
 import { maySupervise } from "./roles";
 import { Empty, Loading, ProblemNotice, Time } from "./ui";
 import { useRestrictions } from "./useRestrictions";
@@ -314,6 +314,11 @@ export function InboxPage() {
         </p>
       )}
       {inbox.truncated && <p className="m-0 text-xs">{t("ansp.inbox.truncated")}</p>}
+      {inbox.evicted > 0 && (
+        <p className="m-0 text-xs" data-testid="inbox-evicted">
+          {t("ansp.inbox.evicted", { count: inbox.evicted, max: MAX_NOTICES })}
+        </p>
+      )}
       {(inbox.dropped > 0 || inbox.ignored > 0) && (
         <p className="m-0 text-xs text-[var(--us-text-muted)]">{t("ansp.inbox.counters", { dropped: inbox.dropped, ignored: inbox.ignored })}</p>
       )}

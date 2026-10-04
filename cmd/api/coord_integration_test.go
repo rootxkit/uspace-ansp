@@ -702,3 +702,53 @@ func TestIntegrationOccurrences(t *testing.T) {
 		t.Fatal("the reporter reference is in a log line")
 	}
 }
+
+// The console's Idempotency-Key on an occurrence report, against the
+// database: a repeat with the key and body answers 200 with the first
+// receipt and queues nothing more (one row, one delivery, one request to
+// the authority); another body under the key is 409 with nothing stored;
+// another key queues a new report (E-01 pair).
+func TestIntegrationOccurrenceIdempotencyKey(t *testing.T) {
+	s := newCoordStack(t, false)
+	aware := time.Now().UTC().Add(-time.Hour).Truncate(time.Millisecond)
+	body := map[string]any{
+		"channel": "mandatory", "occurred_at": restriction.Stamp(aware.Add(-5 * time.Minute)), "became_aware_at": restriction.Stamp(aware),
+		"category": "airprox", "narrative": "Synthetic airprox (idempotency test).",
+	}
+	key := map[string]string{"Idempotency-Key": "console-occ-1"}
+	code, out := s.c.do(http.MethodPost, "/v1/occurrences", s.watch, key, body)
+	var q coord.Queued
+	if code != http.StatusAccepted || json.Unmarshal(out, &q) != nil {
+		t.Fatalf("%d %s", code, out)
+	}
+	code, out = s.c.do(http.MethodPost, "/v1/occurrences", s.watch, key, body)
+	var again coord.Queued
+	if code != http.StatusOK || json.Unmarshal(out, &again) != nil || again != q {
+		t.Fatalf("repeat: %d %s, want 200 %+v", code, out, q)
+	}
+	if n := s.count(`SELECT count(*) FROM occurrence_reports WHERE idempotency_key = $1`, "console-occ-1"); n != 1 {
+		t.Fatalf("%d reports for one key", n)
+	}
+	s.authority.await(t, "/v1/occurrences", 1, 20*time.Second)
+
+	other := map[string]any{}
+	for k, v := range body {
+		other[k] = v
+	}
+	other["narrative"] = "Another synthetic airprox."
+	code, out = s.c.do(http.MethodPost, "/v1/occurrences", s.watch, key, other)
+	if code != http.StatusConflict || !strings.Contains(string(out), "idempotency_conflict") || !strings.Contains(string(out), q.ReportRef) {
+		t.Fatalf("another body: %d %s", code, out)
+	}
+	code, out = s.c.do(http.MethodPost, "/v1/occurrences", s.watch, map[string]string{"Idempotency-Key": "console-occ-2"}, other)
+	var q2 coord.Queued
+	if code != http.StatusAccepted || json.Unmarshal(out, &q2) != nil || q2.ID == q.ID {
+		t.Fatalf("another key: %d %s", code, out)
+	}
+	if n := s.count(`SELECT count(*) FROM occurrence_reports`); n != 2 {
+		t.Fatalf("%d reports, want 2", n)
+	}
+	if n := s.count(`SELECT count(*) FROM deliveries WHERE kind = 'occurrence'`); n != 2 {
+		t.Fatalf("%d occurrence deliveries, want 2", n)
+	}
+}

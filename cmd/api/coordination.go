@@ -16,6 +16,7 @@ import (
 	"github.com/rootxkit/uspace-ansp/internal/apierr"
 	"github.com/rootxkit/uspace-ansp/internal/auth"
 	"github.com/rootxkit/uspace-ansp/internal/coord"
+	"github.com/rootxkit/uspace-ansp/internal/restriction"
 )
 
 // coordUnavailableRetry is the Retry-After while the inbox is not
@@ -254,8 +255,10 @@ func (s apiServer) StreamCoordination(w http.ResponseWriter, r *http.Request) {
 
 // CreateOccurrence serves POST /v1/occurrences (watch_supervisor): the
 // report is stored with its reporter reference sealed and queued to the
-// authority in one transaction; 202 with the deadline.
-func (s apiServer) CreateOccurrence(w http.ResponseWriter, r *http.Request) {
+// authority in one transaction; 202 with the deadline. With an
+// Idempotency-Key a repeat of the same body answers 200 with the first
+// receipt, another body 409.
+func (s apiServer) CreateOccurrence(w http.ResponseWriter, r *http.Request, params gen.CreateOccurrenceParams) {
 	body, ok := readJSON(w, r, coord.MaxOccurrenceBytes, true)
 	if !ok {
 		return
@@ -274,12 +277,25 @@ func (s apiServer) CreateOccurrence(w http.ResponseWriter, r *http.Request) {
 		apierr.WriteError(w, r, apierr.New(http.StatusBadRequest, apierr.SlugInvalidRequest, "the report is refused; nothing was stored", fieldProblems(errs)...))
 		return
 	}
-	q, err := s.co.occ.Create(r.Context(), actor, in)
+	var idem *coord.Idempotency
+	if params.IdempotencyKey != nil {
+		if f := coord.CheckIdempotencyKey(*params.IdempotencyKey); f != nil {
+			s.co.occ.Counters().Inc(coord.CounterOccurrencesRefused)
+			apierr.WriteError(w, r, apierr.New(http.StatusBadRequest, apierr.SlugInvalidRequest, "the report is refused; nothing was stored", fieldProblems([]*core.FieldError{f})...))
+			return
+		}
+		idem = &coord.Idempotency{ActorID: actor.ID, Key: *params.IdempotencyKey, SHA256: restriction.Hash(body)}
+	}
+	q, replay, err := s.co.occ.Create(r.Context(), actor, in, idem)
 	if err != nil {
 		coordRefusal(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusAccepted, q)
+	status := http.StatusAccepted
+	if replay {
+		status = http.StatusOK
+	}
+	writeJSON(w, status, q)
 }
 
 func fieldProblems(errs []*core.FieldError) []apierr.FieldProblem {

@@ -20,6 +20,7 @@ interface Recorded {
   method: string;
   path: string;
   body?: Record<string, unknown>;
+  idempotencyKey?: string | null;
 }
 
 async function recorded(request: APIRequestContext): Promise<Recorded[]> {
@@ -224,4 +225,6 @@ test("an occurrence report is queued with the protected reference sent once and 
   const posts = (await recorded(request)).filter((c) => c.method === "POST" && c.path === "/v1/occurrences");
   expect(posts).toHaveLength(1);
   expect(posts[0]?.body).toMatchObject({ channel: "mandatory", occurred_at: "2026-10-02T11:20:00Z", became_aware_at: "2026-10-02T11:25:00Z", reporter_person_ref: "staff-0042" });
+  // The report's client reference reached the API through the BFF.
+  expect(posts[0]?.idempotencyKey).toMatch(/^console-[0-9a-f-]{36}$/);
 });

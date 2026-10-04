@@ -7,6 +7,7 @@ import { describe, expect, it } from "vitest";
 import type { ConsoleFrame } from "@rootxkit/uspace-ui/live";
 import {
   acknowledgeBody,
+  boundNotices,
   awaitingCount,
   escalationNews,
   groupOf,
@@ -16,6 +17,7 @@ import {
   noteBytes,
   noticeOf,
   ordered,
+  reconcileNotices,
   volumesOf,
   type ApiNotice,
 } from "./inbox";
@@ -188,5 +190,77 @@ describe("note", () => {
   it("sends the note when there is one and nothing otherwise", () => {
     expect(acknowledgeBody("  seen  ")).toEqual({ note: "seen" });
     expect(acknowledgeBody("   ")).toEqual({});
+  });
+});
+
+function many(n: number, over: (i: number) => Partial<ApiNotice>): ApiNotice[] {
+  return Array.from({ length: n }, (_, i) => notice({ ack_id: `01K6P0N${String(i).padStart(19, "0")}`, notice_ref: `n-${i}`, ...over(i) }));
+}
+
+function held(list: readonly ApiNotice[]): Map<string, ApiNotice> {
+  return new Map(list.map((n) => [n.ack_id, n]));
+}
+
+describe("boundNotices", () => {
+  it("keeps a held inbox at or under its bound as it is", () => {
+    const m = held(many(3, () => ({})));
+    const b = boundNotices(m, 3);
+    expect(b.notices.size).toBe(3);
+    expect(b.evicted).toBe(0);
+  });
+
+  it("past the bound, evicts the oldest acknowledged first, then the oldest informational, and counts them", () => {
+    const acked = many(3, (i) => ({ state: "acknowledged", acknowledged_at: `2026-10-02T12:0${i}:00.000Z`, notice_ref: `a-${i}` })).map((n, i) => ({
+      ...n,
+      ack_id: `01K6P0A${String(i).padStart(19, "0")}`,
+    }));
+    const info = many(2, (i) => ({ kind: "intent_notice", acknowledgement_required: false, received_at: `2026-10-02T11:0${i}:00.000Z` })).map((n, i) => ({
+      ...n,
+      ack_id: `01K6P0I${String(i).padStart(19, "0")}`,
+    }));
+    const awaiting = many(2, () => ({})).map((n, i) => ({ ...n, ack_id: `01K6P0W${String(i).padStart(19, "0")}` }));
+    const escalated = many(1, () => ({ state: "escalated", escalations: 2 })).map((n) => ({ ...n, ack_id: "01K6P0E0000000000000000000" }));
+    const m = held([...acked, ...info, ...awaiting, ...escalated]);
+
+    const four = boundNotices(m, 6);
+    expect(four.evicted).toBe(2);
+    expect([...four.notices.keys()]).not.toContain(acked[0]?.ack_id);
+    expect([...four.notices.keys()]).not.toContain(acked[1]?.ack_id);
+    expect([...four.notices.keys()]).toContain(acked[2]?.ack_id);
+
+    const tight = boundNotices(m, 4);
+    expect(tight.evicted).toBe(4);
+    expect([...tight.notices.keys()].sort()).toEqual([...info.slice(1), ...awaiting, ...escalated].map((n) => n.ack_id).sort());
+  });
+
+  it("never evicts a notice that awaits a person, even past the bound", () => {
+    const m = held([...many(5, () => ({})), notice({ ack_id: "01K6P0E0000000000000000000", state: "escalated", escalations: 1 })]);
+    const b = boundNotices(m, 2);
+    expect(b.notices.size).toBe(6);
+    expect(b.evicted).toBe(0);
+  });
+});
+
+describe("reconcileNotices", () => {
+  it("takes the fresh list as the inbox, dropping what the API no longer lists", () => {
+    const gone = notice({ ack_id: "01K6P0G0000000000000000000", state: "acknowledged", acknowledged_at: "2026-10-02T12:00:00.000Z" });
+    const kept = notice();
+    const r = reconcileNotices(held([gone, kept]), [kept], new Set());
+    expect([...r.keys()]).toEqual([kept.ack_id]);
+  });
+
+  it("keeps a notice the stream brought while the list was read, and the later of two states", () => {
+    const arrived = notice({ ack_id: "01K6P0S0000000000000000000" });
+    const later = notice({ state: "escalated", escalations: 3 });
+    const r = reconcileNotices(held([arrived, later]), [notice({ state: "escalated", escalations: 1 })], new Set([arrived.ack_id, later.ack_id]));
+    expect(r.get(arrived.ack_id)).toBe(arrived);
+    expect(r.get(later.ack_id)?.escalations).toBe(3);
+    expect(r.size).toBe(2);
+  });
+
+  it("takes the fresh state of a listed notice when it is the later one", () => {
+    const acked = notice({ state: "acknowledged", acknowledged_at: "2026-10-02T12:05:00.000Z" });
+    const r = reconcileNotices(held([notice({ state: "escalated", escalations: 2 })]), [acked], new Set());
+    expect(r.get(acked.ack_id)?.state).toBe("acknowledged");
   });
 });

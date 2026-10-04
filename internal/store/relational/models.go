@@ -442,6 +442,9 @@ type OccurrenceReport struct {
 	CreatedAt               time.Time
 	DeliveryID              string
 	DeadlineAt              time.Time
+	IdempotencyActor        *string
+	IdempotencyKey          *string
+	IdempotencySha256       *string
 }
 
 type Restriction struct {

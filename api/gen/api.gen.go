@@ -3109,6 +3109,9 @@ type Limit = int
 // NoticeID Crockford base32, 26 characters (04 §2).
 type NoticeID = ULID
 
+// OccurrenceIdempotencyKey defines model for OccurrenceIdempotencyKey.
+type OccurrenceIdempotencyKey = string
+
 // RequestID Crockford base32, 26 characters (04 §2).
 type RequestID = ULID
 
@@ -3238,6 +3241,14 @@ type StreamMannedTrafficParams struct {
 	// Bbox A bounding box west,south,east,north in WGS84 degrees (RFC 7946
 	// §5 order, [lng, lat]); west > east crosses the antimeridian.
 	Bbox *BBox `form:"bbox,omitempty" json:"bbox,omitempty"`
+}
+
+// CreateOccurrenceParams defines parameters for CreateOccurrence.
+type CreateOccurrenceParams struct {
+	// IdempotencyKey The client's reference of the report; a repeat with the same key
+	// and body answers the first receipt (optional within /v1: a report
+	// without one is queued every time).
+	IdempotencyKey *OccurrenceIdempotencyKey `json:"Idempotency-Key,omitempty"`
 }
 
 // ListRestrictionsParams defines parameters for ListRestrictions.
@@ -4318,12 +4329,16 @@ type ClientInterface interface {
 	// clear over TLS (M13) and never logged, streamed or exported.
 	// The authority owns occurrence/v1; until its OpenAPI publishes it
 	// (api/clients/authority.yaml), this body is the plan's field list
-	// of 04 §3.3.
+	// of 04 §3.3. Idempotency-Key is the client's reference, per
+	// account: a repeat with the same key and body answers 200 with the
+	// receipt of the report first queued and queues nothing more; with
+	// another body, 409 idempotency_conflict. A send that got no
+	// answer, or a 5xx, may be repeated with its key.
 	//
 	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with POST /v1/occurrences (the `CreateOccurrence` operationId).
-	CreateOccurrenceWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+	CreateOccurrenceWithBody(ctx context.Context, params *CreateOccurrenceParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// CreateOccurrence Report an occurrence
 	//
@@ -4334,12 +4349,16 @@ type ClientInterface interface {
 	// clear over TLS (M13) and never logged, streamed or exported.
 	// The authority owns occurrence/v1; until its OpenAPI publishes it
 	// (api/clients/authority.yaml), this body is the plan's field list
-	// of 04 §3.3.
+	// of 04 §3.3. Idempotency-Key is the client's reference, per
+	// account: a repeat with the same key and body answers 200 with the
+	// receipt of the report first queued and queues nothing more; with
+	// another body, 409 idempotency_conflict. A send that got no
+	// answer, or a 5xx, may be repeated with its key.
 	//
 	// Takes a body of the `application/json` content type.
 	//
 	// Corresponds with POST /v1/occurrences (the `CreateOccurrence` operationId).
-	CreateOccurrence(ctx context.Context, body CreateOccurrenceJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+	CreateOccurrence(ctx context.Context, params *CreateOccurrenceParams, body CreateOccurrenceJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetPolicy The thresholds row
 	//
@@ -5347,13 +5366,17 @@ func (c *Client) StreamMannedTraffic(ctx context.Context, params *StreamMannedTr
 // clear over TLS (M13) and never logged, streamed or exported.
 // The authority owns occurrence/v1; until its OpenAPI publishes it
 // (api/clients/authority.yaml), this body is the plan's field list
-// of 04 §3.3.
+// of 04 §3.3. Idempotency-Key is the client's reference, per
+// account: a repeat with the same key and body answers 200 with the
+// receipt of the report first queued and queues nothing more; with
+// another body, 409 idempotency_conflict. A send that got no
+// answer, or a 5xx, may be repeated with its key.
 //
 // Takes any type of body and a specified content type.
 //
 // Corresponds with POST /v1/occurrences (the `CreateOccurrence` operationId).
-func (c *Client) CreateOccurrenceWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewCreateOccurrenceRequestWithBody(c.Server, contentType, body)
+func (c *Client) CreateOccurrenceWithBody(ctx context.Context, params *CreateOccurrenceParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateOccurrenceRequestWithBody(c.Server, params, contentType, body)
 	if err != nil {
 		return nil, err
 	}
@@ -5373,13 +5396,17 @@ func (c *Client) CreateOccurrenceWithBody(ctx context.Context, contentType strin
 // clear over TLS (M13) and never logged, streamed or exported.
 // The authority owns occurrence/v1; until its OpenAPI publishes it
 // (api/clients/authority.yaml), this body is the plan's field list
-// of 04 §3.3.
+// of 04 §3.3. Idempotency-Key is the client's reference, per
+// account: a repeat with the same key and body answers 200 with the
+// receipt of the report first queued and queues nothing more; with
+// another body, 409 idempotency_conflict. A send that got no
+// answer, or a 5xx, may be repeated with its key.
 //
 // Takes a body of the `application/json` content type.
 //
 // Corresponds with POST /v1/occurrences (the `CreateOccurrence` operationId).
-func (c *Client) CreateOccurrence(ctx context.Context, body CreateOccurrenceJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewCreateOccurrenceRequest(c.Server, body)
+func (c *Client) CreateOccurrence(ctx context.Context, params *CreateOccurrenceParams, body CreateOccurrenceJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateOccurrenceRequest(c.Server, params, body)
 	if err != nil {
 		return nil, err
 	}
@@ -6971,18 +6998,18 @@ func NewStreamMannedTrafficRequest(server string, params *StreamMannedTrafficPar
 }
 
 // NewCreateOccurrenceRequest calls the generic CreateOccurrence builder with application/json body
-func NewCreateOccurrenceRequest(server string, body CreateOccurrenceJSONRequestBody) (*http.Request, error) {
+func NewCreateOccurrenceRequest(server string, params *CreateOccurrenceParams, body CreateOccurrenceJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
 	buf, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
 	}
 	bodyReader = bytes.NewReader(buf)
-	return NewCreateOccurrenceRequestWithBody(server, "application/json", bodyReader)
+	return NewCreateOccurrenceRequestWithBody(server, params, "application/json", bodyReader)
 }
 
 // NewCreateOccurrenceRequestWithBody constructs an http.Request for the CreateOccurrence method, with any body, and a specified content type
-func NewCreateOccurrenceRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+func NewCreateOccurrenceRequestWithBody(server string, params *CreateOccurrenceParams, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	serverURL, err := url.Parse(server)
@@ -7006,6 +7033,21 @@ func NewCreateOccurrenceRequestWithBody(server string, contentType string, body 
 	}
 
 	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		if params.IdempotencyKey != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithOptions("simple", false, "Idempotency-Key", *params.IdempotencyKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("Idempotency-Key", headerParam0)
+		}
+
+	}
 
 	return req, nil
 }
@@ -8380,12 +8422,16 @@ type ClientWithResponsesInterface interface {
 	// clear over TLS (M13) and never logged, streamed or exported.
 	// The authority owns occurrence/v1; until its OpenAPI publishes it
 	// (api/clients/authority.yaml), this body is the plan's field list
-	// of 04 §3.3.
+	// of 04 §3.3. Idempotency-Key is the client's reference, per
+	// account: a repeat with the same key and body answers 200 with the
+	// receipt of the report first queued and queues nothing more; with
+	// another body, 409 idempotency_conflict. A send that got no
+	// answer, or a 5xx, may be repeated with its key.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /v1/occurrences (the `CreateOccurrence` operationId).
-	CreateOccurrenceWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateOccurrenceResponse, error)
+	CreateOccurrenceWithBodyWithResponse(ctx context.Context, params *CreateOccurrenceParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateOccurrenceResponse, error)
 
 	// CreateOccurrenceWithResponse Report an occurrence
 	//
@@ -8396,12 +8442,16 @@ type ClientWithResponsesInterface interface {
 	// clear over TLS (M13) and never logged, streamed or exported.
 	// The authority owns occurrence/v1; until its OpenAPI publishes it
 	// (api/clients/authority.yaml), this body is the plan's field list
-	// of 04 §3.3.
+	// of 04 §3.3. Idempotency-Key is the client's reference, per
+	// account: a repeat with the same key and body answers 200 with the
+	// receipt of the report first queued and queues nothing more; with
+	// another body, 409 idempotency_conflict. A send that got no
+	// answer, or a 5xx, may be repeated with its key.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /v1/occurrences (the `CreateOccurrence` operationId).
-	CreateOccurrenceWithResponse(ctx context.Context, body CreateOccurrenceJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateOccurrenceResponse, error)
+	CreateOccurrenceWithResponse(ctx context.Context, params *CreateOccurrenceParams, body CreateOccurrenceJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateOccurrenceResponse, error)
 
 	// GetPolicyWithResponse The thresholds row
 	//
@@ -10519,6 +10569,8 @@ type CreateOccurrenceResponse503Headers struct {
 type CreateOccurrenceResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *OccurrenceQueued
 	// JSON202 the response for an HTTP 202 `application/json` response
 	JSON202 *OccurrenceQueued
 	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
@@ -10527,6 +10579,8 @@ type CreateOccurrenceResponse struct {
 	ApplicationproblemJSON401 *Unauthorized
 	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
 	ApplicationproblemJSON403 *Forbidden
+	// ApplicationproblemJSON409 the response for an HTTP 409 `application/problem+json` response
+	ApplicationproblemJSON409 *Conflict
 	// ApplicationproblemJSON413 the response for an HTTP 413 `application/problem+json` response
 	ApplicationproblemJSON413 *TooLarge
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
@@ -10535,6 +10589,11 @@ type CreateOccurrenceResponse struct {
 	Headers401 *CreateOccurrenceResponse401Headers
 	// Headers503 the parsed response headers for an HTTP 503 response
 	Headers503 *CreateOccurrenceResponse503Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r CreateOccurrenceResponse) GetJSON200() *OccurrenceQueued {
+	return r.JSON200
 }
 
 // GetJSON202 returns the response for an HTTP 202 `application/json` response
@@ -10555,6 +10614,11 @@ func (r CreateOccurrenceResponse) GetApplicationproblemJSON401() *Unauthorized {
 // GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
 func (r CreateOccurrenceResponse) GetApplicationproblemJSON403() *Forbidden {
 	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
+func (r CreateOccurrenceResponse) GetApplicationproblemJSON409() *Conflict {
+	return r.ApplicationproblemJSON409
 }
 
 // GetApplicationproblemJSON413 returns the response for an HTTP 413 `application/problem+json` response
@@ -13041,13 +13105,17 @@ func (c *ClientWithResponses) StreamMannedTrafficWithResponse(ctx context.Contex
 // clear over TLS (M13) and never logged, streamed or exported.
 // The authority owns occurrence/v1; until its OpenAPI publishes it
 // (api/clients/authority.yaml), this body is the plan's field list
-// of 04 §3.3.
+// of 04 §3.3. Idempotency-Key is the client's reference, per
+// account: a repeat with the same key and body answers 200 with the
+// receipt of the report first queued and queues nothing more; with
+// another body, 409 idempotency_conflict. A send that got no
+// answer, or a 5xx, may be repeated with its key.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /v1/occurrences (the `CreateOccurrence` operationId).
-func (c *ClientWithResponses) CreateOccurrenceWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateOccurrenceResponse, error) {
-	rsp, err := c.CreateOccurrenceWithBody(ctx, contentType, body, reqEditors...)
+func (c *ClientWithResponses) CreateOccurrenceWithBodyWithResponse(ctx context.Context, params *CreateOccurrenceParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateOccurrenceResponse, error) {
+	rsp, err := c.CreateOccurrenceWithBody(ctx, params, contentType, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -13063,13 +13131,17 @@ func (c *ClientWithResponses) CreateOccurrenceWithBodyWithResponse(ctx context.C
 // clear over TLS (M13) and never logged, streamed or exported.
 // The authority owns occurrence/v1; until its OpenAPI publishes it
 // (api/clients/authority.yaml), this body is the plan's field list
-// of 04 §3.3.
+// of 04 §3.3. Idempotency-Key is the client's reference, per
+// account: a repeat with the same key and body answers 200 with the
+// receipt of the report first queued and queues nothing more; with
+// another body, 409 idempotency_conflict. A send that got no
+// answer, or a 5xx, may be repeated with its key.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /v1/occurrences (the `CreateOccurrence` operationId).
-func (c *ClientWithResponses) CreateOccurrenceWithResponse(ctx context.Context, body CreateOccurrenceJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateOccurrenceResponse, error) {
-	rsp, err := c.CreateOccurrence(ctx, body, reqEditors...)
+func (c *ClientWithResponses) CreateOccurrenceWithResponse(ctx context.Context, params *CreateOccurrenceParams, body CreateOccurrenceJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateOccurrenceResponse, error) {
+	rsp, err := c.CreateOccurrence(ctx, params, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -15228,6 +15300,13 @@ func ParseCreateOccurrenceResponse(rsp *http.Response) (*CreateOccurrenceRespons
 	}
 
 	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest OccurrenceQueued
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 202:
 		var dest OccurrenceQueued
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -15255,6 +15334,13 @@ func ParseCreateOccurrenceResponse(rsp *http.Response) (*CreateOccurrenceRespons
 			return nil, err
 		}
 		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Conflict
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON409 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 413:
 		var dest TooLarge
@@ -17093,7 +17179,7 @@ type ServerInterface interface {
 	StreamMannedTraffic(w http.ResponseWriter, r *http.Request, params StreamMannedTrafficParams)
 	// CreateOccurrence Report an occurrence
 	// (POST /v1/occurrences)
-	CreateOccurrence(w http.ResponseWriter, r *http.Request)
+	CreateOccurrence(w http.ResponseWriter, r *http.Request, params CreateOccurrenceParams)
 	// GetPolicy The thresholds row
 	// (GET /v1/policy)
 	GetPolicy(w http.ResponseWriter, r *http.Request)
@@ -17702,8 +17788,35 @@ func (siw *ServerInterfaceWrapper) StreamMannedTraffic(w http.ResponseWriter, r 
 // CreateOccurrence operation middleware
 func (siw *ServerInterfaceWrapper) CreateOccurrence(w http.ResponseWriter, r *http.Request) {
 
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params CreateOccurrenceParams
+
+	headers := r.Header
+
+	// ------------- Optional header parameter "Idempotency-Key" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("Idempotency-Key")]; found {
+		var IdempotencyKey OccurrenceIdempotencyKey
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "Idempotency-Key", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "Idempotency-Key", valueList[0], &IdempotencyKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "Idempotency-Key", Err: err})
+			return
+		}
+
+		params.IdempotencyKey = &IdempotencyKey
+
+	}
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.CreateOccurrence(w, r)
+		siw.Handler.CreateOccurrence(w, r, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -20396,11 +20509,26 @@ func (response StreamMannedTraffic503ApplicationProblemPlusJSONResponse) VisitSt
 }
 
 type CreateOccurrenceRequestObject struct {
-	Body *CreateOccurrenceJSONRequestBody
+	Params CreateOccurrenceParams
+	Body   *CreateOccurrenceJSONRequestBody
 }
 
 type CreateOccurrenceResponseObject interface {
 	VisitCreateOccurrenceResponse(w http.ResponseWriter) error
+}
+
+type CreateOccurrence200JSONResponse OccurrenceQueued
+
+func (response CreateOccurrence200JSONResponse) VisitCreateOccurrenceResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
 }
 
 type CreateOccurrence202JSONResponse OccurrenceQueued
@@ -20464,6 +20592,22 @@ func (response CreateOccurrence403ApplicationProblemPlusJSONResponse) VisitCreat
 	}
 	w.Header().Set("Content-Type", "application/problem+json")
 	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateOccurrence409ApplicationProblemPlusJSONResponse struct {
+	ConflictApplicationProblemPlusJSONResponse
+}
+
+func (response CreateOccurrence409ApplicationProblemPlusJSONResponse) VisitCreateOccurrenceResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(409)
 	_, err := buf.WriteTo(w)
 	return err
 }
@@ -23460,8 +23604,10 @@ func (sh *strictHandler) StreamMannedTraffic(w http.ResponseWriter, r *http.Requ
 }
 
 // CreateOccurrence operation middleware
-func (sh *strictHandler) CreateOccurrence(w http.ResponseWriter, r *http.Request) {
+func (sh *strictHandler) CreateOccurrence(w http.ResponseWriter, r *http.Request, params CreateOccurrenceParams) {
 	var request CreateOccurrenceRequestObject
+
+	request.Params = params
 
 	var body CreateOccurrenceJSONRequestBody
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {

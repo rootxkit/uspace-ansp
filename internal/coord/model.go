@@ -119,6 +119,9 @@ type NewOccurrence struct {
 	KeyID           string
 	CreatedBy       string
 	DeliveryID      string
+	// Idempotency is the console's Idempotency-Key the report was sent
+	// with; nil without one.
+	Idempotency *Idempotency
 }
 
 // Occurrence is a stored occurrence report.
@@ -185,6 +188,9 @@ type Tx interface {
 	EscalateDue(ctx context.Context, now time.Time, escalation, repeat time.Duration, limit int) ([]Notice, error)
 	NextOccurrenceRef(ctx context.Context) (string, error)
 	InsertOccurrence(ctx context.Context, o NewOccurrence) (Occurrence, error)
+	// OccurrenceByIdempotency is the report actorID's Idempotency-Key
+	// key queued; false when there is none.
+	OccurrenceByIdempotency(ctx context.Context, actorID, key string) (Occurrence, bool, error)
 	// Outbox is the outbox's view of this transaction (the occurrence
 	// job and its alarms commit with the report, B-05).
 	Outbox() deliver.Tx

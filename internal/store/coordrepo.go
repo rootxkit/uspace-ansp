@@ -223,16 +223,33 @@ func (t coordTx) InsertOccurrence(ctx context.Context, o coord.NewOccurrence) (c
 	if err != nil {
 		return coord.Occurrence{}, err
 	}
-	row, err := t.tx.Q.InsertOccurrence(ctx, relational.InsertOccurrenceParams{
+	p := relational.InsertOccurrenceParams{
 		ID: o.ID, ReportRef: o.ReportRef, Channel: o.Channel, OccurredAt: o.OccurredAt, BecameAwareAt: o.BecameAwareAt,
 		Category: o.Category, Aircraft: o.Aircraft, Manned: o.Manned, IntentRefs: refs, MinSeparation: o.MinSeparation,
 		Narrative: o.Narrative, ReporterPersonRefSealed: o.PersonRefSealed, ReporterKeyID: textPtr(o.KeyID),
 		CreatedBy: o.CreatedBy, DeliveryID: o.DeliveryID,
-	})
+	}
+	if idem := o.Idempotency; idem != nil {
+		p.IdempotencyActor, p.IdempotencyKey, p.IdempotencySha256 = &idem.ActorID, &idem.Key, &idem.SHA256
+	}
+	row, err := t.tx.Q.InsertOccurrence(ctx, p)
 	if err != nil {
 		return coord.Occurrence{}, err
 	}
 	return occurrenceFrom(row), nil
+}
+
+// OccurrenceByIdempotency is the report an account's Idempotency-Key
+// queued.
+func (t coordTx) OccurrenceByIdempotency(ctx context.Context, actorID, key string) (coord.Occurrence, bool, error) {
+	row, err := t.tx.Q.OccurrenceByIdempotency(ctx, relational.OccurrenceByIdempotencyParams{Actor: &actorID, IdempotencyKey: &key})
+	if IsNoRows(err) {
+		return coord.Occurrence{}, false, nil
+	}
+	if err != nil {
+		return coord.Occurrence{}, false, err
+	}
+	return occurrenceFrom(row), true, nil
 }
 
 // Outbox is the outbox's view of this transaction.
@@ -292,10 +309,14 @@ func noticeFrom(r relational.CoordinationNotice) coord.Notice {
 }
 
 func occurrenceFrom(r relational.OccurrenceReport) coord.Occurrence {
-	return coord.Occurrence{NewOccurrence: coord.NewOccurrence{
+	out := coord.Occurrence{NewOccurrence: coord.NewOccurrence{
 		ID: r.ID, ReportRef: r.ReportRef, Channel: r.Channel, OccurredAt: r.OccurredAt, BecameAwareAt: r.BecameAwareAt,
 		Category: r.Category, Aircraft: r.Aircraft, Manned: r.Manned, IntentRefs: uuidStrings(r.IntentRefs),
 		MinSeparation: r.MinSeparation, Narrative: r.Narrative, PersonRefSealed: r.ReporterPersonRefSealed,
 		KeyID: deref(r.ReporterKeyID), CreatedBy: r.CreatedBy, DeliveryID: r.DeliveryID,
 	}, CreatedAt: r.CreatedAt, DeadlineAt: r.DeadlineAt}
+	if r.IdempotencyKey != nil {
+		out.Idempotency = &coord.Idempotency{ActorID: deref(r.IdempotencyActor), Key: *r.IdempotencyKey, SHA256: deref(r.IdempotencySha256)}
+	}
+	return out
 }

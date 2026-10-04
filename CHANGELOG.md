@@ -9,6 +9,13 @@ additively within `/v1`. One line per work package.
 
 ### Fixed
 
+- WP-12 review: `POST /v1/occurrences` takes an optional `Idempotency-Key`
+  (additive; migration `0071`): a repeat with the key and body answers
+  `200` with the first receipt, another body `409`. The console sends one
+  with every report and keeps it after no answer or any 5xx, so its
+  explicit re-send cannot queue a second report; only a 4xx with a
+  problem is a refusal.
+
 - The CIS projection held every authority version it pulled from a real
   CISP: since the retro-audit's B-1 it required the bytes at
   `/v1/{dataset}` to equal the signed bytes at `/versions/{n}`, but the

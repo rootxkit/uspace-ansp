@@ -71,6 +71,55 @@ export function mergeNotices(held: ReadonlyMap<string, ApiNotice>, incoming: rea
   return { notices: out, dropped };
 }
 
+/**
+ * The notices the console holds after a fresh read of the inbox
+ * (`fetched`, the API's list): the list itself, each notice at the later
+ * of its listed and held states, plus the held notices the stream
+ * brought (`touched`) while the list was being read, which the list may
+ * predate. A held notice the API no longer lists and the stream did not
+ * bring is dropped: the API's list is the inbox, and what it pruned is
+ * not kept here for ever.
+ */
+export function reconcileNotices(held: ReadonlyMap<string, ApiNotice>, fetched: readonly ApiNotice[], touched: ReadonlySet<string>): Map<string, ApiNotice> {
+  const base = mergeNotices(new Map(), fetched).notices;
+  const carried: ApiNotice[] = [];
+  for (const [id, n] of held) {
+    if (base.has(id) || touched.has(id)) carried.push(n);
+  }
+  return mergeNotices(base, carried).notices;
+}
+
+/**
+ * `notices` held to at most `max`: past it the settled notices go first,
+ * the acknowledged ones oldest acknowledgement first, then the
+ * informational ones oldest receipt first, each counted in `evicted`. A
+ * notice that awaits a person (escalated, or received and requiring an
+ * acknowledgement) is never evicted, even past the bound: nothing hides
+ * a notice someone must act on.
+ */
+export function boundNotices(notices: ReadonlyMap<string, ApiNotice>, max: number): { notices: Map<string, ApiNotice>; evicted: number } {
+  const out = new Map(notices);
+  if (out.size <= max) return { notices: out, evicted: 0 };
+  const settled = [...out.values()]
+    .filter((n) => {
+      const g = groupOf(n);
+      return g === "acknowledged" || g === "informational";
+    })
+    .sort((a, b) => {
+      const ga = groupOf(a) === "acknowledged" ? 0 : 1;
+      const gb = groupOf(b) === "acknowledged" ? 0 : 1;
+      if (ga !== gb) return ga - gb;
+      return ga === 0 ? (a.acknowledged_at ?? "").localeCompare(b.acknowledged_at ?? "") : a.received_at.localeCompare(b.received_at);
+    });
+  let evicted = 0;
+  for (const n of settled) {
+    if (out.size <= max) break;
+    out.delete(n.ack_id);
+    evicted += 1;
+  }
+  return { notices: out, evicted };
+}
+
 /** Whether a notice frame is news of an escalation (for the opt-in browser notification). */
 export function escalationNews(held: ApiNotice | undefined, next: ApiNotice): boolean {
   if (next.state !== "escalated") return false;

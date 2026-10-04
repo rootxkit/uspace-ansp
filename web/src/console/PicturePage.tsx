@@ -11,7 +11,7 @@
 // says why it is empty (SC-22); a stream that stopped says since when,
 // and the aircraft it last sent stay on the map with their ages, never
 // moved and never called lost (B-13, C-12).
-import { useCallback, useMemo } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { fmtAge, useLang, useT } from "@rootxkit/uspace-ui/i18n";
 import { subscribeFrame, useNowMs } from "@rootxkit/uspace-ui/live";
 import { useBBoxSubscription } from "@rootxkit/uspace-ui/map";
@@ -22,7 +22,7 @@ import { ConsoleMap } from "./ConsoleMap";
 import { useConsole } from "./context";
 import { compareShown, drawnOf, type Aircraft, type Drawn } from "./manned";
 import { MannedLayer, STATE_TOKEN, type MannedFeature } from "./MannedLayer";
-import { adaptersLine, adapterText, altitudeText, identText, labelText, motionText, stateText, symbolOf } from "./picture";
+import { adaptersLine, adapterText, altitudeText, identText, LabelCache, labelText, motionText, stateText, symbolOf } from "./picture";
 import { streamSilent, type StreamStatus } from "./stream";
 import { Empty, timesShown } from "./ui";
 import { useMannedStream } from "./useManned";
@@ -30,6 +30,12 @@ import { useRestrictions } from "./useRestrictions";
 
 /** How often ages are redrawn. Display-only. */
 const TICK_MS = 1000;
+/**
+ * How long a map label of an unchanged aircraft is kept before it is
+ * built again for its age; a new frame or state rebuilds it at once.
+ * Display-only.
+ */
+export const LABEL_REFRESH_MS = 5000;
 /** Rows of the aircraft list; the map shows every aircraft. Display-only. */
 export const LIST_ROWS = 200;
 /** The bbox subscription's margin, settle time and grid (05 §5). Display-only. */
@@ -160,19 +166,22 @@ export function PicturePage() {
         .sort(compareShown),
     [aircraft, nowMs, status.staleAfterS, status.clockOffsetMs],
   );
-  const features = useMemo<MannedFeature[]>(
-    () =>
-      shown.map(({ a, d }) => ({
-        icao24: a.icao24,
-        lng: a.lng,
-        lat: a.lat,
-        state: d.state,
-        relevant: a.relevant,
-        trackDeg: a.trackDeg,
-        label: labelText(a, d, status.sources, status.staleAfterS, t, lang),
-      })),
-    [shown, status.sources, status.staleAfterS, t, lang],
-  );
+  // One cache for the page's life: a memo of display text, not state.
+  const [labelCache] = useState(() => new LabelCache(LABEL_REFRESH_MS));
+  // A new object whenever a label's words may change for every aircraft.
+  const labelGeneration = useMemo(() => ({ sources: status.sources, staleAfterS: status.staleAfterS, t, lang }), [status.sources, status.staleAfterS, t, lang]);
+  const features = useMemo<MannedFeature[]>(() => {
+    const labels = labelCache.labels(shown, nowMs, labelGeneration, (a, d) => labelText(a, d, status.sources, status.staleAfterS, t, lang));
+    return shown.map(({ a, d }, i) => ({
+      icao24: a.icao24,
+      lng: a.lng,
+      lat: a.lat,
+      state: d.state,
+      relevant: a.relevant,
+      trackDeg: a.trackDeg,
+      label: labels[i] ?? "",
+    }));
+  }, [labelCache, shown, nowMs, labelGeneration, status.sources, status.staleAfterS, t, lang]);
   const relevant = shown.filter((x) => x.a.relevant === true).length;
 
   return (

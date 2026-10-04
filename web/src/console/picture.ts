@@ -78,3 +78,54 @@ export function adaptersLine(s: Pick<StreamStatus, "adapters" | "sources">, t: T
   return s.adapters.map((a) => adapterText(a, s.sources, t, lang)).join("; ");
 }
 
+
+/**
+ * The map labels of the picture, each rebuilt only when it may read
+ * differently: a new frame of the aircraft (another object), another
+ * drawn state, another generation (any value, compared by identity:
+ * the page's says the sources, the threshold or the language changed), or `refreshMs` since it was built (its age moves
+ * on). Otherwise the label built before is reused, so a picture of
+ * thousands of aircraft is not rewritten on every one-second tick. The
+ * state colour and the position are never held back (they are not the
+ * label); the aircraft list reads its state line fresh. Entries of
+ * aircraft a pass no longer holds are forgotten, so the cache is bounded
+ * by the picture. Display-only.
+ */
+export class LabelCache {
+  private readonly refreshMs: number;
+  private generation: unknown = undefined;
+  private entries = new Map<string, { a: Aircraft; state: Drawn["state"]; agedHere: boolean; builtAtMs: number; label: string }>();
+
+  constructor(refreshMs: number) {
+    this.refreshMs = refreshMs;
+  }
+
+  /** Aircraft held. */
+  get size(): number {
+    return this.entries.size;
+  }
+
+  /** The labels of `shown`, in its order. */
+  labels(shown: readonly { a: Aircraft; d: Drawn }[], nowMs: number, generation: unknown, build: (a: Aircraft, d: Drawn) => string): string[] {
+    if (!Object.is(generation, this.generation)) {
+      this.entries.clear();
+      this.generation = generation;
+    }
+    const next = new Map<string, { a: Aircraft; state: Drawn["state"]; agedHere: boolean; builtAtMs: number; label: string }>();
+    const out = shown.map(({ a, d }) => {
+      const held = this.entries.get(a.icao24);
+      const fresh =
+        held !== undefined &&
+        held.a === a &&
+        held.state === d.state &&
+        held.agedHere === d.agedHere &&
+        nowMs >= held.builtAtMs &&
+        nowMs - held.builtAtMs < this.refreshMs;
+      const entry = fresh && held !== undefined ? held : { a, state: d.state, agedHere: d.agedHere, builtAtMs: nowMs, label: build(a, d) };
+      next.set(a.icao24, entry);
+      return entry.label;
+    });
+    this.entries = next;
+    return out;
+  }
+}

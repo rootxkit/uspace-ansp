@@ -20,11 +20,12 @@
 //   POST /v1/coordination/notices (the console reads the inbox).
 // - logout: the kit's CSRF check and cookie clearing around POST
 //   /v1/auth/logout.
-// - Idempotency-Key: POST /v1/restrictions requires it (the client's
-//   reference, api/openapi.yaml IdempotencyKey), and the kit's forward
+// - Idempotency-Key: POST /v1/restrictions requires it and POST
+//   /v1/occurrences takes it (the client's reference, api/openapi.yaml
+//   IdempotencyKey, OccurrenceIdempotencyKey), and the kit's forward
 //   passes only its fixed header list (FORWARDED_REQUEST_HEADERS of
 //   uspace-ui 0.1.0-rc.1), so a key of the contract's shape is added to
-//   that one call here, through the kit's own forward and its checks.
+//   those calls here, through the kit's own forward and its checks.
 //   Nothing else is added; any other header stays the kit's decision.
 //
 // The WebSockets are not proxied: the browser upgrades /v1/restrictions/
@@ -61,12 +62,15 @@ export const PROXY_ALLOW_PATHS: RegExp[] = [
   /^\/v1\/auth\/me$/,
 ];
 
-/** The header the plan operation requires, and its shape (api/openapi.yaml IdempotencyKey). */
+/** The header the plan and the occurrence report take, and its shape (api/openapi.yaml IdempotencyKey). */
 export const IDEMPOTENCY_HEADER = "Idempotency-Key";
 export const IDEMPOTENCY_KEY = /^[A-Za-z0-9._:-]{1,128}$/;
 
 /** The operations the console sends an Idempotency-Key on (method and API path). */
-export const IDEMPOTENT_OPERATIONS: readonly { method: string; path: RegExp }[] = [{ method: "POST", path: /^\/v1\/restrictions$/ }];
+export const IDEMPOTENT_OPERATIONS: readonly { method: string; path: RegExp }[] = [
+  { method: "POST", path: /^\/v1\/restrictions$/ },
+  { method: "POST", path: /^\/v1\/occurrences$/ },
+];
 
 export interface BffConfig {
   /** The API as the web container reaches it (WEB_API_INTERNAL_URL). */

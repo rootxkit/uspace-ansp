@@ -303,14 +303,21 @@ export interface DisabledBy {
   who: string | null;
 }
 
+/** The source class of every manned adapter and track (MannedTrack.source). */
+export const MANNED_SOURCE: ApiMannedTrack["source"] = "ansp_feed";
+
 /**
  * Who disabled the adapter `instance`: its own source/status/v1 in the
- * status frame's sources[], else the type's (source_instance null).
- * Null when no source of it says disabled.
+ * status frame's sources[], else the type's (source_instance null), both
+ * of the manned feed's source class only: another class's switch (a
+ * Remote ID type switch, an instance of the same name under another
+ * class) never names who disabled a manned adapter. Null when no source
+ * of it says disabled.
  */
 export function disabledBy(instance: string, sources: readonly StatusSource[]): DisabledBy | null {
-  const own = sources.find((s) => s.sourceInstance === instance && s.state === "disabled");
-  const hit = own ?? sources.find((s) => s.sourceInstance === null && s.state === "disabled");
+  const mine = sources.filter((s) => s.source === MANNED_SOURCE && s.state === "disabled");
+  const own = mine.find((s) => s.sourceInstance === instance);
+  const hit = own ?? mine.find((s) => s.sourceInstance === null);
   if (hit === undefined) return null;
   return { by: hit.disabledBy, who: hit.disabledByWho };
 }

@@ -191,6 +191,10 @@ func (w *Worker) Handle(ctx context.Context, m Msg) {
 			a.Error = clip(fmt.Sprintf("authority intake not available (HTTP %d on %s): the report is held and tried again every %s",
 				resp.Status, PathOccurrences, w.Policy.OccurrenceHold), 1000)
 		}
+		if d.Kind == KindOccurrence && resp.Status == http.StatusConflict {
+			a.Error = clip(fmt.Sprintf("the authority refused the report_ref as a conflict (HTTP %d on %s): the same report would be refused again, so it is not retried; resolve it with the authority",
+				resp.Status, PathOccurrences), 1000)
+		}
 		switch v {
 		case Sent:
 			a.State, a.Outcome = StateSent, "sent"
@@ -329,7 +333,18 @@ func (w *Worker) send(ctx context.Context, d *Delivery, token string) (sent, err
 		if w.Occurrences == nil {
 			return sent{resp: Response{Err: "no occurrence sender in this process"}}, nil
 		}
-		return sent{resp: w.Occurrences.SendOccurrence(ctx, *d)}, nil
+		resp := w.Occurrences.SendOccurrence(ctx, *d)
+		if resp.Status == http.StatusConflict {
+			// The authority's 409 (report_ref_conflict: the report_ref
+			// was taken with another body) is deterministic: the same
+			// report sent again gets it again, so it is failed at once
+			// with an alarm and never retried. The report stays
+			// undelivered and visible (occurrence_undelivered) for a
+			// person to resolve with the authority.
+			w.count(CounterOccurrenceConflict)
+			return sent{resp: resp, verdict: verdict(Permanent)}, nil
+		}
+		return sent{resp: resp}, nil
 	case KindCISPHeartbeat:
 	}
 	switch d.Kind {
@@ -569,6 +584,11 @@ func (w *Worker) afterDSS(ctx context.Context, log *slog.Logger, d Delivery, a A
 // answer's excerpt, or the error.
 func describe(a Attempt) string {
 	if a.StatusCode != nil {
+		if a.Error != "" {
+			// This system's own reason says what the status meant (an
+			// occurrence's answer keeps no excerpt).
+			return fmt.Sprintf("HTTP %d %s; %s", *a.StatusCode, clip(a.Excerpt, 300), clip(a.Error, 300))
+		}
 		return fmt.Sprintf("HTTP %d %s", *a.StatusCode, clip(a.Excerpt, 300))
 	}
 	if a.Error != "" {
