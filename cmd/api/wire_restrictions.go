@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"sync/atomic"
 	"time"
@@ -52,8 +53,33 @@ func (p jsPublisher) Publish(ctx context.Context, subject, dedupeID string, data
 // restrictionWiring is the restriction side of api: the handlers, the
 // background work (the ticker, the bus relay) and the readiness checks.
 type restrictionWiring struct {
-	api *restrictionAPI
-	run []func(ctx context.Context)
+	api    *restrictionAPI
+	run    []func(ctx context.Context)
+	checks []obs.Check
+}
+
+// loadGeoid loads ANSP_GEOID_FILE with uspace-core's geoid.LoadMapped
+// (WP-19: a read-only memory map on linux and darwin, shared in the page
+// cache by every process on the host; read into memory elsewhere) and
+// returns the readiness check that says which: geoid ok with
+// "mapped: true" or "mapped: false". Without ANSP_GEOID_FILE there is no
+// grid and no check (nothing is opened), and the log says what is
+// refused; a file that does not load refuses the start.
+func loadGeoid(cfg config.Config, logger *slog.Logger) (geoid.Undulator, []obs.Check, error) {
+	if cfg.GeoidFile == "" {
+		logger.Warn("no geoid: ANSP_GEOID_FILE is not set; restrictions with AMSL limits are refused 503 geoid_unavailable")
+		return nil, nil, nil
+	}
+	grid, err := geoid.LoadMapped(cfg.GeoidFile)
+	if err != nil {
+		return nil, nil, core.Fieldf("ANSP_GEOID_FILE", "cannot be loaded: %s", err.Error())
+	}
+	mapped := grid.Mapped()
+	logger.Info("geoid loaded", slog.String("geoid", grid.Description()), slog.Bool("geoid_mapped", mapped))
+	reason := fmt.Sprintf("mapped: %t", mapped)
+	return grid, []obs.Check{{Name: obs.DepGeoid, Probe: func(context.Context) (obs.State, string) {
+		return obs.StateOK, reason
+	}}}, nil
 }
 
 // wireRestrictions builds the restriction service on the relational
@@ -68,15 +94,9 @@ func wireRestrictions(cfg config.Config, db *store.Relational, b *bus.Bus, sessi
 		logger.Warn("restrictions are not served: ANSP_RELATIONAL_DSN is not set; the restriction operations answer 503")
 		return &restrictionWiring{}, nil
 	}
-	var g geoid.Undulator
-	if cfg.GeoidFile != "" {
-		grid, err := geoid.Load(cfg.GeoidFile)
-		if err != nil {
-			return nil, core.Fieldf("ANSP_GEOID_FILE", "cannot be loaded: %s", err.Error())
-		}
-		g = grid
-	} else {
-		logger.Warn("no geoid: ANSP_GEOID_FILE is not set; restrictions with AMSL limits are refused 503 geoid_unavailable")
+	g, geoidChecks, err := loadGeoid(cfg, logger)
+	if err != nil {
+		return nil, err
 	}
 	if airspaces == nil {
 		airspaces = restriction.NoProjection{}
@@ -127,7 +147,7 @@ func wireRestrictions(cfg config.Config, db *store.Relational, b *bus.Bus, sessi
 			return nil, err
 		}
 	}
-	w := &restrictionWiring{api: &restrictionAPI{svc: svc, stream: st}}
+	w := &restrictionWiring{api: &restrictionAPI{svc: svc, stream: st}, checks: geoidChecks}
 	w.run = append(w.run, func(ctx context.Context) {
 		runTicker(ctx, svc, &unpublished, logger)
 	})

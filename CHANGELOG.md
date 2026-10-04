@@ -24,6 +24,14 @@ additively within `/v1`. One line per work package.
 
 ### Added
 
+- WP-19: uspace-core v1.4.0. api loads `ANSP_GEOID_FILE` with
+  `geoid.LoadMapped`, a read-only memory map on linux and darwin shared
+  in the page cache by the processes on one host (read into memory
+  elsewhere), and says the result of `Grid.Mapped` on `/readyz` (a new
+  non-required check, `geoid: ok (mapped: true)`, present when a grid is
+  loaded) and in the start log (`geoid_mapped`). A mapped file must be
+  replaced by renaming, never rewritten in place. The ANSP loads no
+  terrain.
 - WP-0 scaffold: the Go module pinned to `uspace-core` v1.1.0; the
   `api`, `manned-adapter` and `manned-feed` stubs serving `/healthz`,
   `/readyz` (every dependency named with its state and why) and

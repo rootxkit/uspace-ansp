@@ -150,7 +150,7 @@ func run(ctx context.Context, args, environ []string, stdout io.Writer) int {
 		logger.Error("routes refused", slog.String("error", err.Error()))
 		return 2
 	}
-	checks = append(append(append(checks, aw.checks...), cw.checks...), dw.checks...)
+	checks = append(append(append(append(checks, aw.checks...), cw.checks...), rw.checks...), dw.checks...)
 	for _, fn := range append(append(append(append(append(aw.run, rw.run...), sw.run...), cw.run...), dw.run...), co.run...) {
 		go fn(ctx)
 	}
