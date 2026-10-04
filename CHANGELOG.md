@@ -7,6 +7,21 @@ additively within `/v1`. One line per work package.
 
 ## [Unreleased]
 
+### Fixed
+
+- The CIS projection held every authority version it pulled from a real
+  CISP: since the retro-audit's B-1 it required the bytes at
+  `/v1/{dataset}` to equal the signed bytes at `/versions/{n}`, but the
+  CISP serves the current version as its own snapshot (top-level `cis_*`
+  members, its own `metadata`), so the two never match (found on the
+  staging droplet: `uspace_airspace version 1 held, not used`). The
+  binding is now of content, as the USSP's: the same features by
+  identifier as `ed318.Export` writes them (`cis_*` extended properties
+  left out), the request's feature for a restrictions version, the
+  `ussp_list` without its `cis_*` members. A served feature the publisher
+  did not sign is still held; the tests now serve the CISP's snapshot, not
+  a copy of the signed bytes.
+
 ### Added
 
 - WP-0 scaffold: the Go module pinned to `uspace-core` v1.1.0; the

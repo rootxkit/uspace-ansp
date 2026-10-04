@@ -224,18 +224,68 @@ func TestUntrustedHeldThenSignedTaken(t *testing.T) {
 	}
 }
 
-// The signature covers the bytes at /versions/{n}; a current read that
-// answers other bytes for the same version (a CISP that serves a signed
-// document on one path and a tampered one on the other, or a proxy that
-// alters one) is held, never installed. Its twin: the same bytes on
-// both paths are installed.
+// asPublished is a fixture as its publisher sends it: no top-level cis_*
+// members (the CISP adds those).
+func asPublished(t *testing.T, d cis.Dataset) []byte {
+	t.Helper()
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(fixture(t, d, 0), &m); err != nil {
+		t.Fatal(err)
+	}
+	for k := range m {
+		if strings.HasPrefix(k, "cis_") {
+			delete(m, k)
+		}
+	}
+	out, err := json.Marshal(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
+// asServed is what the real CISP serves at GET /v1/{dataset} for a
+// published collection (its getDataset contract): the same features with
+// its own top-level cis_* members and metadata (issued = when it received
+// the version, provider = the publishing client). edit, when set, alters
+// the first feature's properties too.
+func asServed(t *testing.T, published []byte, v int64, edit func(props map[string]any)) []byte {
+	t.Helper()
+	var m map[string]any
+	if err := json.Unmarshal(published, &m); err != nil {
+		t.Fatal(err)
+	}
+	m["cis_dataset"] = "uspace_airspace"
+	m["cis_version"] = v
+	m["cis_updated_at"] = "2026-10-04T00:04:02.023404Z"
+	m["metadata"] = map[string]any{"issued": "2026-10-04T00:04:02.023404Z",
+		"provider": []any{map[string]any{"text": "authority-01", "lang": "en"}}}
+	if edit != nil {
+		f := m["features"].([]any)[0].(map[string]any)
+		edit(f["properties"].(map[string]any))
+	}
+	out, err := json.Marshal(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
+// The signature covers the publisher's bytes at /versions/{n}; the CISP
+// serves its own snapshot of them at the current path (cis_* members,
+// its own metadata), as the droplet's CISP does. A current read whose
+// features are not the signed ones (a CISP or a proxy that alters one
+// path) is held, never installed; its twin, the CISP's snapshot of the
+// same features, is installed with the bytes as served.
 func TestCurrentBodyDifferentFromSignedHeld(t *testing.T) {
 	f := newProjection(t, nil)
 	f.stub.publishAll()
 	f.pullAll(t)
-	f.stub.publish(cis.USpaceAirspace, 4, fixture(t, cis.USpaceAirspace, 4), "publisher")
-	// Version 4 still, and valid, but not the bytes the signature covers.
-	tampered := append(fixture(t, cis.USpaceAirspace, 4), '\n')
+	published := asPublished(t, cis.USpaceAirspace)
+	f.stub.publish(cis.USpaceAirspace, 4, published, "publisher")
+	tampered := asServed(t, published, 4, func(props map[string]any) {
+		props["name"] = []any{map[string]any{"text": "not what the authority signed", "lang": "en-GB"}}
+	})
 	f.stub.mu.Lock()
 	f.stub.ds[cis.USpaceAirspace].current = tampered
 	f.stub.mu.Unlock()
@@ -249,17 +299,74 @@ func TestCurrentBodyDifferentFromSignedHeld(t *testing.T) {
 	if row, _ := f.store.row(cis.USpaceAirspace); row.Version != 3 {
 		t.Fatal("the unsigned current body was stored")
 	}
-	if !strings.Contains(ue.Reason, "differ") {
+	if !strings.Contains(ue.Reason, "not the ones its publisher signed") {
 		t.Fatalf("reason %q", ue.Reason)
 	}
+
+	served := asServed(t, published, 4, nil)
+	if bytes.Equal(served, published) {
+		t.Fatal("the snapshot must differ from the published bytes, or this twin proves nothing")
+	}
 	f.stub.mu.Lock()
-	f.stub.ds[cis.USpaceAirspace].current = nil
+	f.stub.ds[cis.USpaceAirspace].current = served
 	f.stub.mu.Unlock()
 	if err := f.p.Pull(context.Background(), cis.USpaceAirspace, false); err != nil {
-		t.Fatal(err)
+		t.Fatalf("the CISP's snapshot of the signed features: %v", err)
 	}
-	if row, _ := f.store.row(cis.USpaceAirspace); row.Version != 4 || !bytes.Equal(row.Body, fixture(t, cis.USpaceAirspace, 4)) {
-		t.Fatal("the signed version was not installed with its own bytes")
+	if row, _ := f.store.row(cis.USpaceAirspace); row.Version != 4 || !bytes.Equal(row.Body, served) {
+		t.Fatal("the signed version was not installed with the bytes as served")
+	}
+}
+
+// A restrictions version is signed over this system's request for one
+// restriction, not over the collection the CISP serves: the request's
+// feature must be in the collection, equal. Held when it differs;
+// installed when it is there.
+func TestRestrictionRequestBindsItsFeature(t *testing.T) {
+	f := newProjection(t, nil)
+	collection := fixture(t, cis.Restrictions, 7)
+	var doc struct {
+		Features []map[string]any `json:"features"`
+	}
+	if err := json.Unmarshal(collection, &doc); err != nil || len(doc.Features) == 0 {
+		t.Fatalf("restrictions fixture: %v", err)
+	}
+	request := func(feature map[string]any) []byte {
+		b, err := json.Marshal(map[string]any{"action": "create", "feature": feature})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return b
+	}
+	changed := map[string]any{}
+	for k, v := range doc.Features[0] {
+		changed[k] = v
+	}
+	props := map[string]any{}
+	for k, v := range doc.Features[0]["properties"].(map[string]any) {
+		props[k] = v
+	}
+	props["name"] = []any{map[string]any{"text": "a restriction the ANSP never requested", "lang": "en-GB"}}
+	changed["properties"] = props
+
+	f.stub.publish(cis.Restrictions, 7, request(changed), "publisher")
+	f.stub.mu.Lock()
+	f.stub.ds[cis.Restrictions].current = collection
+	f.stub.mu.Unlock()
+	var ue *cis.UntrustedError
+	if err := f.p.Pull(context.Background(), cis.Restrictions, false); !errors.As(err, &ue) {
+		t.Fatalf("a collection without the signed feature was taken: %v", err)
+	}
+
+	f.stub.publish(cis.Restrictions, 7, request(doc.Features[0]), "publisher")
+	f.stub.mu.Lock()
+	f.stub.ds[cis.Restrictions].current = collection
+	f.stub.mu.Unlock()
+	if err := f.p.Pull(context.Background(), cis.Restrictions, false); err != nil {
+		t.Fatalf("the collection carrying the signed feature: %v", err)
+	}
+	if f.p.Version(cis.Restrictions) != 7 {
+		t.Fatal("the bound restrictions version is not in use")
 	}
 }
 
