@@ -69,3 +69,82 @@ test("every page in ka and en", async ({ page, request }) => {
     await shot(page, `${lang}-adapters`);
   }
 });
+
+const ADMIN = { username: "admin1", password: "admin1-test-password" };
+
+async function signInAs(page: Page, who: { username: string; password: string }) {
+  await page.goto("/en/login");
+  await page.locator("#login-user").fill(who.username);
+  await page.locator("#login-password").fill(who.password);
+  await page.getByTestId("login-submit").click();
+  await page.locator("#login-otp").fill("246810");
+  await page.getByTestId("login-submit").click();
+  await expect(page).toHaveURL(/\/en\/restrictions$/);
+}
+
+test("the WP-12 pages in ka and en: the picture with a stale and a disabled aircraft, the inbox, sources, policy, audit, occurrence", async ({ page, request }) => {
+  await page.setViewportSize({ width: 1440, height: 1200 });
+  expect((await request.post("/__mock/reset")).ok()).toBe(true);
+  const post = async (path: string, data: Record<string, unknown>) => expect((await request.post(path, { data })).ok()).toBe(true);
+  // Synthetic traffic: one live and relevant, one stale, one whose adapter was switched off, one outside.
+  await post("/__mock/adapter", { id: "sbs-1", state: "disabled", who: "admin1" });
+  await post("/__mock/manned", { icao24: "4ca7b5", callsign: "TST123", lat: 41.716, lng: 44.79, alt_pressure_m: 1250, alt_wgs84_m: 1310, relevant: true });
+  await post("/__mock/manned", { icao24: "4ca7c1", callsign: "TST456", lat: 41.705, lng: 44.81, alt_pressure_m: 900, relevant: true, captured_at: new Date(Date.now() - 40_000).toISOString() });
+  await post("/__mock/manned", { icao24: "4ca7c1", state: "stale" });
+  await post("/__mock/manned", { icao24: "4ca7d2", callsign: "TST789", lat: 41.725, lng: 44.8, alt_pressure_m: 2100, relevant: true, source_instance: "sbs-1" });
+  await post("/__mock/manned", { icao24: "4ca7d2", state: "source_disabled" });
+  await post("/__mock/manned", { icao24: "4ca7e3", callsign: "TST999", lat: 41.69, lng: 44.76, alt_pressure_m: 3500, relevant: false, track_deg: 45 });
+  await post("/__mock/notice", { ack_id: "01K6P0N0000000000000000001", received_at: new Date(Date.now() - 120_000).toISOString() });
+  await post("/__mock/escalate", { ack_id: "01K6P0N0000000000000000001" });
+  await post("/__mock/notice", { ack_id: "01K6P0N0000000000000000002", kind: "intent_notice" });
+
+  await signInAs(page, ADMIN);
+  for (const lang of ["ka", "en"] as const) {
+    await page.goto(`/${lang}/picture`);
+    await expect(page.locator('[data-aircraft="4ca7d2"]')).toHaveAttribute("data-state", "source_disabled");
+    await expect(page.locator('[data-aircraft="4ca7c1"]')).toHaveAttribute("data-state", "stale");
+    await expect(page.getByTestId("layer-manned")).toHaveAttribute("data-idle", "true");
+    await shot(page, `${lang}-picture`);
+    await page.goto(`/${lang}/inbox`);
+    await expect(page.getByTestId("inbox-group-escalated")).toBeVisible();
+    await expect(page.getByTestId("layer-notices")).toHaveAttribute("data-idle", "true");
+    await shot(page, `${lang}-inbox`);
+    await page.goto(`/${lang}/sources`);
+    await expect(page.getByTestId("switches")).toBeVisible();
+    await shot(page, `${lang}-sources`);
+    await page.goto(`/${lang}/policy`);
+    await expect(page.getByTestId("policy-table")).toBeVisible();
+    await shot(page, `${lang}-policy`);
+  }
+  await page.goto("/en/sources");
+  const replay = page.locator('[data-testid="switch"][data-instance="replay-1"]');
+  await replay.getByTestId("switch-replay-1").click();
+  await page.getByRole("alertdialog").getByLabel("Reason").fill("Receiver swap (synthetic)");
+  await page.getByRole("alertdialog").getByRole("button", { name: "Confirm" }).click();
+  await expect(replay).toHaveAttribute("data-enabled", "false");
+  for (const lang of ["ka", "en"] as const) {
+    await page.goto(`/${lang}/audit`);
+    await page.getByTestId("audit-load").click();
+    await expect(page.getByTestId("audit-table")).toBeVisible();
+    await shot(page, `${lang}-audit`);
+  }
+});
+
+test("the occurrence form in ka and en", async ({ page, request }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  expect((await request.post("/__mock/reset")).ok()).toBe(true);
+  await page.goto("/en/login");
+  await page.locator("#login-user").fill(SUPER.username);
+  await page.locator("#login-password").fill(SUPER.password);
+  await page.getByTestId("login-submit").click();
+  await page.locator("#login-otp").fill("246810");
+  await page.getByTestId("login-submit").click();
+  await expect(page).toHaveURL(/\/en\/restrictions$/);
+  for (const lang of ["ka", "en"] as const) {
+    await page.goto(`/${lang}/occurrences/new`);
+    await page.getByTestId("occ-occurred_at").fill("2026-10-02T11:20");
+    await page.getByTestId("occ-became_aware_at").fill("2026-10-02T11:25");
+    await expect(page.getByTestId("occurrence-deadline")).toContainText("2026-10-05");
+    await shot(page, `${lang}-occurrence`);
+  }
+});
