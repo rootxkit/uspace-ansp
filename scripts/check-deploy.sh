@@ -8,7 +8,8 @@
 #      a memory limit on every service), and refused without an image;
 #   3. the rendered shape read per service (jq): api's client secret
 #      file is a non-empty file under a directory api mounts, and no
-#      setting of the deployment empties it;
+#      setting of the deployment empties it; each process gets only the
+#      database DSN it opens;
 #   4. deploy/caddy/proof.sh against the pinned Caddy.
 #
 # Needs docker, jq and, for step 1, shellcheck: without shellcheck step 1
@@ -40,7 +41,8 @@ tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 if type -P cygpath >/dev/null 2>&1; then tmp="$(cygpath -m "$tmp")"; fi
 mkdir -p "$tmp/secrets/keys" "$tmp/secrets/nats"
-printf 'ANSP_RELATIONAL_DSN=postgres://ansp:placeholder@timescaledb:5432/ansp\nANSP_TIMESERIES_DSN=postgres://ansp:placeholder@timescaledb:5432/ansp_ts\n' > "$tmp/secrets/app.env"
+printf 'ANSP_RELATIONAL_DSN=postgres://ansp:placeholder@timescaledb:5432/ansp\n' > "$tmp/secrets/relational.env"
+printf 'ANSP_TIMESERIES_DSN=postgres://ansp:placeholder@timescaledb:5432/ansp_ts\n' > "$tmp/secrets/timeseries.env"
 printf 'POSTGRES_PASSWORD=placeholder\n' > "$tmp/secrets/db.env"
 : > "$tmp/secrets/web.env"
 for k in session.pem secrets.key delivery.pem ansp-01.secret mtls-bindings.json; do
@@ -102,6 +104,28 @@ if ANSP_SECRETS_DIR="$tmp/secrets" ANSP_IMAGE='' docker compose --env-file deplo
   exit 1
 fi
 echo "check-deploy: compose.prod refuses to render without ANSP_IMAGE ($(grep -o 'the uspace-ansp image by digest' "$tmp/err" | head -n 1))"
+
+# Each process gets only the DSN of the database it opens (CLAUDE.md
+# rule 6): migrate both trees, api the relational database, manned-feed
+# the hypertable, the adapters and everything else none.
+render "$tmp/rendered.json" --profile replay --profile feed
+got="$(jq -j '.services | to_entries[] | "\(.key) \((.value.environment.ANSP_RELATIONAL_DSN // "") != "") \((.value.environment.ANSP_TIMESERIES_DSN // "") != "")\n"' \
+  "$tmp/rendered.json" | tr -d '\r' | sort)"
+want="api true false
+manned-adapter-feed false false
+manned-adapter-replay false false
+manned-feed false true
+migrate true true
+nats false false
+timescaledb false false
+web false false"
+if [ "$got" != "$want" ]; then
+  fail "the DSNs per service (service relational timeseries) are
+$got
+want
+$want"
+fi
+echo "check-deploy: DSNs per process: migrate both, api relational, manned-feed timeseries, adapters none"
 
 # api's client secret: set and non-empty in the rendered shape, also when
 # the deployment sets ANSP_API_CLIENT_SECRET_FILE empty, and refused when

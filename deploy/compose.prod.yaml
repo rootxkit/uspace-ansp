@@ -15,8 +15,9 @@
 #   ANSP_ENV_FILE                the operator's ANSP_* settings (the
 #                                catalogue is deploy/.env.example); no secret
 #   ANSP_SECRETS_DIR             generated on the host, never in git:
-#                                app.env (ANSP_RELATIONAL_DSN,
-#                                ANSP_TIMESERIES_DSN), db.env
+#                                relational.env (ANSP_RELATIONAL_DSN: migrate,
+#                                api), timeseries.env (ANSP_TIMESERIES_DSN:
+#                                migrate, manned-feed), db.env
 #                                (POSTGRES_PASSWORD), web.env, nats/<process>.nk,
 #                                nats/nats-users.conf, keys/ (session.pem,
 #                                secrets.key, delivery.pem, admin.pw,
@@ -62,9 +63,10 @@ x-go: &go
   security_opt: ["no-new-privileges:true"]
   cap_drop: [ALL]
   logging: *logging
+  # Each service lists its own env files: a process is given only the DSN
+  # of the database it opens (CLAUDE.md rule 6), and the adapters none.
   env_file:
     - ${ANSP_ENV_FILE:?the operator's ANSP_* settings}
-    - ${ANSP_SECRETS_DIR:?generated on the host}/app.env
 
 x-env: &env
   ANSP_HTTP_ADDR: ":8080"
@@ -139,6 +141,10 @@ services:
     restart: "no"
     entrypoint: ["/api", "migrate", "relational", "timeseries"]
     networks: [ansp]
+    env_file:
+      - ${ANSP_ENV_FILE}
+      - ${ANSP_SECRETS_DIR:?generated on the host}/relational.env
+      - ${ANSP_SECRETS_DIR}/timeseries.env
     environment:
       ANSP_PROCESS: api
       ANSP_CLIENT_SECRET_FILE: ""
@@ -151,6 +157,9 @@ services:
   api:
     <<: *go
     entrypoint: ["/api"]
+    env_file:
+      - ${ANSP_ENV_FILE}
+      - ${ANSP_SECRETS_DIR}/relational.env
     networks:
       ansp: {}
       edge:
@@ -181,6 +190,9 @@ services:
   manned-feed:
     <<: *go
     entrypoint: ["/manned-feed"]
+    env_file:
+      - ${ANSP_ENV_FILE}
+      - ${ANSP_SECRETS_DIR}/timeseries.env
     networks:
       ansp: {}
       edge:
