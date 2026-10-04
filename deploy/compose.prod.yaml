@@ -1,0 +1,290 @@
+# Production and staging shape of uspace-ansp (docs/PLAN.md section 11,
+# WP-13). The deployment repository (uspace-deploy on the staging
+# droplet; the ANSP's own infrastructure in production) runs this shape;
+# deploy/compose.yaml is the development stack, not this.
+#
+#   docker compose -p uspace-ansp --env-file <deployment env> \
+#     -f deploy/compose.prod.yaml --profile replay up -d --wait
+#
+# What the deployment supplies (every variable without a default is
+# refused when unset; `make check-deploy` renders this file with
+# deploy/compose.prod.env.example):
+#
+#   ANSP_IMAGE, ANSP_WEB_IMAGE   the images by digest (repo@sha256:...),
+#                                verified first with deploy/verify.sh
+#   ANSP_ENV_FILE                the operator's ANSP_* settings (the
+#                                catalogue is deploy/.env.example); no secret
+#   ANSP_SECRETS_DIR             generated on the host, never in git:
+#                                app.env (ANSP_RELATIONAL_DSN,
+#                                ANSP_TIMESERIES_DSN), db.env
+#                                (POSTGRES_PASSWORD), web.env, nats/<process>.nk,
+#                                nats/nats-users.conf, keys/ (session.pem,
+#                                secrets.key, delivery.pem, admin.pw,
+#                                ansp-01.secret, mtls-bindings.json)
+#   ANSP_DATA_DIR                pgdata/ and nats/ of this system
+#   ANSP_GROUND_DIR              the pinned geoid grid, read-only
+#   ANSP_REPLAY_DIR              staging: the replay files (default ../testdata/replay)
+#   ANSP_API_CLIENT_SECRET_FILE  api: the ansp-01 secret under /run/secrets/ansp/
+#   ANSP_EDGE_NETWORK            the network shared with the edge Caddy
+#   ANSP_TRUSTED_PROXIES         the Caddy address(es) on that network
+#
+# Rules this file keeps: one timescaledb-ha container with both databases
+# (M37); a one-shot migrate of both trees that every long-running process
+# waits for (M36); read-only root filesystems; secrets as files; no
+# published port (only the shared Caddy publishes, through
+# deploy/caddy/ansp.caddy); a memory and CPU limit on every service, sized
+# for the ANSP stack's share of the droplet (PLAN section 15 row 20:
+# measured use is recorded in docs/runbooks/n-m2.md); bounded logs.
+#
+# Surveillance adapters: profile `replay` runs the synthetic replay
+# (staging, never production: ANSP_ADAPTER_REPLAY_ALLOWED is set only
+# here); profile `feed` runs one real adapter whose kind and endpoint come
+# from ANSP_FEED_* (production). Run one or both; each adapter has its own
+# ANSP_ADAPTER_ID and its own NKey.
+name: uspace-ansp
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: ${ANSP_LOG_MAX_SIZE:-10m}
+    max-file: ${ANSP_LOG_MAX_FILE:-3}
+
+x-go: &go
+  image: ${ANSP_IMAGE:?the uspace-ansp image by digest}
+  restart: unless-stopped
+  read_only: true
+  tmpfs: [/tmp]
+  security_opt: ["no-new-privileges:true"]
+  cap_drop: [ALL]
+  logging: *logging
+  env_file:
+    - ${ANSP_ENV_FILE:?the operator's ANSP_* settings}
+    - ${ANSP_SECRETS_DIR:?generated on the host}/app.env
+
+x-env: &env
+  ANSP_HTTP_ADDR: ":8080"
+  ANSP_NATS_URL: nats://nats:4222
+  ANSP_NATS_CREDS: /run/secrets/nats.nk
+  ANSP_TRUSTED_PROXIES: ${ANSP_TRUSTED_PROXIES:?the edge Caddy's address}
+  # Only api calls out as ansp-01 and mounts its secret; every other
+  # process refuses a client secret file it cannot read.
+  ANSP_CLIENT_SECRET_FILE: ""
+
+services:
+  timescaledb:
+    image: ${ANSP_TIMESCALEDB_IMAGE:-timescale/timescaledb-ha:pg16@sha256:e9f34d8dd27621ec3933386eb07b70021d15b8116247362e0537bbff94ef0769}
+    restart: unless-stopped
+    networks: [ansp]
+    logging: *logging
+    shm_size: 128m
+    env_file:
+      - ${ANSP_SECRETS_DIR}/db.env
+    environment:
+      POSTGRES_DB: ansp
+    command:
+      - postgres
+      - -c
+      - shared_buffers=${ANSP_PG_SHARED_BUFFERS:-128MB}
+      - -c
+      - max_wal_size=${ANSP_PG_MAX_WAL_SIZE:-256MB}
+      - -c
+      - work_mem=${ANSP_PG_WORK_MEM:-4MB}
+      - -c
+      - max_connections=${ANSP_PG_MAX_CONNECTIONS:-100}
+    volumes:
+      - ./initdb/10-ansp.sql:/docker-entrypoint-initdb.d/10-ansp.sql:ro
+      - ${ANSP_DATA_DIR:?this system's data directory}/pgdata:/home/postgres/pgdata
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U postgres -d ansp_ts && psql -U postgres -d ansp_ts -tAc 'SELECT 1' | grep -q 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 60
+    deploy:
+      resources:
+        limits: {cpus: "0.75", memory: 384M}
+
+  nats:
+    image: ${ANSP_NATS_IMAGE:-nats:2-alpine@sha256:ac8f88a6494bffc2c2a5289a0ca61cb28a9145c11ba5677cf24265d07f46d8d4}
+    restart: unless-stopped
+    read_only: true
+    networks: [ansp]
+    logging: *logging
+    command: ["-c", "/etc/nats/nats.conf"]
+    environment:
+      # The one byte bound of the store: the ANSP's streams are bounded by
+      # age, so nothing is reserved (PLAN section 7).
+      NATS_MAX_FILE_STORE: ${ANSP_NATS_MAX_FILE_STORE:-4G}
+      NATS_MAX_MEMORY_STORE: ${ANSP_NATS_MAX_MEMORY_STORE:-64M}
+    volumes:
+      - ./nats/nats.conf:/etc/nats/nats.conf:ro
+      - ${ANSP_SECRETS_DIR}/nats/nats-users.conf:/etc/nats/users/nats-users.conf:ro
+      - ${ANSP_DATA_DIR}/nats:/data
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8222/healthz?js-enabled-only=true"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    deploy:
+      resources:
+        limits: {cpus: "0.25", memory: 96M}
+
+  # Both trees, then exit; nothing migrates at start (M36).
+  migrate:
+    <<: *go
+    restart: "no"
+    entrypoint: ["/api", "migrate", "relational", "timeseries"]
+    networks: [ansp]
+    environment:
+      ANSP_PROCESS: api
+      ANSP_CLIENT_SECRET_FILE: ""
+    depends_on:
+      timescaledb: {condition: service_healthy}
+    deploy:
+      resources:
+        limits: {cpus: "0.5", memory: 64M}
+
+  api:
+    <<: *go
+    entrypoint: ["/api"]
+    networks:
+      ansp: {}
+      edge:
+        aliases: [ansp-api]
+    environment:
+      <<: *env
+      ANSP_PROCESS: api
+      ANSP_INSTANCE: ${ANSP_INSTANCE_NAME:-production}
+      ANSP_SESSION_KEY_FILE: /run/secrets/ansp/session.pem
+      ANSP_SECRETS_KEY_FILE: /run/secrets/ansp/secrets.key
+      ANSP_DELIVERY_KEY_FILE: /run/secrets/ansp/delivery.pem
+      ANSP_CLIENT_SECRET_FILE: ${ANSP_API_CLIENT_SECRET_FILE:-}
+      ANSP_BOOTSTRAP_ADMIN_USERNAME: ${ANSP_BOOTSTRAP_ADMIN:-}
+      ANSP_BOOTSTRAP_ADMIN_PASSWORD_FILE: ${ANSP_BOOTSTRAP_ADMIN_PASSWORD_FILE:-}
+      GOMEMLIMIT: 200MiB
+    volumes:
+      - ${ANSP_SECRETS_DIR}/nats/api.nk:/run/secrets/nats.nk:ro
+      - ${ANSP_SECRETS_DIR}/keys:/run/secrets/ansp:ro
+      - ${ANSP_GROUND_DIR:?the pinned geoid grid}:/srv/ground:ro
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+      nats: {condition: service_healthy}
+    deploy:
+      resources:
+        limits: {cpus: "0.5", memory: 256M}
+
+  manned-feed:
+    <<: *go
+    entrypoint: ["/manned-feed"]
+    networks:
+      ansp: {}
+      edge:
+        aliases: [ansp-manned-feed]
+    environment:
+      <<: *env
+      ANSP_PROCESS: manned-feed
+      ANSP_INSTANCE: ${ANSP_INSTANCE_NAME:-production}
+      GOMEMLIMIT: 76MiB
+    volumes:
+      - ${ANSP_SECRETS_DIR}/nats/manned-feed.nk:/run/secrets/nats.nk:ro
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+      nats: {condition: service_healthy}
+    deploy:
+      resources:
+        limits: {cpus: "0.25", memory: 96M}
+
+  # Staging only: the synthetic replay, looped (06 T11: replay files are
+  # never in the image, and replay runs only where it is allowed).
+  manned-adapter-replay:
+    <<: *go
+    profiles: [replay]
+    entrypoint: ["/manned-adapter"]
+    networks: [ansp]
+    environment:
+      <<: *env
+      ANSP_PROCESS: manned-adapter
+      ANSP_INSTANCE: replay
+      ANSP_ADAPTER_KIND: replay
+      ANSP_ADAPTER_ID: replay
+      ANSP_ADAPTER_SOURCE_CLASS: ads_b
+      ANSP_ADAPTER_REPLAY_FILE: /replay/${ANSP_REPLAY_FILE:-two-aircraft-converging.ndjson}
+      ANSP_ADAPTER_REPLAY_ALLOWED: "true"
+      ANSP_ADAPTER_REPLAY_LOOP: "true"
+      GOMEMLIMIT: 50MiB
+    volumes:
+      - ${ANSP_SECRETS_DIR}/nats/manned-adapter.nk:/run/secrets/nats.nk:ro
+      - ${ANSP_REPLAY_DIR:-../testdata/replay}:/replay:ro
+    depends_on:
+      nats: {condition: service_healthy}
+    deploy:
+      resources:
+        limits: {cpus: "0.25", memory: 64M}
+
+  # Production: one real surveillance adapter (dump1090_sbs,
+  # dump1090_json; asterix_cat021 is a stub that refuses to start). The
+  # kind, id, source class and endpoint are the operator's.
+  manned-adapter-feed:
+    <<: *go
+    profiles: [feed]
+    entrypoint: ["/manned-adapter"]
+    networks:
+      ansp: {}
+      edge: {}
+    environment:
+      <<: *env
+      ANSP_PROCESS: manned-adapter
+      ANSP_INSTANCE: ${ANSP_FEED_ID:-feed}
+      ANSP_ADAPTER_KIND: ${ANSP_FEED_KIND:-dump1090_sbs}
+      ANSP_ADAPTER_ID: ${ANSP_FEED_ID:-feed}
+      ANSP_ADAPTER_SOURCE_CLASS: ${ANSP_FEED_SOURCE_CLASS:-ads_b}
+      ANSP_ADAPTER_SBS_ADDR: ${ANSP_FEED_SBS_ADDR:-}
+      ANSP_ADAPTER_SBS_TIMEZONE: ${ANSP_FEED_SBS_TIMEZONE:-UTC}
+      ANSP_ADAPTER_JSON_URL: ${ANSP_FEED_JSON_URL:-}
+      ANSP_ADAPTER_REPLAY_ALLOWED: "false"
+      GOMEMLIMIT: 50MiB
+    volumes:
+      - ${ANSP_SECRETS_DIR}/nats/manned-adapter-feed.nk:/run/secrets/nats.nk:ro
+    depends_on:
+      nats: {condition: service_healthy}
+    deploy:
+      resources:
+        limits: {cpus: "0.25", memory: 64M}
+
+  # The console (web/): no database, no NATS; reaches api on the edge
+  # network and is reached through Caddy. Next.js is never built here.
+  web:
+    image: ${ANSP_WEB_IMAGE:?the uspace-ansp-web image by digest}
+    restart: unless-stopped
+    read_only: true
+    tmpfs: [/tmp, /app/.next/cache]
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
+    logging: *logging
+    networks:
+      edge:
+        aliases: [ansp-web]
+    env_file:
+      - ${ANSP_SECRETS_DIR}/web.env
+    environment:
+      WEB_API_INTERNAL_URL: http://ansp-api:8080
+      # Caddy, one hop in front of Next.js, appends to X-Forwarded-For.
+      WEB_TRUSTED_PROXY_HOPS: "1"
+    depends_on:
+      api: {condition: service_started}
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:3000/"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    deploy:
+      resources:
+        limits: {cpus: "0.5", memory: 224M}
+
+networks:
+  ansp:
+    name: uspace-ansp
+    internal: true
+  edge:
+    name: ${ANSP_EDGE_NETWORK:?the network shared with the edge Caddy}
+    external: true

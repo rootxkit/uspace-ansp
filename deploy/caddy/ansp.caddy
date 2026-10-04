@@ -1,0 +1,90 @@
+# uspace-ansp routes for the shared Caddy (docs/PLAN.md section 11, M25).
+# A REFERENCE SITE: this repository never runs Caddy alone. The deployment
+# repository (uspace-deploy on the staging droplet) composes the real
+# Caddyfile from every system's site (decision D1); it may replace the
+# repeated parts below by its shared snippets, and its own Caddy proof
+# keeps the outcome equal. deploy/caddy/proof.sh proves this file.
+#
+# Placeholders only, never a real host name (spec 06 section 4):
+#   {$ANSP_HOST}           the ANSP's public host
+#   {$ANSP_MTLS_CA}        PEM file of the CA that issues callers' client
+#                          certificates (the authority, the USSPs)
+#   {$ANSP_API_UPSTREAM}   api, e.g. ansp-api:8080
+#   {$ANSP_FEED_UPSTREAM}  manned-feed, e.g. ansp-manned-feed:8080
+#   {$ANSP_WEB_UPSTREAM}   web, e.g. ansp-web:3000
+#
+# Route groups:
+#   /v1/manned-traffic/*   manned-feed   mTLS group: verified subject forwarded
+#   /v1/coordination/*     api           mTLS group: verified subject forwarded
+#   /uss/*, /v1/*, /.well-known/*, /healthz   api
+#   /metrics, /readyz      404 (scraped and probed inside the networks)
+#   everything else        web (/_bff/* and the pages)
+#
+# The Go side decides whether a certificate was needed (ANSP_MTLS_MODE:
+# `required` in production, `off` on staging and in the lab, where off is
+# logged at error level). Caddy only asks for one and verifies it when
+# given, and it is the only place the subject header can come from.
+#
+# The console's /basemap/* is not routed here: the deployment's Caddy
+# serves it on every host from the one shared read-only basemap volume
+# (M38), in front of this site's catch-all.
+
+{$ANSP_HOST} {
+	encode zstd gzip
+
+	tls {
+		client_auth {
+			mode verify_if_given
+			trust_pool file {$ANSP_MTLS_CA}
+		}
+	}
+
+	# Nobody chooses their own certificate subject: removed from every
+	# request, and set again below only from a verified client
+	# certificate on the two mTLS route groups.
+	request_header -X-Client-Cert-Subject
+
+	# Without a client certificate the placeholder is null in CEL, and
+	# null != "" is true: the null test keeps a request without a
+	# certificate out of these handles (it would otherwise forward the
+	# placeholder's text).
+	@feed_mtls {
+		path /v1/manned-traffic/*
+		expression {http.request.tls.client.subject} != null && {http.request.tls.client.subject} != ""
+	}
+	handle @feed_mtls {
+		reverse_proxy {$ANSP_FEED_UPSTREAM} {
+			header_up X-Client-Cert-Subject {http.request.tls.client.subject}
+		}
+	}
+
+	@coord_mtls {
+		path /v1/coordination/*
+		expression {http.request.tls.client.subject} != null && {http.request.tls.client.subject} != ""
+	}
+	handle @coord_mtls {
+		reverse_proxy {$ANSP_API_UPSTREAM} {
+			header_up X-Client-Cert-Subject {http.request.tls.client.subject}
+		}
+	}
+
+	# Without a certificate: the same upstreams, no subject. With
+	# ANSP_MTLS_MODE=required the Go side refuses these.
+	handle /v1/manned-traffic/* {
+		reverse_proxy {$ANSP_FEED_UPSTREAM}
+	}
+
+	@internal path /metrics /metrics/* /readyz
+	handle @internal {
+		respond 404
+	}
+
+	@api path /uss/* /v1/* /.well-known/* /healthz
+	handle @api {
+		reverse_proxy {$ANSP_API_UPSTREAM}
+	}
+
+	handle {
+		reverse_proxy {$ANSP_WEB_UPSTREAM}
+	}
+}

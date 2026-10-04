@@ -207,6 +207,12 @@ compose-down:
 	if [ -n "$$left" ]; then echo "compose-down: $(PROJECT) left containers or volumes behind"; exit 1; fi; \
 	echo "compose-down: no container or volume of $(PROJECT) left"
 
+# deploy/ (WP-13): shellcheck, the production compose rendered and read
+# back, and the Caddy site proved against the pinned Caddy (needs docker;
+# the certificate checks need a curl that is not Schannel: Linux or WSL).
+check-deploy:
+	scripts/check-deploy.sh
+
 ci: lint-docs build lint tidy race generate-check lint-api check-contracts vectors fuzz-smoke bench vulncheck secrets integration web-types web-lint web-test web-build
 
 clean:
