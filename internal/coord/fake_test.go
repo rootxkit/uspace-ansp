@@ -333,9 +333,9 @@ func (t fakeTx) InsertOccurrence(_ context.Context, o NewOccurrence) (Occurrence
 func (t fakeTx) OccurrenceByIdempotency(_ context.Context, actorID, key string) (Occurrence, bool, error) {
 	t.r.mu.Lock()
 	defer t.r.mu.Unlock()
-	for _, o := range t.r.occ {
-		if o.Idempotency != nil && o.Idempotency.ActorID == actorID && o.Idempotency.Key == key {
-			return o, true, nil
+	for id := range t.r.occ {
+		if idem := t.r.occ[id].Idempotency; idem != nil && idem.ActorID == actorID && idem.Key == key {
+			return t.r.occ[id], true, nil
 		}
 	}
 	return Occurrence{}, false, nil
