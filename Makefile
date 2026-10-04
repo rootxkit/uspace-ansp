@@ -213,6 +213,11 @@ compose-down:
 check-deploy:
 	scripts/check-deploy.sh
 
+# The stack for uspace-lab's conformance suite with lab-issued keys
+# (testdata/conformance/README.md); `make compose-down` removes it.
+conformance-target: $(DEV_ENV)
+	scripts/conformance-target.sh
+
 ci: lint-docs build lint tidy race generate-check lint-api check-contracts vectors fuzz-smoke bench vulncheck secrets integration web-types web-lint web-test web-build
 
 clean:

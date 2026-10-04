@@ -1,0 +1,21 @@
+# Overlay for `make conformance-target` (testdata/conformance/README.md):
+# the development stack with the lab as token issuer, token endpoint and
+# DSS. Lab only: subscriber notifications to private addresses are
+# allowed here and nowhere else.
+services:
+  api:
+    environment:
+      ANSP_TOKEN_ISSUERS: ${LAB_ISSUER:?the lab issuer}=${LAB_JWKS_URL:?the lab JWKS}
+      ANSP_TOKEN_URL: ${LAB_TOKEN_URL:?the lab token endpoint}
+      ANSP_CLIENT_ID: ansp-01
+      ANSP_CLIENT_SECRET_FILE: /run/secrets/ansp-01.secret
+      ANSP_DSS_URL: ${LAB_DSS_URL:?the lab DSS}
+      ANSP_DSS_NOTIFY_PRIVATE_ALLOWED: "true"
+      ANSP_PUBLIC_BASE_URL: ${ANSP_CONFORMANCE_PUBLIC_BASE_URL:-http://host.docker.internal:58080}
+      ANSP_AUDIENCES: ${ANSP_CONFORMANCE_AUDIENCE:?set by scripts/conformance-target.sh}
+      ANSP_DELIVERY_KEY_FILE: /run/secrets/delivery.pem
+    volumes:
+      - ${LAB_CLIENT_SECRET_FILE:?the file of ansp-01's lab-issued secret}:/run/secrets/ansp-01.secret:ro
+      - ../local/conformance/delivery.pem:/run/secrets/delivery.pem:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"

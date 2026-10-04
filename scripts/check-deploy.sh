@@ -13,7 +13,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-scripts=(deploy/verify.sh deploy/backup.sh deploy/caddy/proof.sh scripts/check-deploy.sh)
+scripts=(deploy/verify.sh deploy/backup.sh deploy/caddy/proof.sh scripts/check-deploy.sh scripts/conformance-target.sh)
 
 if type -P shellcheck >/dev/null 2>&1; then
   shellcheck "${scripts[@]}"
