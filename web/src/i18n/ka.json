@@ -349,7 +349,7 @@
   "ansp.inbox.note": "შენიშვნა (არასავალდებულო)",
   "ansp.inbox.note_bytes": "{bytes} / {max} ბაიტი",
   "ansp.inbox.acknowledge": "დადასტურება",
-  "ansp.inbox.ack_conflict": "უკვე დადასტურებულია სხვის მიერ: შეტყობინებები ხელახლა წაიკითხა.",
+  "ansp.inbox.ack_conflict": "შეტყობინება {ack} უკვე დადასტურებული იყო სხვის მიერ (409): შეტყობინებები ხელახლა წაიკითხა.",
   "ansp.inbox.show_on_map": "რუკაზე ჩვენება",
   "ansp.inbox.sender": "გამგზავნი USSP {ussp} (კლიენტი {client}), შეტყობინება {ref}",
   "ansp.inbox.received": "მიღებულია",

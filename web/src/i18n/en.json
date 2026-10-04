@@ -349,7 +349,7 @@
   "ansp.inbox.note": "Note (optional)",
   "ansp.inbox.note_bytes": "{bytes} of {max} bytes",
   "ansp.inbox.acknowledge": "Acknowledge",
-  "ansp.inbox.ack_conflict": "Acknowledged already, by someone else first: the inbox was read again.",
+  "ansp.inbox.ack_conflict": "Notice {ack} was acknowledged already, by someone else first (409): the inbox was read again.",
   "ansp.inbox.show_on_map": "Show on the map",
   "ansp.inbox.sender": "From USSP {ussp} (client {client}), notice {ref}",
   "ansp.inbox.received": "Received",

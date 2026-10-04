@@ -16,6 +16,7 @@ import type { ExpressionSpecification, GeoJSONSource, Map as MapLibreMap } from 
 import { mapFontstack } from "@rootxkit/uspace-ui/fonts";
 import { putTrackIcons, resolveColour, useLayer } from "@rootxkit/uspace-ui/layers";
 import { trackIconId } from "@rootxkit/uspace-ui/symbology";
+import { LayerReady } from "./ConsoleMap";
 import type { DrawnState } from "./manned";
 
 /** One aircraft as the layer draws it. */
@@ -73,7 +74,7 @@ export function mannedCollection(items: readonly MannedFeature[]): GeoJSON.Featu
 
 export function MannedLayer({ aircraft }: { aircraft: readonly MannedFeature[] }) {
   const data = useMemo(() => mannedCollection(aircraft), [aircraft]);
-  useLayer<GeoJSON.FeatureCollection>({
+  const map = useLayer<GeoJSON.FeatureCollection>({
     id: ID,
     data,
     build(map: MapLibreMap) {
@@ -130,5 +131,5 @@ export function MannedLayer({ aircraft }: { aircraft: readonly MannedFeature[] }
       (map.getSource(ID) as GeoJSONSource | undefined)?.setData(d);
     },
   });
-  return null;
+  return <LayerReady map={map} data={data} name="manned" />;
 }

@@ -21,7 +21,7 @@ import { FeedStatusBar } from "@rootxkit/uspace-ui/status";
 import { Button, Label, Textarea } from "@rootxkit/uspace-ui/ui";
 import { failureOf, type CallFailure } from "../api/client";
 import { toView } from "./adapt";
-import { ConsoleMap } from "./ConsoleMap";
+import { ConsoleMap, LayerReady } from "./ConsoleMap";
 import { useConsole } from "./context";
 import {
   acknowledgeBody,
@@ -48,7 +48,7 @@ const TICK_MS = 1000;
 
 function NoticeLayer({ features }: { features: GeoJSON.Feature[] }) {
   const data = useMemo<GeoJSON.FeatureCollection>(() => ({ type: "FeatureCollection", features }), [features]);
-  useLayer<GeoJSON.FeatureCollection>({
+  const map = useLayer<GeoJSON.FeatureCollection>({
     id: NOTICE_LAYER,
     data,
     build(map: MapLibreMap) {
@@ -60,21 +60,21 @@ function NoticeLayer({ features }: { features: GeoJSON.Feature[] }) {
         type: "fill",
         source: NOTICE_LAYER,
         filter: ["==", ["geometry-type"], "Polygon"],
-        paint: { "fill-color": ["case", ["get", "emphasised"], strong, colour], "fill-opacity": ["case", ["get", "emphasised"], 0.3, 0.12] },
+        paint: { "fill-color": ["case", ["boolean", ["get", "emphasised"], false], strong, colour], "fill-opacity": ["case", ["boolean", ["get", "emphasised"], false], 0.3, 0.12] },
       });
       map.addLayer({
         id: `${NOTICE_LAYER}-line`,
         type: "line",
         source: NOTICE_LAYER,
         filter: ["==", ["geometry-type"], "Polygon"],
-        paint: { "line-color": ["case", ["get", "emphasised"], strong, colour], "line-width": ["case", ["get", "emphasised"], 3, 1.5], "line-dasharray": [3, 2] },
+        paint: { "line-color": ["case", ["boolean", ["get", "emphasised"], false], strong, colour], "line-width": ["case", ["boolean", ["get", "emphasised"], false], 3, 1.5], "line-dasharray": [3, 2] },
       });
       map.addLayer({
         id: `${NOTICE_LAYER}-centre`,
         type: "circle",
         source: NOTICE_LAYER,
         filter: ["==", ["geometry-type"], "Point"],
-        paint: { "circle-radius": 6, "circle-color": ["case", ["get", "emphasised"], strong, colour], "circle-stroke-width": 1, "circle-stroke-color": "#ffffff" },
+        paint: { "circle-radius": 6, "circle-color": ["case", ["boolean", ["get", "emphasised"], false], strong, colour], "circle-stroke-width": 1, "circle-stroke-color": "#ffffff" },
       });
       return [`${NOTICE_LAYER}-fill`, `${NOTICE_LAYER}-line`, `${NOTICE_LAYER}-centre`];
     },
@@ -82,10 +82,10 @@ function NoticeLayer({ features }: { features: GeoJSON.Feature[] }) {
       (map.getSource(NOTICE_LAYER) as GeoJSONSource | undefined)?.setData(d);
     },
   });
-  return null;
+  return <LayerReady map={map} data={data} name="notices" />;
 }
 
-function Acknowledge({ notice }: { notice: ApiNotice }) {
+function Acknowledge({ notice, onConflict }: { notice: ApiNotice; onConflict(ackId: string): void }) {
   const t = useT();
   const { client } = useConsole();
   const { put, reload } = useInbox();
@@ -109,7 +109,10 @@ function Acknowledge({ notice }: { notice: ApiNotice }) {
       setFailure(f);
       // Acknowledged by someone else first (409) or gone (404): a
       // permanent answer, never retried; the inbox is read again.
-      if (f.status === 409 || f.status === 404) reload();
+      if (f.status === 409 || f.status === 404) {
+        if (f.status === 409) onConflict(notice.ack_id);
+        reload();
+      }
     } finally {
       setBusy(false);
     }
@@ -127,17 +130,12 @@ function Acknowledge({ notice }: { notice: ApiNotice }) {
           {t("ansp.inbox.acknowledge")}
         </Button>
       </div>
-      {failure !== null && failure.status === 409 && (
-        <p role="status" className="m-0 text-xs font-semibold" data-testid="ack-conflict">
-          {t("ansp.inbox.ack_conflict")}
-        </p>
-      )}
       {failure !== null && <ProblemNotice failure={failure} />}
     </div>
   );
 }
 
-function NoticeCard({ notice, selected, onSelect }: { notice: ApiNotice; selected: boolean; onSelect(): void }) {
+function NoticeCard({ notice, selected, onSelect, onConflict }: { notice: ApiNotice; selected: boolean; onSelect(): void; onConflict(ackId: string): void }) {
   const t = useT();
   const { lang } = useLang();
   const { role } = useConsole();
@@ -232,7 +230,7 @@ function NoticeCard({ notice, selected, onSelect }: { notice: ApiNotice; selecte
           )}
         </p>
       ) : maySupervise(role) ? (
-        <Acknowledge notice={notice} />
+        <Acknowledge notice={notice} onConflict={onConflict} />
       ) : (
         <p className="m-0 text-xs text-[var(--us-text-muted)]">{t("ansp.inbox.ack_role")}</p>
       )}
@@ -260,6 +258,7 @@ export function InboxPage() {
   const nowMs = useNowMs(TICK_MS);
   const [filter, setFilter] = useState<Filter>("all");
   const [selected, setSelected] = useState<string | null>(null);
+  const [conflict, setConflict] = useState<string | null>(null);
   const restrictions = useRestrictions(null);
   const views = useMemo(
     () => (restrictions.restrictions ?? []).filter((r) => r.state === "active" || r.state === "planned").map((r) => toView(r, lang)),
@@ -309,6 +308,11 @@ export function InboxPage() {
         </select>
       </label>
       {inbox.failure !== null && <ProblemNotice failure={inbox.failure} />}
+      {conflict !== null && (
+        <p role="status" className="m-0 rounded border border-[var(--us-border-strong)] p-2 text-sm font-semibold" data-testid="ack-conflict" data-ack={conflict}>
+          {t("ansp.inbox.ack_conflict", { ack: conflict })}
+        </p>
+      )}
       {inbox.truncated && <p className="m-0 text-xs">{t("ansp.inbox.truncated")}</p>}
       {(inbox.dropped > 0 || inbox.ignored > 0) && (
         <p className="m-0 text-xs text-[var(--us-text-muted)]">{t("ansp.inbox.counters", { dropped: inbox.dropped, ignored: inbox.ignored })}</p>
@@ -326,7 +330,7 @@ export function InboxPage() {
               </h3>
               <ul className="m-0 flex flex-col gap-2 p-0">
                 {notices.map((n) => (
-                  <NoticeCard key={n.ack_id} notice={n} selected={n.ack_id === selected} onSelect={() => setSelected(n.ack_id)} />
+                  <NoticeCard key={n.ack_id} notice={n} selected={n.ack_id === selected} onSelect={() => setSelected(n.ack_id)} onConflict={setConflict} />
                 ))}
               </ul>
             </section>
