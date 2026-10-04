@@ -3,6 +3,7 @@ package obs
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -40,6 +41,8 @@ func errorsMux() *http.ServeMux {
 	mux.HandleFunc("GET /v1/panic", func(http.ResponseWriter, *http.Request) { panic("a nil map") })
 	mux.HandleFunc("GET /v1/panic-after-write", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
+		_, _ = io.WriteString(w, `{"half":`)
+		_ = http.NewResponseController(w).Flush()
 		panic("half way")
 	})
 	return mux
@@ -114,7 +117,9 @@ func TestServerErrorsLeavesOtherAnswers(t *testing.T) {
 }
 
 // A panic is recovered as 500 internal, logged with its stack and
-// counted; one after the header is written keeps that status.
+// counted; one after the header is written is logged with that status,
+// counted, and aborts the connection so the client sees a transport
+// error, not a truncated 200.
 func TestServerErrorsRecoversAPanic(t *testing.T) {
 	logs := &syncBuffer{}
 	var c core.Counters
@@ -135,14 +140,19 @@ func TestServerErrorsRecoversAPanic(t *testing.T) {
 		c.Get(CounterPanics) != 1 || c.Get(CounterInternalErrors) != 1 {
 		t.Fatalf("panics %d, internal %d:\n%s", c.Get(CounterPanics), c.Get(CounterInternalErrors), log)
 	}
+	// The header and half a body are on the wire when the handler
+	// panics: the client must not read that as a complete 200.
 	resp, err = http.Get(srv.URL + "/v1/panic-after-write")
-	if err != nil {
-		t.Fatal(err)
+	if err == nil {
+		body, err = io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		if err == nil {
+			t.Fatalf("after write: a complete %d %q, no transport error", resp.StatusCode, body)
+		}
 	}
-	_ = resp.Body.Close()
-	if resp.StatusCode != http.StatusOK || c.Get(CounterPanics) != 2 || !strings.Contains(logs.String(), `"status":200,"duration_ms"`) ||
+	if c.Get(CounterPanics) != 2 || c.Get(CounterInternalErrors) != 2 || !strings.Contains(logs.String(), `"status":200,"duration_ms"`) ||
 		!strings.Contains(logs.String(), "panic: half way") {
-		t.Fatalf("after write: %d, panics %d", resp.StatusCode, c.Get(CounterPanics))
+		t.Fatalf("after write: panics %d, internal %d:\n%s", c.Get(CounterPanics), c.Get(CounterInternalErrors), logs.String())
 	}
 }
 
@@ -212,5 +222,47 @@ func TestServeCountsInternalErrorsOnMetrics(t *testing.T) {
 	}
 	if !strings.Contains(string(metrics), "\nhttp_internal_errors 1\n") || !strings.Contains(logs.String(), MsgInternalError) {
 		t.Fatalf("metrics:\n%s\nlog:\n%s", metrics, logs.String())
+	}
+}
+
+// A Server served twice (a restart in the same process) registers its
+// error counters once: the second Serve starts and /metrics still
+// gathers, without a duplicate-metric error. No Mux: Serve's own routes
+// go on a fresh mux each time.
+func TestServeTwiceStillGathersMetrics(t *testing.T) {
+	c := cfg()
+	reg := Metrics()
+	s := &Server{Config: c, Logger: LoggerTo(io.Discard, c), Registry: reg}
+	for round := 1; round <= 2; round++ {
+		addrCh := make(chan string, 1)
+		s.ready = func(a string) { addrCh <- a }
+		ctx, cancel := context.WithCancel(context.Background())
+		done := make(chan error, 1)
+		go func() { done <- s.Serve(ctx) }()
+		var base string
+		select {
+		case a := <-addrCh:
+			base = "http://" + a
+		case err := <-done:
+			cancel()
+			t.Fatalf("round %d: Serve returned %v", round, err)
+		}
+		s.errs.Inc(CounterInternalErrors)
+		resp, err := http.Get(base + "/metrics")
+		if err != nil {
+			t.Fatal(err)
+		}
+		metrics, _ := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		cancel()
+		if err := <-done; err != nil {
+			t.Fatal(err)
+		}
+		if want := fmt.Sprintf("\nhttp_internal_errors %d\n", round); resp.StatusCode != http.StatusOK || !strings.Contains(string(metrics), want) {
+			t.Fatalf("round %d: %d, no %q in:\n%s", round, resp.StatusCode, want, metrics)
+		}
+		if _, err := reg.Gather(); err != nil {
+			t.Fatalf("round %d: gather: %v", round, err)
+		}
 	}
 }
