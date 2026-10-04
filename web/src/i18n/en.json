@@ -382,6 +382,7 @@
   "ansp.inbox.filter.received": "received",
   "ansp.inbox.filter.acknowledged": "acknowledged",
   "ansp.inbox.truncated": "The API holds more notices than it listed; the oldest are not shown.",
+  "ansp.inbox.evicted": "{count} settled notices (acknowledged or informational) past the {max} this page holds are not shown here; the API still holds them.",
   "ansp.inbox.counters": "Not applied: {dropped} frames older than the state held, {ignored} frames that were not an inbox item.",
   "ansp.inbox.none": "No coordination notice received.",
   "ansp.inbox.none_in_state": "No notice in the state {state}.",

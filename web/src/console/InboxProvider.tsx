@@ -9,19 +9,28 @@
 // A 4401 close is the console's "signed out, sign in again". A person
 // may opt in, in this browser only, to a browser notification for each
 // escalation (the permission is the browser's, the choice is kept in
-// localStorage as a per-viewer convenience).
+// localStorage as a per-viewer convenience). What is held is bounded
+// (MAX_NOTICES; settled notices go first, never one awaiting a person)
+// and pruned at each read of the list: a notice the API no longer lists
+// is dropped unless the stream brought it while the list was read.
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useT } from "@rootxkit/uspace-ui/i18n";
 import { useFeed, type LiveFeed } from "@rootxkit/uspace-ui/live";
 import { failureOf, type CallFailure } from "../api/client";
 import { useConsole } from "./context";
-import { escalationNews, mergeNotices, noticeOf, type ApiNotice } from "./inbox";
+import { boundNotices, escalationNews, mergeNotices, noticeOf, reconcileNotices, type ApiNotice } from "./inbox";
 import { useInBrowser } from "./ui";
 
 /** The console's coordination stream (api/openapi.yaml streamCoordination). */
 export const COORDINATION_STREAM_PATH = "/v1/coordination/stream";
 /** The inbox read's bound (api/openapi.yaml Limit maximum); the API says when it cut the list. */
 export const INBOX_LIMIT = 1000;
+/**
+ * The notices this page holds; past it the settled ones (acknowledged,
+ * informational) are evicted and counted. The list read's own bound, so
+ * a full read plus the stream cannot grow without end (E-10).
+ */
+export const MAX_NOTICES = INBOX_LIMIT;
 /** Where this browser keeps the opt-in. */
 export const NOTIFY_KEY = "uspace-ansp:inbox-notify";
 
@@ -37,6 +46,8 @@ export interface InboxValue {
   dropped: number;
   /** Frames on the stream that were not an inbox item (ignored, counted). */
   ignored: number;
+  /** Settled notices evicted past MAX_NOTICES (counted, said on the page). */
+  evicted: number;
   reload(): void;
   /** A notice as an acknowledgement answered it. */
   put(n: ApiNotice): void;
@@ -85,6 +96,9 @@ export function InboxProvider({ children }: { children: ReactNode }) {
   const [failure, setFailure] = useState<CallFailure | null>(null);
   const [dropped, setDropped] = useState(0);
   const [ignored, setIgnored] = useState(0);
+  const [evicted, setEvicted] = useState(0);
+  // The ack_ids the stream brought since the list read in flight was sent.
+  const touched = useRef<Set<string> | null>(null);
   const [tick, setTick] = useState(0);
   const [optIn, setOptIn] = useState(() => typeof window !== "undefined" && readOptIn());
   // Bumped when the browser answers a permission request, so the state is read again.
@@ -93,28 +107,42 @@ export function InboxProvider({ children }: { children: ReactNode }) {
   const notify: NotifyState = browser ? notifyStateOf(optIn) : "off";
   const seq = useRef(0);
 
-  const apply = useCallback((incoming: readonly ApiNotice[]) => {
-    const merged = mergeNotices(held.current, incoming);
-    held.current = merged.notices;
-    setNotices(merged.notices);
-    if (merged.dropped > 0) setDropped((n) => n + merged.dropped);
+  const keep = useCallback((next: ReadonlyMap<string, ApiNotice>) => {
+    const bounded = boundNotices(next, MAX_NOTICES);
+    held.current = bounded.notices;
+    setNotices(bounded.notices);
+    if (bounded.evicted > 0) setEvicted((n) => n + bounded.evicted);
   }, []);
+
+  const apply = useCallback(
+    (incoming: readonly ApiNotice[]) => {
+      const merged = mergeNotices(held.current, incoming);
+      for (const n of incoming) touched.current?.add(n.ack_id);
+      keep(merged.notices);
+      if (merged.dropped > 0) setDropped((n) => n + merged.dropped);
+    },
+    [keep],
+  );
 
   useEffect(() => {
     const mine = ++seq.current;
+    touched.current = new Set();
     client
       .GET("/v1/coordination/inbox", { params: { query: { limit: INBOX_LIMIT } } })
       .then(({ data }) => {
         if (mine !== seq.current || data === undefined) return;
-        apply(data.notices);
+        keep(reconcileNotices(held.current, data.notices, touched.current ?? new Set()));
+        touched.current = null;
         setTruncated(data.truncated === true);
         setFailure(null);
         setLoaded(true);
       })
       .catch((err: unknown) => {
-        if (mine === seq.current) setFailure(failureOf(err));
+        if (mine !== seq.current) return;
+        touched.current = null;
+        setFailure(failureOf(err));
       });
-  }, [client, tick, apply]);
+  }, [client, tick, keep]);
 
   // The kit gives the feed the newest options on every render, so this
   // callback reads the current opt-in and language.
@@ -175,8 +203,8 @@ export function InboxProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const value = useMemo(
-    () => ({ notices, loaded, truncated, failure, feed, dropped, ignored, reload, put, notify, setNotify }),
-    [notices, loaded, truncated, failure, feed, dropped, ignored, reload, put, notify, setNotify],
+    () => ({ notices, loaded, truncated, failure, feed, dropped, ignored, evicted, reload, put, notify, setNotify }),
+    [notices, loaded, truncated, failure, feed, dropped, ignored, evicted, reload, put, notify, setNotify],
   );
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
