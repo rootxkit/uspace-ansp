@@ -261,6 +261,19 @@ describe("disabledBy", () => {
   it("is null when no source of it says disabled", () => {
     expect(disabledBy("sbs-1", [source({})])).toBeNull();
   });
+
+  it("reads only the manned feed's sources, never another source class's switch", () => {
+    const others = [
+      source({ source: "network_rid", sourceInstance: null, state: "disabled", disabledBy: "type", disabledByWho: "admin-rid" }),
+      source({ source: "adsb_rx", sourceInstance: "sbs-1", state: "disabled", disabledBy: "instance", disabledByWho: "admin-adsb" }),
+    ];
+    expect(disabledBy("sbs-1", others)).toBeNull();
+    expect(disabledBy("sbs-1", [...others, source({ sourceInstance: null, state: "disabled", disabledBy: "type", disabledByWho: "admin-type" })])).toEqual({
+      by: "type",
+      who: "admin-type",
+    });
+    expect(disabledBy("sbs-1", [...others, source({ state: "disabled", disabledBy: "instance", disabledByWho: "admin" })])).toEqual({ by: "instance", who: "admin" });
+  });
 });
 
 describe("compareShown", () => {
