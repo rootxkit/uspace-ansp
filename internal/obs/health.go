@@ -26,6 +26,7 @@ const (
 	DepCISP       = "cisp"
 	DepDSS        = "dss"
 	DepJWKS       = "jwks"
+	DepGeoid      = "geoid"
 )
 
 // DefaultCheckTimeout bounds one probe; a probe that does not answer in
