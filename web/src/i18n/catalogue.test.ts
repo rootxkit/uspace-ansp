@@ -45,6 +45,8 @@ const DYNAMIC: Record<string, readonly string[]> = {
   "ansp.editor.vertices": ["pair", "range"],
   "ansp.locale": ["ka", "en"],
   "ansp.login.problem": [...LOGIN_SLUGS, "other", "unavailable"],
+  "ansp.picture.adapter": ["live", "stale", "disabled", "down", "unknown"],
+  "ansp.picture.relevance": ["relevant", "other", "unstated"],
 };
 
 describe("catalogues", () => {

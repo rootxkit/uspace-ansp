@@ -32,6 +32,8 @@ export interface ConsoleContextValue {
   feed: LiveFeed;
   /** Every frame the kit does not store itself (restriction/state/v1). */
   onFrame(listener: FrameListener): () => void;
+  /** Another stream closed 4401 (manned picture, coordination): signed out. */
+  markSignedOut(): void;
 }
 
 const Ctx = createContext<ConsoleContextValue | null>(null);
@@ -104,8 +106,8 @@ export function ConsoleProvider({ children }: { children: ReactNode }) {
 
   const role = me !== null && isRole(me.role) ? me.role : null;
   const value = useMemo(
-    () => ({ client, me, role, meFailure, signedOut: signedOut || feed.unauthorized, feed, onFrame }),
-    [client, me, role, meFailure, signedOut, feed, onFrame],
+    () => ({ client, me, role, meFailure, signedOut: signedOut || feed.unauthorized, feed, onFrame, markSignedOut: toSignedOut }),
+    [client, me, role, meFailure, signedOut, feed, onFrame, toSignedOut],
   );
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
