@@ -100,7 +100,8 @@ func coordRefusal(w http.ResponseWriter, r *http.Request, err error) {
 	case errors.Is(err, context.DeadlineExceeded), errors.Is(err, context.Canceled):
 		apierr.WriteError(w, r, apierr.Unavailable(5*time.Second, "the request did not complete in time"))
 	default:
-		apierr.WriteError(w, r, apierr.Internal())
+		// Logged and counted with its cause by obs.ServerErrors.
+		apierr.WriteInternal(w, r, err)
 	}
 }
 

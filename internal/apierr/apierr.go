@@ -289,9 +289,15 @@ func Write(w http.ResponseWriter, status int, p *Problem) {
 	_ = json.NewEncoder(w).Encode(p)
 }
 
-// WriteError answers err (FromError) with r's path as the instance.
+// WriteError answers err (FromError) with r's path as the instance. An
+// err that is no *Problem and is answered 500 is noted as the cause
+// (NoteCause), for the server's log line.
 func WriteError(w http.ResponseWriter, r *http.Request, err error) {
 	p := FromError(err)
+	var asProblem *Problem
+	if p.Status == http.StatusInternalServerError && err != nil && !errors.As(err, &asProblem) {
+		NoteCause(r, err)
+	}
 	if p.Instance == "" {
 		_ = p.At(r)
 	}

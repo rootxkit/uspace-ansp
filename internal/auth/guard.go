@@ -196,6 +196,7 @@ func (g *Guard) Require(a Access) func(http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if invalid != nil {
 				g.counters.Inc(CounterMisconfigured)
+				apierr.NoteCause(r, fmt.Errorf("the route's access rule %q: %w", a.String(), invalid))
 				apierr.WriteError(w, r, refusal(http.StatusInternalServerError, SlugInternal, "this route has no valid access rule"))
 				return
 			}
@@ -284,6 +285,7 @@ func (g *Guard) machine(r *http.Request, token string, a Access) (Principal, *ap
 	if a.MTLS {
 		if g.MTLS == nil {
 			g.counters.Inc(CounterMisconfigured)
+			apierr.NoteCause(r, errors.New("an mTLS route without a configured certificate binding (ANSP_MTLS_MODE)"))
 			return Principal{}, refusal(http.StatusInternalServerError, SlugInternal, "this route binds client certificates and none is configured")
 		}
 		subject, err := g.MTLS.Check(r, cl.Subject)
