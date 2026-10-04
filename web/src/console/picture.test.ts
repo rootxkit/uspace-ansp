@@ -6,7 +6,7 @@ import { createTranslator } from "@rootxkit/uspace-ui/i18n";
 import type { StatusSource } from "@rootxkit/uspace-ui/live";
 import { catalogues } from "../i18n/catalogues";
 import type { Aircraft, Drawn } from "./manned";
-import { adaptersLine, altitudeText, identText, labelText, stateText, symbolOf } from "./picture";
+import { adaptersLine, altitudeText, identText, LabelCache, labelText, stateText, symbolOf } from "./picture";
 
 const t = createTranslator("en", catalogues);
 
@@ -96,5 +96,57 @@ describe("picture words", () => {
     expect(line).toBe("replay-1: live, last frame 1 s ago; sbs-1: disabled by admin");
     expect(adaptersLine({ adapters: [], sources: [] }, t, "en")).toBe("no adapter reported");
     expect(adaptersLine({ adapters: null, sources: [] }, t, "en")).toBe("no adapter reported");
+  });
+});
+
+describe("LabelCache", () => {
+  const d: Drawn = { state: "live", ageS: 1, agedHere: false };
+
+  function counting() {
+    let n = 0;
+    const build = (a: Aircraft, dd: Drawn) => {
+      n += 1;
+      return `${a.icao24} ${dd.state} ${dd.ageS ?? "-"} #${n}`;
+    };
+    return { build, calls: () => n };
+  }
+
+  it("rebuilds a label at most once per refresh for an unchanged aircraft as its age ticks", () => {
+    const c = new LabelCache(5000);
+    const b = counting();
+    const first = c.labels([{ a: A, d }], 0, "g", b.build);
+    for (let ms = 1000; ms < 5000; ms += 1000) {
+      expect(c.labels([{ a: A, d: { ...d, ageS: 1 + ms / 1000 } }], ms, "g", b.build)).toEqual(first);
+    }
+    expect(b.calls()).toBe(1);
+    const refreshed = c.labels([{ a: A, d: { ...d, ageS: 6 } }], 5000, "g", b.build);
+    expect(b.calls()).toBe(2);
+    expect(refreshed[0]).toContain(" 6 ");
+  });
+
+  it("rebuilds at once on a new frame, a new drawn state or a new generation", () => {
+    const c = new LabelCache(5000);
+    const b = counting();
+    c.labels([{ a: A, d }], 0, "g", b.build);
+    c.labels([{ a: { ...A, lat: 41.8 }, d }], 100, "g", b.build);
+    expect(b.calls()).toBe(2);
+    const moved = { ...A, lat: 41.8 };
+    c.labels([{ a: moved, d }], 200, "g", b.build);
+    c.labels([{ a: moved, d: { state: "stale", ageS: 20, agedHere: true } }], 300, "g", b.build);
+    expect(b.calls()).toBe(4);
+    c.labels([{ a: moved, d: { state: "stale", ageS: 20, agedHere: true } }], 400, "g2", b.build);
+    expect(b.calls()).toBe(5);
+  });
+
+  it("forgets the aircraft a pass no longer holds (bounded by the picture)", () => {
+    const c = new LabelCache(5000);
+    const b = counting();
+    const B = { ...A, icao24: "000001" };
+    c.labels([{ a: A, d }, { a: B, d }], 0, "g", b.build);
+    expect(c.size).toBe(2);
+    c.labels([{ a: A, d }], 100, "g", b.build);
+    expect(c.size).toBe(1);
+    c.labels([{ a: A, d }, { a: B, d }], 200, "g", b.build);
+    expect(b.calls()).toBe(3);
   });
 });
