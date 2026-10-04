@@ -37,7 +37,9 @@ api/openapi.yaml     the published national API (generated server, client and Ty
 schemas/             JSON Schemas of the messages this system produces
 migrations/          two goose trees: relational (PostgreSQL + PostGIS), timeseries (TimescaleDB)
 web/                 dispatcher console (Next.js on uspace-ui, ka/en)
-deploy/              image, compose, Caddy block
+deploy/              image, dev and production compose, Caddy site and proof, verify, backup, rollback
+docs/runbooks/       the N-M1 and N-M2 proofs, releasing
+testdata/conformance/ what the lab's conformance suite runs against (make conformance-target)
 ```
 
 ## Links

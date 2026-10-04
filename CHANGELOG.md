@@ -7,6 +7,13 @@ additively within `/v1`. One line per work package.
 
 ## [Unreleased]
 
+Prepared as 1.0.0, the N-M3 release (docs/runbooks/release.md): at the
+owner's tag this heading becomes `## [1.0.0] - <date>` and every entry
+below is the release's. Not to be tagged before N-M1 and N-M2 are proven
+in docs/runbooks/n-m1.md and n-m2.md, the lab's conformance suite has run
+green against `make conformance-target`, and `docs/runbooks/` is
+complete.
+
 ### Fixed
 
 - WP-12 review: `POST /v1/occurrences` takes an optional `Idempotency-Key`
@@ -30,6 +37,22 @@ additively within `/v1`. One line per work package.
   a copy of the signed bytes.
 
 ### Added
+
+- WP-13 deploy proof: `deploy/compose.prod.yaml` (the production and
+  staging shape: one timescaledb-ha container with both databases, the
+  one-shot migrate, read-only Go services, limits on every service, the
+  replay and real adapter profiles, no published port),
+  `deploy/caddy/ansp.caddy` (the reference site for the shared Caddy)
+  with `deploy/caddy/proof.sh` (22 checks against the pinned Caddy:
+  routes, `/metrics` and `/readyz` unrouted, the certificate subject only
+  from a verified certificate on the two mTLS groups),
+  `deploy/verify.sh` (cosign signature and SPDX attestation by digest),
+  `deploy/backup.sh` (both databases, read back, optional off-host copy),
+  `deploy/rollback.md`, `make check-deploy` and the CI job `deploy`,
+  `make conformance-target` with `testdata/conformance/`, and the
+  runbooks `n-m1.md`, `n-m2.md` and `release.md`. N-M1 and N-M2 are not
+  proven yet: the runbooks say which criteria were observed and which
+  need a run on staging.
 
 - WP-19: uspace-core v1.4.0. api loads `ANSP_GEOID_FILE` with
   `geoid.LoadMapped`, a read-only memory map on linux and darwin shared
