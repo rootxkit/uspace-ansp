@@ -24,7 +24,12 @@
 #   ANSP_DATA_DIR                pgdata/ and nats/ of this system
 #   ANSP_GROUND_DIR              the pinned geoid grid, read-only
 #   ANSP_REPLAY_DIR              staging: the replay files (default ../testdata/replay)
-#   ANSP_API_CLIENT_SECRET_FILE  api: the ansp-01 secret under /run/secrets/ansp/
+#   ANSP_API_CLIENT_SECRET_FILE  api: the ansp-01 secret, a file in keys/
+#                                (default /run/secrets/ansp/ansp-01.secret;
+#                                api refuses to start when it is missing or
+#                                empty). This, not ANSP_CLIENT_SECRET_FILE in
+#                                ANSP_ENV_FILE, is what api reads: the
+#                                compose environment wins over env files
 #   ANSP_EDGE_NETWORK            the network shared with the edge Caddy
 #   ANSP_TRUSTED_PROXIES         the Caddy address(es) on that network
 #
@@ -157,7 +162,8 @@ services:
       ANSP_SESSION_KEY_FILE: /run/secrets/ansp/session.pem
       ANSP_SECRETS_KEY_FILE: /run/secrets/ansp/secrets.key
       ANSP_DELIVERY_KEY_FILE: /run/secrets/ansp/delivery.pem
-      ANSP_CLIENT_SECRET_FILE: ${ANSP_API_CLIENT_SECRET_FILE:-}
+      # Never empty: an empty value would start api with no token client.
+      ANSP_CLIENT_SECRET_FILE: ${ANSP_API_CLIENT_SECRET_FILE:-/run/secrets/ansp/ansp-01.secret}
       ANSP_BOOTSTRAP_ADMIN_USERNAME: ${ANSP_BOOTSTRAP_ADMIN:-}
       ANSP_BOOTSTRAP_ADMIN_PASSWORD_FILE: ${ANSP_BOOTSTRAP_ADMIN_PASSWORD_FILE:-}
       GOMEMLIMIT: 200MiB

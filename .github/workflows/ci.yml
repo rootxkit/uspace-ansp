@@ -459,6 +459,7 @@ jobs:
           shellcheck --version | sed -n 2p
           docker compose version
           curl -V | head -n 1
+          jq --version
           openssl version
       - name: make check-deploy
         run: make check-deploy
