@@ -471,7 +471,10 @@ jobs:
           else
             range="$GITHUB_SHA"
           fi
-          echo "gitleaks commits: $range ($(git rev-list --count "$range") commits)"
+          # An empty range would scan nothing and pass: refuse it.
+          n=$(git rev-list --count "$range")
+          [ "$n" -gt 0 ] || { echo "empty scan range: $range"; exit 1; }
+          echo "gitleaks commits: $range ($n commits)"
           "$RUNNER_TEMP/gitleaks" git --no-banner --redact --verbose --log-opts="$range" .
 
   # On a pull request that touches the image, the Go image is built and
