@@ -180,11 +180,31 @@ expect "cert, other route" 200 "upstream=api subject=[]" /v1/restrictions "${cer
 expect "cert, other route" 200 "upstream=web subject=[]" / "${cert[@]}"
 
 # A certificate of another CA ends the handshake (verify_if_given
-# verifies what is given).
-if pc /v1/coordination/notices --cert "$work/stranger.pem" --key "$work/stranger.key" 2>/dev/null | grep -q upstream=; then
-  bad "untrusted cert: answered"
+# verifies what is given). Refused means curl's TLS failures: 35 (the
+# handshake failed) or 56 (TLS 1.3: the server's alert arrives after the
+# client's Finished, as a receive failure). Any other failure, such as 7
+# (nothing listening) or 28 (timeout), says nothing about the
+# certificate and is not counted as a refusal.
+refused_at_handshake() { [ "$1" -eq 35 ] || [ "$1" -eq 56 ]; }
+
+# The control (E-01): a request that fails for another reason is not
+# taken for a refusal. Port 1 on loopback has nothing listening.
+rc=0
+curl -s --max-time 5 --resolve "$host:1:127.0.0.1" "https://$host:1/" >/dev/null 2>&1 || rc=$?
+if [ "$rc" -ne 0 ] && ! refused_at_handshake "$rc"; then
+  ok "control: no listener -> curl exit $rc, not a handshake refusal"
 else
-  ok "untrusted cert: refused at the handshake"
+  bad "control: no listener -> curl exit $rc, taken for a handshake refusal"
+fi
+
+rc=0
+out="$(pc /v1/coordination/notices --cert "$work/stranger.pem" --key "$work/stranger.key" 2>/dev/null)" || rc=$?
+if [[ "$out" == *upstream=* ]]; then
+  bad "untrusted cert: answered ($out)"
+elif refused_at_handshake "$rc"; then
+  ok "untrusted cert: refused at the handshake (curl exit $rc)"
+else
+  bad "untrusted cert: curl exit $rc, want 35 or 56 (refused at the handshake)"
 fi
 
 echo "proof: $pass checks passed$([ "$fail" -eq 0 ] || echo ', some FAILED')"
