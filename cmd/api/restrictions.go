@@ -117,7 +117,7 @@ func readBody(w http.ResponseWriter, r *http.Request, required bool) ([]byte, bo
 
 // refusal writes err: a *restriction.Refusal with its slug and status,
 // ErrNotFound as 404, ErrConflict as 409, anything else as 500 (its
-// text is not written).
+// text is not written; it is the cause the server logs).
 func refusal(w http.ResponseWriter, r *http.Request, err error) {
 	var rf *restriction.Refusal
 	switch {
@@ -136,7 +136,8 @@ func refusal(w http.ResponseWriter, r *http.Request, err error) {
 	case errors.Is(err, context.DeadlineExceeded), errors.Is(err, context.Canceled):
 		apierr.WriteError(w, r, apierr.Unavailable(5*time.Second, "the request did not complete in time"))
 	default:
-		apierr.WriteError(w, r, apierr.Internal())
+		// Logged and counted with its cause by obs.ServerErrors.
+		apierr.WriteInternal(w, r, err)
 	}
 }
 

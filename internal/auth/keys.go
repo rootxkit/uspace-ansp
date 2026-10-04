@@ -205,6 +205,7 @@ func (p *PublicKeys) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	body, err := p.JSON()
 	if err != nil {
 		p.counters.Inc(CounterJWKSRenderFailed)
+		apierr.NoteCause(r, fmt.Errorf("render the key set: %w", err))
 		apierr.WriteError(w, r, refusal(http.StatusInternalServerError, SlugInternal, "the key set could not be rendered"))
 		return
 	}

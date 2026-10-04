@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/rootxkit/uspace-core/core"
 
 	"github.com/rootxkit/uspace-ansp/internal/config"
 )
@@ -39,6 +40,9 @@ type Server struct {
 
 	// ready, when set, receives the bound address once listening (tests).
 	ready func(addr string)
+
+	// errs are ServerErrors' counters, exported on Registry.
+	errs core.Counters
 }
 
 // Serve listens and serves until ctx ends, then stops accepting, lets
@@ -60,13 +64,17 @@ func (s *Server) Serve(ctx context.Context) error {
 	mux.Handle("GET /healthz", h.Liveness())
 	mux.Handle("GET /readyz", h.Readiness(s.Checks...))
 	mux.Handle("GET /metrics", MetricsHandler(s.Registry))
+	// Every route of the process, these three included: no 500 silent.
+	if err := Counters(s.Registry, "", &s.errs); err != nil {
+		return fmt.Errorf("register the server error counters: %w", err)
+	}
 
 	var lc net.ListenConfig
 	ln, err := lc.Listen(ctx, "tcp", s.Config.HTTPAddr)
 	if err != nil {
 		return fmt.Errorf("ANSP_HTTP_ADDR: listen: %w", err)
 	}
-	srv := &http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second}
+	srv := &http.Server{Handler: ServerErrors(s.Logger, &s.errs)(mux), ReadHeaderTimeout: 5 * time.Second}
 	s.Logger.Info("serving", slog.String("addr", ln.Addr().String()))
 	if s.ready != nil {
 		s.ready(ln.Addr().String())

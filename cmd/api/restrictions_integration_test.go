@@ -181,7 +181,9 @@ func TestIntegrationRestrictionLifecycleOverHTTP(t *testing.T) {
 	if _, err := mountAPI(mux, aw.guard, aw.handlers, rw.api, nil, aw.realIP); err != nil {
 		t.Fatal(err)
 	}
-	srv := httptest.NewServer(mux)
+	// As obs.Server serves it: every 500 logged and counted.
+	var serverErrs core.Counters
+	srv := httptest.NewServer(obs.ServerErrors(logger, &serverErrs)(mux))
 	defer srv.Close()
 	c := apiClient{t: t, base: srv.URL}
 
@@ -282,6 +284,28 @@ func TestIntegrationRestrictionLifecycleOverHTTP(t *testing.T) {
 		!strings.Contains(string(out), `"type":"https://schemas.uspace.ge/problems/restriction_invalid"`) ||
 		!strings.Contains(string(out), `{"field":"lower_ref","reason":"AGL is not supported for a dynamic restriction in this release"}`) {
 		t.Fatalf("AGL: %d %s", code, out)
+	}
+
+	// The key uspace-lab's runner sent in ussp-wp12-restriction (its
+	// ${time:0} unexpanded): the restrictions.idempotency_key check
+	// refused the insert and the plan answered a bare 500 with no log
+	// line. It is refused 400 before the transaction, naming the header,
+	// and logs no internal error; its expansion is planned (presence).
+	runnerKey := map[string]string{"Idempotency-Key": "uspace-lab-20261004-systems-rerun-wp12-plan-${time:0}"}
+	if code, out := c.do(http.MethodPost, "/v1/restrictions", watch, runnerKey, raw); code != http.StatusBadRequest ||
+		!strings.Contains(string(out), `"type":"https://schemas.uspace.ge/problems/restriction_invalid"`) ||
+		!strings.Contains(string(out), `"field":"Idempotency-Key"`) {
+		t.Fatalf("runner's key: %d %s", code, out)
+	}
+	if strings.Contains(logs.String(), obs.MsgInternalError) || serverErrs.Get(obs.CounterInternalErrors) != 0 {
+		t.Fatalf("a refusal was logged or counted as an internal error:\n%s", logs.String())
+	}
+	expanded := map[string]string{"Idempotency-Key": "uspace-lab-20261004-systems-rerun-wp12-plan-2026-10-04T04:03:02Z"}
+	if code, out := c.do(http.MethodPost, "/v1/restrictions", watch, expanded, bytes.Replace(raw, []byte(`"upper_m":120`), []byte(`"upper_m":100`), 1)); code != http.StatusCreated {
+		t.Fatalf("expanded runner key: %d %s", code, out)
+	}
+	if _, at := next("restriction/state/v1"); at.IsZero() {
+		t.Fatal("no planned frame for the expanded key")
 	}
 
 	code, out = c.do(http.MethodPost, "/v1/restrictions/"+r.ID+"/activate", watch, nil, map[string]string{"reason": "rescue helicopter on scene"})

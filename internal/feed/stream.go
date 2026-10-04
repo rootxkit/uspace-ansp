@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -83,7 +84,7 @@ func (s *Service) ServeSnapshot(w http.ResponseWriter, r *http.Request) {
 	}
 	b, err := json.Marshal(s.Snapshot(bbox, v.all))
 	if err != nil {
-		apierr.WriteError(w, r, apierr.Internal())
+		apierr.WriteInternal(w, r, fmt.Errorf("encode the snapshot: %w", err))
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")

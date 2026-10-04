@@ -61,6 +61,37 @@ func TestRefusalMapping(t *testing.T) {
 	}
 }
 
+// The unknown error a restriction operation answers 500 is the server's
+// log line and count (the bare, silent 500 of ussp-wp12-restriction);
+// a refusal is neither.
+func TestRefusalInternalIsLoggedWithItsCause(t *testing.T) {
+	var logs strings.Builder
+	var c core.Counters
+	logger := obs.LoggerTo(&logs, config.Config{Process: process, LogLevel: "info"})
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /v1/restrictions", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("refuse") != "" {
+			refusal(w, r, &restriction.Refusal{Status: 400, Slug: restriction.SlugInvalid, Detail: "no"})
+			return
+		}
+		refusal(w, r, fmt.Errorf("insert: %w", errors.New(`violates check constraint "restrictions_idempotency_key_check"`)))
+	})
+	h := obs.ServerErrors(logger, &c)(mux)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/v1/restrictions?refuse=1", nil))
+	if rec.Code != 400 || logs.Len() != 0 || c.Get(obs.CounterInternalErrors) != 0 {
+		t.Fatalf("refusal: %d %d %s", rec.Code, c.Get(obs.CounterInternalErrors), logs.String())
+	}
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/v1/restrictions", nil))
+	log := logs.String()
+	if rec.Code != 500 || strings.Contains(rec.Body.String(), "constraint") || c.Get(obs.CounterInternalErrors) != 1 ||
+		!strings.Contains(log, obs.MsgInternalError) || !strings.Contains(log, `"route":"POST /v1/restrictions"`) ||
+		!strings.Contains(log, `insert: violates check constraint \"restrictions_idempotency_key_check\"`) {
+		t.Fatalf("internal: %d %s\n%s", rec.Code, rec.Body, log)
+	}
+}
+
 func TestReadBody(t *testing.T) {
 	read := func(ctype, body string, required bool) (int, []byte) {
 		r := httptest.NewRequest(http.MethodPost, "/v1/restrictions", strings.NewReader(body))
