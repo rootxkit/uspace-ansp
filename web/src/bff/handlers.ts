@@ -16,7 +16,8 @@
 // - proxy: the kit's `proxy`, forwarding /_bff/api/v1/<console paths>
 //   with the session cookie as the bearer; unsafe methods need
 //   X-CSRF-Token equal to the CSRF cookie. PROXY_ALLOW_PATHS is the whole
-//   list; the sign-in operations are not on it.
+//   list; the sign-in operations are not on it, nor the machine intake
+//   POST /v1/coordination/notices (the console reads the inbox).
 // - logout: the kit's CSRF check and cookie clearing around POST
 //   /v1/auth/logout.
 // - Idempotency-Key: POST /v1/restrictions requires it (the client's
@@ -26,9 +27,10 @@
 //   that one call here, through the kit's own forward and its checks.
 //   Nothing else is added; any other header stays the kit's decision.
 //
-// The WebSocket is not proxied: the browser upgrades /v1/restrictions/
-// stream same-origin and the cookie rides the upgrade (M22, docs/PLAN.md
-// section 15 row 19). No ticket route.
+// The WebSockets are not proxied: the browser upgrades /v1/restrictions/
+// stream, /v1/coordination/stream and /v1/manned-traffic/stream
+// same-origin and the cookie rides the upgrade (M22, docs/PLAN.md section
+// 15 row 19). No ticket route.
 //
 // This file may import only the kit's BFF helpers and next/server
 // (eslint-rules/no-server-business-logic.mjs).
@@ -54,6 +56,8 @@ export const API_LOGOUT_PATH = "/v1/auth/logout";
  */
 export const PROXY_ALLOW_PATHS: RegExp[] = [
   /^\/v1\/(restrictions|restriction-requests|delivery-alarms|adapters|sources)(\/|$)/,
+  /^\/v1\/coordination\/inbox(\/|$)/,
+  /^\/v1\/(occurrences|policy|audit)$/,
   /^\/v1\/auth\/me$/,
 ];
 

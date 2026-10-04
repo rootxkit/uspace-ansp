@@ -2,9 +2,12 @@
 // The Playwright fixture server: a stand-in for the deployment's Caddy in
 // front of `next start`. It answers the API operations the console uses
 // in the shapes of api/openapi.yaml (sign-in with MFA, restrictions,
-// delivery alarms, restriction requests, adapters, sources) and the
-// restriction stream (WS /v1/restrictions/stream in the console frame),
-// and passes every other request to Next.js with the X-Forwarded-*
+// delivery alarms, restriction requests, adapters, sources and their
+// switches, the coordination inbox, the policy, the audit log,
+// occurrences) and the three console streams in the console frame (WS
+// /v1/restrictions/stream and /v1/coordination/stream as api serves
+// them, /v1/manned-traffic/stream as manned-feed does), and passes every
+// other request to Next.js with the X-Forwarded-*
 // headers Caddy sets, so the browser sees one origin, as in a deployment.
 // The BFF reaches the API here too (WEB_API_INTERNAL_URL).
 //
@@ -21,12 +24,22 @@
 //   GET  /__mock/requests                 the API requests answered (method, path, body keys, headers seen)
 //   POST /__mock/deliver {id}             the outbox's outcome for a restriction: published to the
 //                                         CISP, written to the DSS, its alarm cleared; one frame
-//   POST /__mock/state {stream?, cisStale?}
+//   POST /__mock/state {stream?, cisStale?, kvDown?}
+//   POST /__mock/manned {icao24, state?, relevant?, ...}
+//                                         one aircraft as manned-feed sends it: a live sample is
+//                                         placed now; stale and source_disabled keep the sample's
+//                                         own captured_at with its age (never restamped); one frame
+//   POST /__mock/adapter {id, state, enabled?, who?}
+//                                         an adapter's state in the manned status frame (adapters[]
+//                                         and its source/status/v1 in sources[])
+//   POST /__mock/notice {...}             a coordination notice received (or changed); one frame
+//   POST /__mock/escalate {ack_id}        the inbox ticker's escalation of a notice; one frame
 //
 // Accounts (test data, not credentials of anything): super1 (watch
 // supervisor; no authenticator until its first sign-in, so the enrolment
-// is shown once), viewer1 (viewer, enrolled). The TOTP code is the fixed
-// MOCK_TOTP_CODE.
+// is shown once), viewer1 (viewer, enrolled), admin1 (admin, enrolled).
+// The TOTP code is the fixed MOCK_TOTP_CODE. Aircraft, notices and
+// registrations are synthetic.
 import { createHash, randomBytes } from "node:crypto";
 import http from "node:http";
 
@@ -69,7 +82,43 @@ function reset() {
     accounts: {
       super1: { id: "01K6NZ8Q2W3E4R5T6Y7V8W9X0Z", username: "super1", password: "super1-test-password", role: "watch_supervisor", enrolled: false },
       viewer1: { id: "01K6NZ8Q2W3E4R5T6Y7V8W9X1A", username: "viewer1", password: "viewer1-test-password", role: "viewer", enrolled: true },
+      admin1: { id: "01K6NZ8Q2W3E4R5T6Y7V8W9X2B", username: "admin1", password: "admin1-test-password", role: "admin", enrolled: true },
     },
+    kvDown: false,
+    aircraft: new Map(),
+    adapters: [{ id: "replay-1", state: "live", enabled: true, who: null }],
+    notices: [],
+    controls: [
+      {
+        source_type: "manned",
+        instance_id: "sbs-1",
+        enabled: false,
+        reason: "Receiver under maintenance (synthetic)",
+        actor: "admin",
+        changed_at: "2026-10-02T10:00:05.000Z",
+        version: 4,
+        epoch: "4f5a2b1c-0000-4000-8000-000000000000",
+      },
+    ],
+    controlVersion: 4,
+    policy: {
+      policy_version: 1,
+      feed_margin_lateral_m: 5000,
+      feed_margin_vertical_m: 1500,
+      stale_after_s: 15,
+      source_liveness_s: 15,
+      cisp_alarm_after_s: 10,
+      cisp_heartbeat_s: 15,
+      cis_reconcile_s: 60,
+      cis_stale_bound_s: 300,
+      notice_escalation_s: 60,
+      default_zone_type: "PROHIBITED",
+      country: "GEO",
+      changed_by: "system",
+      changed_at: "2026-10-01T08:00:00.000Z",
+    },
+    audit: [],
+    occurrences: 0,
     challenges: new Map(),
     sessions: new Map(),
     restrictions: [],
@@ -113,7 +162,37 @@ function reset() {
 }
 reset();
 const recorded = [];
-const clients = new Set();
+/** The open sockets of each console stream. */
+const clients = { restrictions: new Set(), coordination: new Set(), manned: new Set() };
+const STREAMS = {
+  "/v1/restrictions/stream": "restrictions",
+  "/v1/coordination/stream": "coordination",
+  "/v1/manned-traffic/stream": "manned",
+};
+
+function allClients() {
+  return [...clients.restrictions, ...clients.coordination, ...clients.manned];
+}
+
+/** An audit row as the API appends it (fixture chain: the hashes are made up, linked in order). */
+function audit(actor, entityType, entityId, eventType, purpose, payload) {
+  const prev = state.audit[state.audit.length - 1];
+  const id = state.audit.length + 1;
+  const hash = createHash("sha256").update(`${prev?.hash ?? ""}|${id}|${entityType}:${entityId}|${eventType}`).digest("hex");
+  state.audit.push({
+    id,
+    ts: iso(),
+    actor_type: "user",
+    actor_id: actor.id,
+    purpose,
+    entity_type: entityType,
+    entity_id: entityId,
+    event_type: eventType,
+    payload,
+    prev_hash: prev?.hash ?? "0".repeat(64),
+    hash,
+  });
+}
 
 function json(res, status, payload, headers = {}) {
   const text = JSON.stringify(payload);
@@ -264,18 +343,18 @@ function stateFrame(r, extra = {}) {
   });
 }
 
-function broadcast(text) {
-  for (const c of clients) if (!c.destroyed) c.write(wsText(text));
+function broadcast(text, stream = "restrictions") {
+  for (const c of clients[stream]) if (!c.destroyed) c.write(wsText(text));
 }
 
 // ---- the console frame and the WebSocket -------------------------------
 
-function frame(schema, body) {
+function frame(schema, body, producer = "ansp/api") {
   const now = iso();
   return JSON.stringify({
     schema,
     msg_id: ulid("01K6PW"),
-    producer: "ansp/api",
+    producer,
     ts: now,
     rx_ts: now,
     captured_at: now,
@@ -283,6 +362,89 @@ function frame(schema, body) {
     backlog: false,
     body,
   });
+}
+
+// ---- manned traffic (manned-feed) ---------------------------------------
+
+/** One aircraft as a track/manned/v1 message: the sample's own times, its state and age. */
+function trackMessage(a) {
+  return {
+    schema: "track/manned/v1",
+    msg_id: ulid("01K6PM"),
+    producer: "ansp/manned-feed",
+    ts: a.captured_at,
+    rx_ts: a.captured_at,
+    captured_at: a.captured_at,
+    time_source: "source_clock",
+    backlog: false,
+    body: {
+      icao24: a.icao24,
+      callsign: a.callsign,
+      position: { lat: a.lat, lng: a.lng },
+      alt_pressure_m: a.alt_pressure_m,
+      alt_wgs84_m: a.alt_wgs84_m,
+      gs_ms: a.gs_ms,
+      track_deg: a.track_deg,
+      vrate_ms: 0,
+      emergency: false,
+      squawk: null,
+      source_class: "ads_b",
+      trust: "surveillance",
+      source: "ansp_feed",
+      source_instance: a.source_instance,
+      state: a.state,
+      relevant: a.relevant,
+      policy_version: "1",
+      age_s: Math.max(0, (Date.now() - Date.parse(a.captured_at)) / 1000),
+    },
+  };
+}
+
+function sourceStatus(ad) {
+  return {
+    source: "ansp_feed",
+    source_instance: ad.id,
+    state: ad.state,
+    since: "2026-10-02T10:00:00.000Z",
+    age_s: ad.state === "live" ? 1 : 60,
+    disabled_by: ad.state === "disabled" ? "instance" : null,
+    disabled_by_who: ad.state === "disabled" ? ad.who : null,
+    counters: { accepted: 1520, refused: ad.state === "disabled" ? 12 : 0 },
+  };
+}
+
+function mannedStatusFrame() {
+  return frame(
+    "console/status/v1",
+    {
+      connection_id: "mock-manned",
+      server_ts: iso(),
+      policy_version: "1",
+      stale_after_s: 15,
+      live_max_age_s: 3,
+      dropped_frames: 0,
+      degraded: state.adapters.some((a) => a.state === "live") ? [] : ["adapters_silent"],
+      sources: state.adapters.map(sourceStatus),
+      adapters: state.adapters.map((a) => ({
+        id: a.id,
+        state: a.state,
+        enabled: a.enabled,
+        last_frame_at: iso(Date.now() - 1000),
+        age_s: a.state === "live" ? 1 : 60,
+      })),
+      cis_version: "42",
+      cis_age_s: 3,
+      nats: "connected",
+      relevance: "evaluated against CIS version 42 (synthetic)",
+    },
+    "ansp/manned-feed",
+  );
+}
+
+// ---- coordination notices (api) -----------------------------------------
+
+function noticeFrame(n) {
+  return frame("coordination/notice/v1", n);
 }
 
 function statusFrame() {
@@ -302,7 +464,23 @@ function statusFrame() {
   });
 }
 
-function snapshotFrame() {
+function snapshotFrame(stream = "restrictions") {
+  if (stream === "manned") {
+    return frame(
+      "console/snapshot/v1",
+      { tracks: [], alerts: [], manned: [...state.aircraft.values()].map(trackMessage), zones_version: null },
+      "ansp/manned-feed",
+    );
+  }
+  if (stream === "coordination") {
+    return frame("console/snapshot/v1", {
+      tracks: [],
+      alerts: [],
+      manned: [],
+      zones_version: null,
+      notices: state.notices.filter((n) => n.state !== "acknowledged").map((n) => JSON.parse(noticeFrame(n))),
+    });
+  }
   return frame("console/snapshot/v1", {
     tracks: [],
     alerts: [],
@@ -342,7 +520,8 @@ function wsClose(code) {
 function upgrade(req, socket) {
   const url = new URL(req.url ?? "/", "http://mock");
   const key = req.headers["sec-websocket-key"];
-  if (url.pathname !== "/v1/restrictions/stream" || !state.stream || typeof key !== "string") {
+  const stream = STREAMS[url.pathname];
+  if (stream === undefined || !state.stream || typeof key !== "string") {
     socket.end("HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
     return;
   }
@@ -355,17 +534,22 @@ function upgrade(req, socket) {
     socket.end(wsClose(4401));
     return;
   }
-  clients.add(socket);
-  socket.write(wsText(statusFrame()));
-  socket.write(wsText(snapshotFrame()));
+  clients[stream].add(socket);
+  const status = stream === "manned" ? mannedStatusFrame : statusFrame;
+  socket.write(wsText(status()));
+  socket.write(wsText(snapshotFrame(stream)));
   const timer = setInterval(() => {
-    if (!socket.destroyed) socket.write(wsText(statusFrame()));
+    if (!socket.destroyed) socket.write(wsText(status()));
   }, STATUS_PERIOD_MS);
   const end = () => {
     clearInterval(timer);
-    clients.delete(socket);
+    clients[stream].delete(socket);
   };
-  socket.on("data", () => undefined);
+  // A client frame (console/subscribe/v1) is answered with a snapshot; its
+  // bytes are masked and not read here (fixture: one snapshot per frame).
+  socket.on("data", () => {
+    if (!socket.destroyed) socket.write(wsText(snapshotFrame(stream)));
+  });
   socket.on("close", end);
   socket.on("error", end);
 }
@@ -373,6 +557,7 @@ function upgrade(req, socket) {
 // ---- the API -------------------------------------------------------------
 
 const SUPERVISOR = "watch_supervisor";
+const ADMIN = "admin";
 
 async function api(req, res, url) {
   const path = url.pathname;
@@ -414,6 +599,11 @@ async function api(req, res, url) {
   const supervisorOnly = () => {
     if (role === SUPERVISOR) return false;
     problem(res, 403, "forbidden", "Forbidden", `role ${role} may not do this; it needs watch_supervisor`);
+    return true;
+  };
+  const adminOnly = () => {
+    if (role === ADMIN) return false;
+    problem(res, 403, "forbidden", "Forbidden", `role ${role} may not do this; it needs admin`);
     return true;
   };
 
@@ -543,8 +733,8 @@ async function api(req, res, url) {
           kind: "dump1090_sbs",
           display_name: "Tower receiver",
           source_class: "ads_b",
-          status: "disabled",
-          enabled: false,
+          status: state.controls.some((c) => c.instance_id === "sbs-1" && !c.enabled) ? "disabled" : "running",
+          enabled: !state.controls.some((c) => c.instance_id === "sbs-1" && !c.enabled),
           last_frame_at: "2026-10-02T10:00:00.000Z",
           last_status_at: "2026-10-02T10:00:02.000Z",
           counters: { accepted: 40, refused: 0 },
@@ -564,20 +754,86 @@ async function api(req, res, url) {
     });
   }
   if (path === "/v1/sources" && req.method === "GET") {
-    return json(res, 200, {
-      sources: [
-        {
-          source_type: "manned",
-          instance_id: "sbs-1",
-          enabled: false,
-          reason: "Receiver under maintenance (synthetic)",
-          actor: "admin",
-          changed_at: "2026-10-02T10:00:05.000Z",
-          version: 4,
-          epoch: "4f5a2b1c-0000-4000-8000-000000000000",
-        },
-      ],
-    });
+    return json(res, 200, { sources: state.controls });
+  }
+  m = /^\/v1\/sources\/(manned)\/([a-z0-9*][a-z0-9-]*)$/.exec(path);
+  if (m && req.method === "PUT") {
+    if (adminOnly()) return;
+    if (state.kvDown) return problem(res, 503, "unavailable", "Service unavailable", "the source_control bucket cannot be reached; nothing was changed", [], { "Retry-After": "5" });
+    if (typeof body.enabled !== "boolean" || typeof body.reason !== "string" || body.reason.trim() === "") {
+      return problem(res, 400, "invalid_request", "Invalid request", null, [{ field: "reason", reason: "is required" }]);
+    }
+    state.controlVersion += 1;
+    const c = {
+      source_type: "manned",
+      instance_id: m[2],
+      enabled: body.enabled,
+      reason: body.reason,
+      actor: session.account.username,
+      changed_at: iso(),
+      version: state.controlVersion,
+      epoch: "4f5a2b1c-0000-4000-8000-000000000000",
+    };
+    state.controls = [...state.controls.filter((x) => x.instance_id !== m[2]), c];
+    audit(session.account, "source_control", `manned/${m[2]}`, "source_control_set", "source switch (04 3.6, U-15)", { enabled: body.enabled, reason: body.reason, version: c.version });
+    // What manned-feed then does: the adapter's aircraft age out as source_disabled.
+    for (const ad of state.adapters) {
+      if (m[2] !== "*" && ad.id !== m[2]) continue;
+      ad.state = body.enabled ? "live" : "disabled";
+      ad.enabled = body.enabled;
+      ad.who = body.enabled ? null : session.account.username;
+    }
+    for (const a of state.aircraft.values()) {
+      if (m[2] !== "*" && a.source_instance !== m[2]) continue;
+      if (!body.enabled) {
+        a.state = "source_disabled";
+        broadcast(JSON.stringify(trackMessage(a)), "manned");
+      }
+    }
+    return json(res, 200, c);
+  }
+  if (path === "/v1/coordination/inbox" && req.method === "GET") {
+    const st = url.searchParams.get("state");
+    const list = [...state.notices].filter((n) => st === null || n.state === st).sort((a, b) => b.received_at.localeCompare(a.received_at));
+    audit(session.account, "coordination_inbox", "*", "coordination_inbox_viewed", "Annex V inbox viewed", { count: list.length });
+    return json(res, 200, { notices: list });
+  }
+  m = /^\/v1\/coordination\/inbox\/([0-9A-Z]{26})\/acknowledge$/.exec(path);
+  if (m && req.method === "POST") {
+    if (supervisorOnly()) return;
+    const n = state.notices.find((x) => x.ack_id === m[1]);
+    if (n === undefined) return problem(res, 404, "not_found", "Not found");
+    if (n.state === "acknowledged") return problem(res, 409, "conflict", "Conflict", "the notice is acknowledged already");
+    n.state = "acknowledged";
+    n.acknowledged_by = role;
+    n.acknowledged_at = iso();
+    if (typeof body.note === "string" && body.note !== "") n.acknowledgement_note = body.note;
+    audit(session.account, "coordination_notice", n.ack_id, "coordination_notice_acknowledged", "Annex V notice acknowledged (2021/664 Art. 13(2))", { kind: n.kind, role });
+    broadcast(noticeFrame(n), "coordination");
+    return json(res, 200, n);
+  }
+  if (path === "/v1/policy" && req.method === "GET") {
+    if (adminOnly()) return;
+    return json(res, 200, state.policy);
+  }
+  if (path === "/v1/policy" && req.method === "PUT") {
+    if (adminOnly()) return;
+    state.policy = { ...state.policy, ...body, policy_version: state.policy.policy_version + 1, changed_by: session.account.id, changed_at: iso() };
+    audit(session.account, "ansp_policy", String(state.policy.policy_version), "policy_updated", "threshold change (INV-03)", state.policy);
+    return json(res, 200, state.policy);
+  }
+  if (path === "/v1/audit" && req.method === "GET") {
+    if (adminOnly()) return;
+    const entity = url.searchParams.get("entity");
+    const limit = Number(url.searchParams.get("limit") ?? "100");
+    const all = state.audit.filter((e) => entity === null || `${e.entity_type}:${e.entity_id}` === entity);
+    return json(res, 200, { events: all.slice(0, limit), truncated: all.length > limit });
+  }
+  if (path === "/v1/occurrences" && req.method === "POST") {
+    if (supervisorOnly()) return;
+    state.occurrences += 1;
+    const deadline = iso(Date.parse(body.became_aware_at) + 72 * 3_600_000);
+    return json(res, 202, { id: ulid("01K6PO"), report_ref: `ANSP-OCC-2026-${String(state.occurrences).padStart(4, "0")}`, state: "queued", deadline_at: deadline });
   }
   return problem(res, 404, "not_found", "Not found", `no fixture for ${req.method} ${path}`);
 }
@@ -589,16 +845,108 @@ async function control(req, res, path) {
   if (path === "/__mock/reset") {
     reset();
     recorded.length = 0;
-    for (const c of clients) c.destroy();
+    for (const c of allClients()) c.destroy();
     return json(res, 200, { ok: true });
   }
   if (path === "/__mock/state") {
     if (typeof input.stream === "boolean") {
       state.stream = input.stream;
-      if (!state.stream) for (const c of clients) c.destroy();
+      if (!state.stream) for (const c of allClients()) c.destroy();
     }
     if (typeof input.cisStale === "boolean") state.cisStale = input.cisStale;
-    return json(res, 200, { stream: state.stream, cisStale: state.cisStale });
+    if (typeof input.kvDown === "boolean") state.kvDown = input.kvDown;
+    return json(res, 200, { stream: state.stream, cisStale: state.cisStale, kvDown: state.kvDown });
+  }
+  if (path === "/__mock/manned") {
+    const held = state.aircraft.get(input.icao24);
+    const st = input.state ?? "live";
+    const a = {
+      icao24: input.icao24,
+      callsign: input.callsign ?? held?.callsign ?? null,
+      lat: input.lat ?? held?.lat ?? 41.715,
+      lng: input.lng ?? held?.lng ?? 44.8,
+      alt_pressure_m: input.alt_pressure_m ?? held?.alt_pressure_m ?? 1250,
+      alt_wgs84_m: input.alt_wgs84_m ?? held?.alt_wgs84_m ?? null,
+      gs_ms: input.gs_ms ?? held?.gs_ms ?? 62.5,
+      track_deg: input.track_deg ?? held?.track_deg ?? 270,
+      source_instance: input.source_instance ?? held?.source_instance ?? "replay-1",
+      relevant: input.relevant ?? held?.relevant ?? true,
+      state: st,
+      // A live sample is new; an ageing keeps the sample's own instant.
+      captured_at: st === "live" || held === undefined ? (input.captured_at ?? iso()) : held.captured_at,
+    };
+    state.aircraft.set(a.icao24, a);
+    broadcast(JSON.stringify(trackMessage(a)), "manned");
+    return json(res, 200, trackMessage(a));
+  }
+  if (path === "/__mock/adapter") {
+    const ad = state.adapters.find((x) => x.id === input.id);
+    const next = { id: input.id, state: input.state, enabled: input.enabled ?? input.state !== "disabled", who: input.who ?? null };
+    if (ad === undefined) state.adapters.push(next);
+    else Object.assign(ad, next);
+    for (const c of clients.manned) if (!c.destroyed) c.write(wsText(mannedStatusFrame()));
+    return json(res, 200, next);
+  }
+  if (path === "/__mock/notice") {
+    const n = {
+      ack_id: input.ack_id,
+      kind: input.kind ?? "nonconformance",
+      sender_client_id: input.sender_client_id ?? "ussp-alpha-01",
+      ussp_id: input.ussp_id ?? "alpha",
+      notice_ref: input.notice_ref ?? `nc-${input.ack_id.slice(-4)}`,
+      intent_refs: ["2f8343be-6482-4d1b-a474-16847e01af1e"],
+      authorisation_numbers: ["GEO-AUTH-0001 (synthetic)"],
+      received_at: input.received_at ?? iso(),
+      state: "received",
+      acknowledgement_required: input.kind === undefined || input.kind === "nonconformance" || input.kind === "contingent",
+      sender_unverified: false,
+      escalations: 0,
+      restriction_ids: input.restriction_ids ?? [],
+      payload: {
+        schema: "coordination/annex_v/v1",
+        notice_ref: input.notice_ref ?? `nc-${input.ack_id.slice(-4)}`,
+        kind: input.kind ?? "nonconformance",
+        ussp_id: input.ussp_id ?? "alpha",
+        sent_at: iso(),
+        intents: [
+          {
+            intent_ref: "2f8343be-6482-4d1b-a474-16847e01af1e",
+            authorisation_number: "GEO-AUTH-0001 (synthetic)",
+            state: input.kind === "intent_notice" ? "Accepted" : "Nonconforming",
+            time_start: "2026-10-02T11:50:00.000Z",
+            time_end: "2026-10-02T12:30:00.000Z",
+            volumes: [
+              {
+                volume: {
+                  outline_polygon: {
+                    vertices: [
+                      { lat: 41.705, lng: 44.785 },
+                      { lat: 41.705, lng: 44.805 },
+                      { lat: 41.72, lng: 44.795 },
+                    ],
+                  },
+                  altitude_lower: { value: 480, reference: "W84", units: "M" },
+                  altitude_upper: { value: 600, reference: "W84", units: "M" },
+                },
+              },
+            ],
+          },
+        ],
+      },
+    };
+    state.notices = [...state.notices.filter((x) => x.ack_id !== n.ack_id), n];
+    broadcast(noticeFrame(n), "coordination");
+    return json(res, 200, n);
+  }
+  if (path === "/__mock/escalate") {
+    const n = state.notices.find((x) => x.ack_id === input.ack_id);
+    if (n === undefined) return json(res, 404, { error: "no such notice" });
+    n.state = "escalated";
+    n.escalations = (n.escalations ?? 0) + 1;
+    n.escalated_at = n.escalated_at ?? iso();
+    n.last_escalated_at = iso();
+    broadcast(noticeFrame(n), "coordination");
+    return json(res, 200, n);
   }
   if (path === "/__mock/deliver") {
     const r = state.restrictions.find((x) => x.id === input.id);

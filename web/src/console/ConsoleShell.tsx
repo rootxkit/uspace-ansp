@@ -12,7 +12,8 @@ import { useLang, useT } from "@rootxkit/uspace-ui/i18n";
 import type { SessionDisplay } from "@rootxkit/uspace-ui/model";
 import { Button } from "@rootxkit/uspace-ui/ui";
 import { ConsoleProvider, loginPath, useConsole } from "./context";
-import { NAV_ITEMS } from "./roles";
+import { InboxProvider } from "./InboxProvider";
+import { navFor } from "./roles";
 import { StatusBar } from "./StatusBar";
 import { Loading, ProblemNotice } from "./ui";
 
@@ -58,13 +59,13 @@ function Frame({ children }: { children: ReactNode }) {
   const t = useT();
   const { lang } = useLang();
   const pathname = usePathname();
-  const { me, meFailure, signedOut } = useConsole();
+  const { me, role, meFailure, signedOut } = useConsole();
   return (
     <div className="flex flex-col">
       <StatusBar />
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--us-border)] px-4 py-2">
         <nav aria-label={t("ansp.nav.label")} className="flex flex-wrap gap-3 text-sm">
-          {NAV_ITEMS.map((i) => {
+          {navFor(role).map((i) => {
             const href = `/${lang}${i.path}`;
             const current = pathname === href;
             return (
@@ -99,7 +100,9 @@ export function ConsoleShell({ session, children }: { session: SessionDisplay | 
   return (
     <SessionProvider session={session}>
       <ConsoleProvider>
-        <Frame>{children}</Frame>
+        <InboxProvider>
+          <Frame>{children}</Frame>
+        </InboxProvider>
       </ConsoleProvider>
     </SessionProvider>
   );

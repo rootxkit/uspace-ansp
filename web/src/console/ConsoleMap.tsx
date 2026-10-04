@@ -5,7 +5,7 @@
 // (RestrictionLayer), and, in the editor, the area being drawn. The map
 // shows what the API says and what the supervisor clicks; it measures,
 // contains and buffers nothing (no geometry library in web/, T12).
-import { useEffect, useMemo, useSyncExternalStore, type ReactNode } from "react";
+import { useEffect, useMemo, useState, useSyncExternalStore, type ReactNode } from "react";
 import type { GeoJSONSource, Map as MapLibreMap, MapMouseEvent } from "maplibre-gl";
 import { useLang, useT } from "@rootxkit/uspace-ui/i18n";
 import { RestrictionLayer, resolveColour, useLayer, type RestrictionView } from "@rootxkit/uspace-ui/layers";
@@ -122,4 +122,24 @@ export function DraftLayer(props: { vertices: readonly Position[]; closed: boole
     };
   }, [map, onClick]);
   return null;
+}
+
+/**
+ * A hidden marker of a layer on the enclosing map: `data-idle` is true
+ * once the map has drawn the layer's current data (MapLibre's idle event
+ * after it was handed over). For the screenshots and smoke runs to wait
+ * on a condition, never on time; it shows nothing.
+ */
+export function LayerReady({ map, data, name }: { map: MapLibreMap | null; data: unknown; name: string }) {
+  const [drawn, setDrawn] = useState<unknown>(null);
+  useEffect(() => {
+    if (map === null) return;
+    const done = () => setDrawn(data);
+    map.once("idle", done);
+    map.triggerRepaint();
+    return () => {
+      map.off("idle", done);
+    };
+  }, [map, data]);
+  return <span hidden data-testid={`layer-${name}`} data-idle={map !== null && drawn === data} />;
 }

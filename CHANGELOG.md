@@ -225,3 +225,20 @@ additively within `/v1`. One line per work package.
   catalogues, the lint rules against a geometry import, a hard-coded
   string and server code outside the BFF, vitest, a Playwright smoke run
   against a fixture API, the web image's Dockerfile and the `web` CI job.
+- WP-12 console-picture-inbox: the manned picture on
+  `/v1/manned-traffic/stream` (every aircraft at its last position with
+  its age, live, stale, source disabled by whom or delivered late,
+  relevant ones apart; both altitudes as sent with their datum, and a
+  vitest guard that fails the build on altitude arithmetic in the
+  browser) with the stream's own status bar (adapters, degraded,
+  dropped frames, CIS age, policy version and thresholds from the
+  frame; "no aircraft reported; adapters: ..." when empty); the
+  coordination inbox live on `/v1/coordination/stream` (escalated first
+  and loudest on every page, acknowledgement with a note, a 409 said
+  and not retried, an opt-in browser notification per escalation);
+  source switches (admin; the API's 503 shown as said, no control for
+  other roles), the policy row with its history from the audit log, the
+  audit view with a JSON export carrying the chain hashes, and the
+  occurrence report form (protected reporter reference, 72 h deadline,
+  no resend without an answer). Kit stays at `0.1.0-rc.1`: no `0.3.0`
+  is released (PLAN section 15 rows 51 and 52).
