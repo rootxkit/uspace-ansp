@@ -32,7 +32,17 @@
 #                                ANSP_ENV_FILE, is what api reads: the
 #                                compose environment wins over env files
 #   ANSP_EDGE_NETWORK            the network shared with the edge Caddy
-#   ANSP_TRUSTED_PROXIES         the Caddy address(es) on that network
+#   ANSP_TRUSTED_PROXIES         the edge Caddy's own address on that network
+#                                and nothing else: one host per entry (an
+#                                address, /32 or /128), never the network's
+#                                range. A listed peer is believed when it
+#                                writes X-Forwarded-For and
+#                                X-Client-Cert-Subject, so the range would let
+#                                any container on the shared edge network
+#                                (web, other systems) claim a client
+#                                certificate on the mTLS routes. Give Caddy a
+#                                fixed address on that network so the entry
+#                                stays true; check-deploy refuses a range
 #
 # Rules this file keeps: one timescaledb-ha container with both databases
 # (M37); a one-shot migrate of both trees that every long-running process

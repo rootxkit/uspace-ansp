@@ -9,7 +9,8 @@
 #   3. the rendered shape read per service (jq): api's client secret
 #      file is a non-empty file under a directory api mounts, and no
 #      setting of the deployment empties it; each process gets only the
-#      database DSN it opens;
+#      database DSN it opens; ANSP_TRUSTED_PROXIES names single hosts
+#      (the edge Caddy), never a range;
 #   4. deploy/caddy/proof.sh against the pinned Caddy.
 #
 # Needs docker, jq and, for step 1, shellcheck: without shellcheck step 1
@@ -126,6 +127,34 @@ want
 $want"
 fi
 echo "check-deploy: DSNs per process: migrate both, api relational, manned-feed timeseries, adapters none"
+
+# ANSP_TRUSTED_PROXIES is the edge Caddy's own address: every entry one
+# host (an address, /32 or /128). A range would make every container on
+# the shared edge network a peer whose X-Client-Cert-Subject is believed.
+host_only() { # <comma-separated entries>
+  local e entries
+  IFS=, read -ra entries <<<"$1"
+  [ "${#entries[@]}" -gt 0 ] || return 1
+  for e in "${entries[@]}"; do
+    e="${e// /}"
+    case "$e" in
+      "") return 1 ;;
+      */32 | */128) ;;
+      */*) return 1 ;;
+    esac
+  done
+}
+# The guard itself (E-01): a range is refused, a host is accepted.
+if host_only 172.18.0.0/16 || host_only "192.0.2.2/32,10.0.0.0/8" || ! host_only "192.0.2.2/32,2001:db8::2"; then
+  fail "host_only does not tell a host from a range"
+fi
+proxies="$(jq -j '[.services[].environment.ANSP_TRUSTED_PROXIES // empty | select(. != "")] | unique | join("\n")' \
+  "$tmp/rendered.json" | tr -d '\r')"
+[ -n "$proxies" ] || fail "no service renders ANSP_TRUSTED_PROXIES"
+while IFS= read -r p; do
+  host_only "$p" || fail "ANSP_TRUSTED_PROXIES is '$p': list the edge Caddy's own address, not a range"
+done <<<"$proxies"
+echo "check-deploy: ANSP_TRUSTED_PROXIES names single hosts only ($proxies)"
 
 # api's client secret: set and non-empty in the rendered shape, also when
 # the deployment sets ANSP_API_CLIENT_SECRET_FILE empty, and refused when
