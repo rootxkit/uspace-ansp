@@ -153,7 +153,7 @@ func (f *occFixture) create(t *testing.T, body string) Queued {
 	if len(errs) > 0 {
 		t.Fatal(errs)
 	}
-	q, err := f.occ.Create(context.Background(), Actor{ID: "acct-3", Role: "watch_supervisor"}, in)
+	q, _, err := f.occ.Create(context.Background(), Actor{ID: "acct-3", Role: "watch_supervisor"}, in, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -225,7 +225,7 @@ func TestOccurrenceWithoutReference(t *testing.T) {
 	f := newOccFixture(t)
 	f.occ.Sealer = nil
 	in, _ := DecodeOccurrence([]byte(occurrenceBody))
-	if _, err := f.occ.Create(context.Background(), Actor{ID: "a"}, in); refusalOf(t, err).Status != http.StatusServiceUnavailable {
+	if _, _, err := f.occ.Create(context.Background(), Actor{ID: "a"}, in, nil); refusalOf(t, err).Status != http.StatusServiceUnavailable {
 		t.Fatal(err)
 	}
 	if len(f.repo.occ) != 0 {
@@ -243,7 +243,7 @@ func TestOccurrenceWithoutReference(t *testing.T) {
 	}
 	// Without the outbox nothing is accepted.
 	f.occ.Outbox = nil
-	if _, err := f.occ.Create(context.Background(), Actor{ID: "a"}, OccurrenceInput{}); refusalOf(t, err).Status != http.StatusServiceUnavailable {
+	if _, _, err := f.occ.Create(context.Background(), Actor{ID: "a"}, OccurrenceInput{}, nil); refusalOf(t, err).Status != http.StatusServiceUnavailable {
 		t.Fatal(err)
 	}
 }
@@ -285,7 +285,7 @@ func TestOccurrenceSendFailures(t *testing.T) {
 	// A store failure in the transaction stores nothing.
 	f.repo.failAudit = errBoom
 	in, _ := DecodeOccurrence([]byte(occurrenceBody))
-	if _, err := f.occ.Create(ctx, Actor{ID: "a"}, in); !errors.Is(err, errBoom) {
+	if _, _, err := f.occ.Create(ctx, Actor{ID: "a"}, in, nil); !errors.Is(err, errBoom) {
 		t.Fatal(err)
 	}
 	if len(f.repo.occ) != 1 || len(f.repo.jobs) != 1 {
@@ -428,7 +428,7 @@ func TestOccurrenceTimesBoundedByTheDatabaseClock(t *testing.T) {
 		if len(errs) > 0 {
 			t.Fatal(errs)
 		}
-		_, err := f.occ.Create(context.Background(), Actor{ID: "a"}, in)
+		_, _, err := f.occ.Create(context.Background(), Actor{ID: "a"}, in, nil)
 		rf := refusalOf(t, err)
 		if rf.Status != http.StatusBadRequest || len(rf.Fields) != 1 || rf.Fields[0].Field != name {
 			t.Fatalf("%s: %+v", name, rf)
@@ -440,5 +440,80 @@ func TestOccurrenceTimesBoundedByTheDatabaseClock(t *testing.T) {
 	f.create(t, at(now.Add(-pol.OccurrenceMaxAge+time.Hour), now.Add(pol.OccurrenceClockSkew-time.Second)))
 	if len(f.repo.occ) != 1 {
 		t.Fatal("a report within the bounds was not stored")
+	}
+}
+
+// The console's Idempotency-Key, per account: the same key and body
+// answer the report first queued (replay, nothing stored, sent or
+// audited again), another body under the key is refused 409 with
+// nothing stored; another key, another account or no key queues a new
+// report (E-01 pairs).
+func TestOccurrenceIdempotencyKey(t *testing.T) {
+	f := newOccFixture(t)
+	ctx := context.Background()
+	in, errs := DecodeOccurrence([]byte(occurrenceBody))
+	if len(errs) > 0 {
+		t.Fatal(errs)
+	}
+	sup := Actor{ID: "acct-3", Role: "watch_supervisor"}
+	key := func(actor Actor, k, body string) *Idempotency {
+		return &Idempotency{ActorID: actor.ID, Key: k, SHA256: restriction.Hash([]byte(body))}
+	}
+
+	first, replay, err := f.occ.Create(ctx, sup, in, key(sup, "console-1", occurrenceBody))
+	if err != nil || replay {
+		t.Fatalf("first: replay %v err %v", replay, err)
+	}
+	again, replay, err := f.occ.Create(ctx, sup, in, key(sup, "console-1", occurrenceBody))
+	if err != nil || !replay || again != first {
+		t.Fatalf("repeat: %+v replay %v err %v, want %+v", again, replay, err, first)
+	}
+	if len(f.repo.jobs) != 1 || len(f.repo.occ) != 1 || len(f.repo.audited("occurrence_report_queued")) != 1 {
+		t.Fatalf("a repeat stored or queued again: jobs %d reports %d", len(f.repo.jobs), len(f.repo.occ))
+	}
+	if f.occ.Counters().Get(CounterOccurrenceReplays) != 1 || f.occ.Counters().Get(CounterOccurrencesQueued) != 1 {
+		t.Fatalf("counters %v", f.occ.Counters().Snapshot())
+	}
+
+	other := strings.Replace(occurrenceBody, "Synthetic airprox", "Another synthetic airprox", 1)
+	inOther, _ := DecodeOccurrence([]byte(other))
+	_, _, err = f.occ.Create(ctx, sup, inOther, key(sup, "console-1", other))
+	rf := refusalOf(t, err)
+	if rf.Status != http.StatusConflict || rf.Slug != SlugIdempotency || len(rf.Fields) != 1 || rf.Fields[0].Field != "Idempotency-Key" ||
+		!strings.Contains(rf.Fields[0].Reason, first.ReportRef) {
+		t.Fatalf("%+v", rf)
+	}
+	if len(f.repo.jobs) != 1 || len(f.repo.occ) != 1 {
+		t.Fatal("a conflicting body was stored")
+	}
+
+	for name, call := range map[string]func() (Queued, bool, error){
+		"another key": func() (Queued, bool, error) { return f.occ.Create(ctx, sup, in, key(sup, "console-2", occurrenceBody)) },
+		"another account": func() (Queued, bool, error) {
+			return f.occ.Create(ctx, Actor{ID: "acct-4"}, in, key(Actor{ID: "acct-4"}, "console-1", occurrenceBody))
+		},
+		"no key": func() (Queued, bool, error) { return f.occ.Create(ctx, sup, in, nil) },
+	} {
+		before := len(f.repo.occ)
+		q, replay, err := call()
+		if err != nil || replay || q.ID == first.ID || len(f.repo.occ) != before+1 {
+			t.Fatalf("%s: %+v replay %v err %v", name, q, replay, err)
+		}
+	}
+}
+
+// An Idempotency-Key of the contract's shape is taken; any other is
+// refused naming the header, never echoing it.
+func TestCheckIdempotencyKey(t *testing.T) {
+	for _, k := range []string{"console-0f1e2d3c", "a", strings.Repeat("k", 128), "A.b_c:d-9"} {
+		if f := CheckIdempotencyKey(k); f != nil {
+			t.Errorf("%q refused: %v", k, f)
+		}
+	}
+	for _, k := range []string{"", "has spaces", strings.Repeat("k", 129), "ключ", "a/b"} {
+		f := CheckIdempotencyKey(k)
+		if f == nil || f.Field != "Idempotency-Key" || (k != "" && strings.Contains(f.Reason, k)) {
+			t.Errorf("%q: %v", k, f)
+		}
 	}
 }

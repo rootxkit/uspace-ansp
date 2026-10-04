@@ -330,6 +330,17 @@ func (t fakeTx) InsertOccurrence(_ context.Context, o NewOccurrence) (Occurrence
 	return out, nil
 }
 
+func (t fakeTx) OccurrenceByIdempotency(_ context.Context, actorID, key string) (Occurrence, bool, error) {
+	t.r.mu.Lock()
+	defer t.r.mu.Unlock()
+	for _, o := range t.r.occ {
+		if o.Idempotency != nil && o.Idempotency.ActorID == actorID && o.Idempotency.Key == key {
+			return o, true, nil
+		}
+	}
+	return Occurrence{}, false, nil
+}
+
 func (t fakeTx) Outbox() deliver.Tx { return t }
 
 func (t fakeTx) Audit(_ context.Context, ev audit.Event) error {

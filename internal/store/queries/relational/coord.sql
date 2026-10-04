@@ -104,12 +104,17 @@ SELECT ('ANSP-OCC-' || to_char(clock_timestamp() AT TIME ZONE 'UTC', 'YYYY') || 
 -- name: InsertOccurrence :one
 INSERT INTO occurrence_reports (id, report_ref, channel, occurred_at, became_aware_at, category, aircraft, manned, intent_refs,
                                 min_separation, narrative, reporter_person_ref_sealed, reporter_key_id, created_by, delivery_id,
-                                deadline_at)
+                                deadline_at, idempotency_actor, idempotency_key, idempotency_sha256)
 VALUES (sqlc.arg(id), sqlc.arg(report_ref), sqlc.arg(channel), sqlc.arg(occurred_at), sqlc.arg(became_aware_at), sqlc.arg(category),
         sqlc.arg(aircraft), sqlc.arg(manned), sqlc.arg(intent_refs)::uuid[], sqlc.narg(min_separation), sqlc.arg(narrative),
         sqlc.narg(reporter_person_ref_sealed), sqlc.narg(reporter_key_id), sqlc.arg(created_by), sqlc.arg(delivery_id),
-        sqlc.arg(became_aware_at)::timestamptz + interval '72 hours')
+        sqlc.arg(became_aware_at)::timestamptz + interval '72 hours',
+        sqlc.narg(idempotency_actor), sqlc.narg(idempotency_key), sqlc.narg(idempotency_sha256))
 RETURNING *;
+
+-- name: OccurrenceByIdempotency :one
+-- The report an account's Idempotency-Key queued.
+SELECT * FROM occurrence_reports WHERE idempotency_actor = sqlc.arg(actor) AND idempotency_key = sqlc.arg(idempotency_key);
 
 -- name: OccurrenceByDelivery :one
 SELECT * FROM occurrence_reports WHERE delivery_id = sqlc.arg(delivery_id);

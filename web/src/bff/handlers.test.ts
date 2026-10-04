@@ -323,6 +323,15 @@ describe("Idempotency-Key", () => {
     expect(JSON.parse(api.calls[0]?.body ?? "{}")).toEqual({ reason_text: "x" });
   });
 
+  it("is forwarded on POST /v1/occurrences, the report's client reference", async () => {
+    const api = mockApi(() => Response.json({ id: "o1" }, { status: 202 }));
+    const res = await bffWith(api.fetch).proxy(plan({ "idempotency-key": "console-0f1e2d3c" }, "/_bff/api/v1/occurrences"));
+    expect(res.status).toBe(202);
+    expect(api.calls[0]?.url).toBe(`${API}/v1/occurrences`);
+    expect(api.calls[0]?.headers.get("idempotency-key")).toBe("console-0f1e2d3c");
+    expect(api.calls[0]?.headers.get("authorization")).toBe("Bearer tok123");
+  });
+
   it("is not forwarded without being sent, nor on another operation, nor in another shape", async () => {
     const api = mockApi(() => Response.json({ ok: true }));
     const bff = bffWith(api.fetch);

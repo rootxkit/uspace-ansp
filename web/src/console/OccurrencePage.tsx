@@ -10,13 +10,15 @@
 // row 52): the page lists the open occurrence_undelivered alarms of
 // GET /v1/delivery-alarms, which the API raises 60 h after awareness for
 // a report not yet delivered. The reporter reference is protected: it is
-// sent once and never shown back. A send that got no answer is never
-// repeated by itself (the operation takes no idempotency key).
+// sent once and never shown back. A send that got no answer, or a 5xx, is
+// never repeated by itself; the supervisor's explicit re-send carries the
+// same Idempotency-Key, so the API answers it with the report first
+// queued rather than a second one.
 import { useState } from "react";
 import { inputToUtc } from "@rootxkit/uspace-ui/form";
 import { useLang, useT } from "@rootxkit/uspace-ui/i18n";
 import { Button, Input, Label, Textarea } from "@rootxkit/uspace-ui/ui";
-import { failureOf, type CallFailure } from "../api/client";
+import type { CallFailure } from "../api/client";
 import { useConsole, useLoad } from "./context";
 import {
   CATEGORIES,
@@ -24,8 +26,8 @@ import {
   deadlinePreview,
   emptyForm,
   occurrenceBody,
-  outcomeAfter,
   REPORTER_REF_MAX_CHARS,
+  sendOccurrence,
   SingleFlight,
   type ApiOccurrenceQueued,
   type FormProblem,
@@ -83,6 +85,8 @@ export function OccurrencePage() {
   const [queued, setQueued] = useState<ApiOccurrenceQueued | null>(null);
   // Decides "one send at a time" before React has rendered busy.
   const [flight] = useState(() => new SingleFlight());
+  // The report's Idempotency-Key while its outcome is unknown; "" when the next send is a new report.
+  const [heldKey, setHeldKey] = useState("");
 
   if (!maySupervise(role)) return <Empty textKey="ansp.occurrence.role" testId="occurrence-role" />;
 
@@ -104,19 +108,19 @@ export function OccurrencePage() {
       setProblems([]);
       setBusy(true);
       try {
-        const { data } = await client.POST("/v1/occurrences", { body: built.body });
-        if (data !== undefined) {
-          setQueued(data);
+        const sent = await sendOccurrence(client, built.body, heldKey);
+        setHeldKey(sent.held);
+        if (sent.queued !== null) {
+          setQueued(sent.queued);
           setForm(emptyForm());
           setTyped({ occurred_at: "", became_aware_at: "", min_at: "" });
           setUnknown(false);
           setResendAnyway(false);
+        } else {
+          setFailure(sent.failure);
+          setUnknown(sent.outcome === "unknown");
+          setResendAnyway(false);
         }
-      } catch (err: unknown) {
-        const f = failureOf(err);
-        setFailure(f);
-        setUnknown(outcomeAfter(f) === "unknown");
-        setResendAnyway(false);
       } finally {
         setBusy(false);
       }

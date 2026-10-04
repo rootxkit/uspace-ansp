@@ -55,6 +55,9 @@ const (
 	SlugRefReused      = "notice_ref_reused"
 	SlugAuditFailed    = "audit_unavailable"
 	SlugRateLimited    = "rate_limited"
+	// SlugIdempotency is an Idempotency-Key used with another body
+	// (restriction.SlugIdempotency, the plan's).
+	SlugIdempotency = "idempotency_conflict"
 )
 
 // Refusal is a refused request: the status, the problem slug, the detail

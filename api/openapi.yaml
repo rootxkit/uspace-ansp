@@ -113,6 +113,20 @@ components:
         maxLength: 128
         pattern: "^[A-Za-z0-9._:-]+$"
       example: console-7f3a9c
+    OccurrenceIdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: false
+      description: |
+        The client's reference of the report; a repeat with the same key
+        and body answers the first receipt (optional within /v1: a report
+        without one is queued every time).
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 128
+        pattern: "^[A-Za-z0-9._:-]+$"
+      example: console-0f1e2d3c
     RestrictionID:
       name: id
       in: path
@@ -3977,9 +3991,15 @@ paths:
         clear over TLS (M13) and never logged, streamed or exported.
         The authority owns occurrence/v1; until its OpenAPI publishes it
         (api/clients/authority.yaml), this body is the plan's field list
-        of 04 §3.3.
+        of 04 §3.3. Idempotency-Key is the client's reference, per
+        account: a repeat with the same key and body answers 200 with the
+        receipt of the report first queued and queues nothing more; with
+        another body, 409 idempotency_conflict. A send that got no
+        answer, or a 5xx, may be repeated with its key.
       security:
         - consoleSession: []
+      parameters:
+        - $ref: "#/components/parameters/OccurrenceIdempotencyKey"
       requestBody:
         required: true
         content:
@@ -4016,12 +4036,25 @@ paths:
                 report_ref: ANSP-OCC-2026-0007
                 state: queued
                 deadline_at: "2026-10-05T11:25:00.000Z"
+        "200":
+          description: A repeat of an earlier report with the same Idempotency-Key and body; the first receipt.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OccurrenceQueued"
+              example:
+                id: 01K6P4B2C3D4E5F6G7H8J9KMNP
+                report_ref: ANSP-OCC-2026-0007
+                state: queued
+                deadline_at: "2026-10-05T11:25:00.000Z"
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
         "413":
           $ref: "#/components/responses/TooLarge"
         "503":

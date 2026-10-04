@@ -291,12 +291,13 @@ func (q *Queries) InsertNotice(ctx context.Context, arg InsertNoticeParams) (Coo
 const insertOccurrence = `-- name: InsertOccurrence :one
 INSERT INTO occurrence_reports (id, report_ref, channel, occurred_at, became_aware_at, category, aircraft, manned, intent_refs,
                                 min_separation, narrative, reporter_person_ref_sealed, reporter_key_id, created_by, delivery_id,
-                                deadline_at)
+                                deadline_at, idempotency_actor, idempotency_key, idempotency_sha256)
 VALUES ($1, $2, $3, $4, $5, $6,
         $7, $8, $9::uuid[], $10, $11,
         $12, $13, $14, $15,
-        $5::timestamptz + interval '72 hours')
-RETURNING id, report_ref, channel, occurred_at, became_aware_at, category, aircraft, manned, intent_refs, min_separation, narrative, reporter_person_ref_sealed, reporter_key_id, created_by, created_at, delivery_id, deadline_at
+        $5::timestamptz + interval '72 hours',
+        $16, $17, $18)
+RETURNING id, report_ref, channel, occurred_at, became_aware_at, category, aircraft, manned, intent_refs, min_separation, narrative, reporter_person_ref_sealed, reporter_key_id, created_by, created_at, delivery_id, deadline_at, idempotency_actor, idempotency_key, idempotency_sha256
 `
 
 type InsertOccurrenceParams struct {
@@ -315,6 +316,9 @@ type InsertOccurrenceParams struct {
 	ReporterKeyID           *string
 	CreatedBy               string
 	DeliveryID              string
+	IdempotencyActor        *string
+	IdempotencyKey          *string
+	IdempotencySha256       *string
 }
 
 func (q *Queries) InsertOccurrence(ctx context.Context, arg InsertOccurrenceParams) (OccurrenceReport, error) {
@@ -334,6 +338,9 @@ func (q *Queries) InsertOccurrence(ctx context.Context, arg InsertOccurrencePara
 		arg.ReporterKeyID,
 		arg.CreatedBy,
 		arg.DeliveryID,
+		arg.IdempotencyActor,
+		arg.IdempotencyKey,
+		arg.IdempotencySha256,
 	)
 	var i OccurrenceReport
 	err := row.Scan(
@@ -354,6 +361,9 @@ func (q *Queries) InsertOccurrence(ctx context.Context, arg InsertOccurrencePara
 		&i.CreatedAt,
 		&i.DeliveryID,
 		&i.DeadlineAt,
+		&i.IdempotencyActor,
+		&i.IdempotencyKey,
+		&i.IdempotencySha256,
 	)
 	return i, err
 }
@@ -624,7 +634,7 @@ func (q *Queries) NoticesBehindBus(ctx context.Context, pageSize int32) ([]Coord
 }
 
 const occurrenceByDelivery = `-- name: OccurrenceByDelivery :one
-SELECT id, report_ref, channel, occurred_at, became_aware_at, category, aircraft, manned, intent_refs, min_separation, narrative, reporter_person_ref_sealed, reporter_key_id, created_by, created_at, delivery_id, deadline_at FROM occurrence_reports WHERE delivery_id = $1
+SELECT id, report_ref, channel, occurred_at, became_aware_at, category, aircraft, manned, intent_refs, min_separation, narrative, reporter_person_ref_sealed, reporter_key_id, created_by, created_at, delivery_id, deadline_at, idempotency_actor, idempotency_key, idempotency_sha256 FROM occurrence_reports WHERE delivery_id = $1
 `
 
 func (q *Queries) OccurrenceByDelivery(ctx context.Context, deliveryID string) (OccurrenceReport, error) {
@@ -648,6 +658,47 @@ func (q *Queries) OccurrenceByDelivery(ctx context.Context, deliveryID string) (
 		&i.CreatedAt,
 		&i.DeliveryID,
 		&i.DeadlineAt,
+		&i.IdempotencyActor,
+		&i.IdempotencyKey,
+		&i.IdempotencySha256,
+	)
+	return i, err
+}
+
+const occurrenceByIdempotency = `-- name: OccurrenceByIdempotency :one
+SELECT id, report_ref, channel, occurred_at, became_aware_at, category, aircraft, manned, intent_refs, min_separation, narrative, reporter_person_ref_sealed, reporter_key_id, created_by, created_at, delivery_id, deadline_at, idempotency_actor, idempotency_key, idempotency_sha256 FROM occurrence_reports WHERE idempotency_actor = $1 AND idempotency_key = $2
+`
+
+type OccurrenceByIdempotencyParams struct {
+	Actor          *string
+	IdempotencyKey *string
+}
+
+// The report an account's Idempotency-Key queued.
+func (q *Queries) OccurrenceByIdempotency(ctx context.Context, arg OccurrenceByIdempotencyParams) (OccurrenceReport, error) {
+	row := q.db.QueryRow(ctx, occurrenceByIdempotency, arg.Actor, arg.IdempotencyKey)
+	var i OccurrenceReport
+	err := row.Scan(
+		&i.ID,
+		&i.ReportRef,
+		&i.Channel,
+		&i.OccurredAt,
+		&i.BecameAwareAt,
+		&i.Category,
+		&i.Aircraft,
+		&i.Manned,
+		&i.IntentRefs,
+		&i.MinSeparation,
+		&i.Narrative,
+		&i.ReporterPersonRefSealed,
+		&i.ReporterKeyID,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.DeliveryID,
+		&i.DeadlineAt,
+		&i.IdempotencyActor,
+		&i.IdempotencyKey,
+		&i.IdempotencySha256,
 	)
 	return i, err
 }

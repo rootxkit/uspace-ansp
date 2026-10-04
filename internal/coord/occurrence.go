@@ -40,7 +40,30 @@ const (
 	CounterOccurrenceAlarms     = "occurrences_undelivered_alarms"
 	CounterOccurrenceCleared    = "occurrences_undelivered_cleared"
 	CounterOccurrenceSendFailed = "occurrences_send_prepare_failed"
+	CounterOccurrenceReplays    = "occurrences_idempotent_replays"
 )
+
+// idempotencyKeyPattern is the contract's Idempotency-Key
+// (api/openapi.yaml OccurrenceIdempotencyKey; the column's check).
+var idempotencyKeyPattern = regexp.MustCompile(`^[A-Za-z0-9._:-]{1,128}$`)
+
+// CheckIdempotencyKey is nil for a key of the contract's shape, else
+// the field problem (the value is not echoed).
+func CheckIdempotencyKey(key string) *core.FieldError {
+	if idempotencyKeyPattern.MatchString(key) {
+		return nil
+	}
+	return core.Fieldf("Idempotency-Key", "must be 1 to 128 characters of A-Z, a-z, 0-9, '.', '_', ':' or '-'")
+}
+
+// Idempotency is the console's Idempotency-Key of a report, per
+// account, with the SHA-256 of the body it was sent with
+// (restriction.Hash).
+type Idempotency struct {
+	ActorID string
+	Key     string
+	SHA256  string
+}
 
 // OpReport is the op of an occurrence job.
 const OpReport = "report"
@@ -264,16 +287,20 @@ type Queued struct {
 // Create stores the report of actor, sealed, with its delivery job and
 // audit event in one transaction, then publishes the job. A reporter
 // reference without a secrets key is refused 503: it is never stored in
-// clear.
-func (o *Occurrences) Create(ctx context.Context, actor Actor, in OccurrenceInput) (Queued, error) {
+// clear. With an Idempotency-Key it is idempotent per account: the same
+// key and body answer the receipt of the report first queued (replay
+// true; nothing is stored, sent or audited again), another body under
+// the key is refused 409. A send that got no answer, or a 5xx after the
+// commit, is thereby safe to repeat with its key.
+func (o *Occurrences) Create(ctx context.Context, actor Actor, in OccurrenceInput, idem *Idempotency) (Queued, bool, error) {
 	if in.PersonRef != "" && o.Sealer == nil {
 		o.counters.Inc(CounterOccurrencesRefused)
-		return Queued{}, &Refusal{Status: http.StatusServiceUnavailable, Slug: "secrets_key_unavailable", RetryAfter: 60 * time.Second,
+		return Queued{}, false, &Refusal{Status: http.StatusServiceUnavailable, Slug: "secrets_key_unavailable", RetryAfter: 60 * time.Second,
 			Detail: "the reporter reference cannot be sealed: ANSP_SECRETS_KEY_FILE is not set on this instance"}
 	}
 	if o.Outbox == nil {
 		o.counters.Inc(CounterOccurrencesRefused)
-		return Queued{}, &Refusal{Status: http.StatusServiceUnavailable, Slug: "outbox_unavailable", RetryAfter: 60 * time.Second,
+		return Queued{}, false, &Refusal{Status: http.StatusServiceUnavailable, Slug: "outbox_unavailable", RetryAfter: 60 * time.Second,
 			Detail: "the outbox is not run on this instance"}
 	}
 	aircraft, _ := json.Marshal(nonNilSlice(in.Aircraft))
@@ -283,7 +310,23 @@ func (o *Occurrences) Create(ctx context.Context, actor Actor, in OccurrenceInpu
 		sep, _ = json.Marshal(in.MinSeparation)
 	}
 	var out Occurrence
+	var replay bool
 	err := o.Repo.Tx(ctx, func(ctx context.Context, tx Tx) error {
+		replay = false
+		if idem != nil {
+			first, found, err := tx.OccurrenceByIdempotency(ctx, idem.ActorID, idem.Key)
+			if err != nil {
+				return err
+			}
+			if found {
+				if first.Idempotency == nil || first.Idempotency.SHA256 != idem.SHA256 {
+					return &Refusal{Status: http.StatusConflict, Slug: SlugIdempotency, Detail: "this Idempotency-Key was used with another body; nothing was stored",
+						Fields: []*core.FieldError{core.Fieldf("Idempotency-Key", "was used for report %s with another body; a new report needs a new key", first.ReportRef)}}
+				}
+				out, replay = first, true
+				return nil
+			}
+		}
 		dtx := tx.Outbox()
 		now, err := dtx.Now(ctx)
 		if err != nil {
@@ -304,7 +347,7 @@ func (o *Occurrences) Create(ctx context.Context, actor Actor, in OccurrenceInpu
 		}
 		rec := NewOccurrence{ID: id, ReportRef: ref, Channel: in.Channel, OccurredAt: in.OccurredAt, BecameAwareAt: in.BecameAwareAt,
 			Category: in.Category, Aircraft: aircraft, Manned: manned, IntentRefs: in.IntentRefs, MinSeparation: sep,
-			Narrative: in.Narrative, CreatedBy: actor.ID, DeliveryID: deliveryID}
+			Narrative: in.Narrative, CreatedBy: actor.ID, DeliveryID: deliveryID, Idempotency: idem}
 		if in.PersonRef != "" {
 			if rec.PersonRefSealed, err = o.Sealer.Seal([]byte(in.PersonRef), []byte(id)); err != nil {
 				return err
@@ -325,11 +368,16 @@ func (o *Occurrences) Create(ctx context.Context, actor Actor, in OccurrenceInpu
 		if errors.As(err, &rf) {
 			o.counters.Inc(CounterOccurrencesRefused)
 		}
-		return Queued{}, err
+		return Queued{}, false, err
+	}
+	q := Queued{ID: out.ID, ReportRef: out.ReportRef, State: "queued", DeadlineAt: restriction.Stamp(out.DeadlineAt)}
+	if replay {
+		o.counters.Inc(CounterOccurrenceReplays)
+		return q, true, nil
 	}
 	o.counters.Inc(CounterOccurrencesQueued)
 	o.Outbox.PublishAll(ctx, []deliver.Pending{{ID: out.DeliveryID, Kind: deliver.KindOccurrence}})
-	return Queued{ID: out.ID, ReportRef: out.ReportRef, State: "queued", DeadlineAt: restriction.Stamp(out.DeadlineAt)}, nil
+	return q, false, nil
 }
 
 // checkTimes refuses a became_aware_at after now plus the clock skew

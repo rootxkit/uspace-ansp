@@ -523,7 +523,7 @@
   "ansp.occurrence.queued": "Queued to the authority as {ref}.",
   "ansp.occurrence.deadline_api": "Deadline as the API set it:",
   "ansp.occurrence.delivery_unread": "Its delivery state cannot be read per report yet; an undelivered report raises the alarm below.",
-  "ansp.occurrence.unknown": "No answer came: the report may have been queued. Check the delivery alarms and the audit log before sending it again.",
+  "ansp.occurrence.unknown": "No answer came, or the API failed after it may have stored the report: it may have been queued. Check the delivery alarms and the audit log before sending it again. Sent again unchanged, it carries the same key and the API answers with the report first queued; changed, it is refused.",
   "ansp.occurrence.resend_anyway": "I checked: send it again",
   "ansp.occurrence.delivery": "Delivery to the authority",
   "ansp.occurrence.undelivered_none": "No occurrence report is overdue for delivery.",

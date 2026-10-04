@@ -6,12 +6,17 @@
 // protected value: it goes in the body and nowhere else (never logged,
 // shown back, stored in the browser or exported).
 //
-// POST /v1/occurrences takes no idempotency key (docs/PLAN.md section 15
-// row 52): a report that got no answer may have been queued, so it is
-// never sent again by itself; the supervisor is told the outcome is
-// unknown and must say so to send it again (outcomeAfter).
+// POST /v1/occurrences takes the console's Idempotency-Key (the client
+// reference of reference.ts, per account): a repeat with the same key and
+// body answers the report first queued. A send that may have reached the
+// API (no answer, the BFF's 502 or 504, any 5xx: a 500 or a 503 may come
+// after the commit) keeps its key; it is never sent again by itself, the
+// supervisor is told the outcome is unknown and must say so to send it
+// again, and that re-send carries the same key, so it cannot queue a
+// second report (sendOccurrence, outcomeAfter).
 import type { components } from "../api/types";
-import type { CallFailure } from "../api/client";
+import { failureOf, type CallFailure, type ConsoleClient } from "../api/client";
+import { referenceAfter, referenceFor } from "./reference";
 
 export type ApiOccurrenceCreate = components["schemas"]["OccurrenceCreate"];
 export type ApiOccurrenceQueued = components["schemas"]["OccurrenceQueued"];
@@ -161,14 +166,40 @@ export function deadlinePreview(becameAwareAt: string | null): string | null {
 }
 
 /**
- * What a failed send means for the next one: "refused" (the API answered
- * with a problem; nothing was queued, the form can be corrected and
- * sent), or "unknown" (no answer, the BFF's 502 or 504: it may have been
- * queued, so a second send needs the supervisor's explicit say-so).
+ * What a failed send means for the next one: "refused" (a 4xx with a
+ * problem: the API judged the request and queued nothing; the form can
+ * be corrected and sent as another report), or "unknown" (no answer, the
+ * BFF's 502 or 504, or any 5xx: a 500 or a 503 may come after the report
+ * was committed, so a second send needs the supervisor's explicit
+ * say-so, and carries the same key).
  */
 export function outcomeAfter(f: CallFailure): "refused" | "unknown" {
-  const answered = f.status >= 400 && f.problem !== null && f.status !== 502 && f.status !== 504;
-  return answered ? "refused" : "unknown";
+  const refused = f.status >= 400 && f.status < 500 && f.problem !== null;
+  return refused ? "refused" : "unknown";
+}
+
+/** What one send of a report came to, and the key to hold for the next. */
+export interface SendResult {
+  /** The receipt: 202 for a new report, 200 for a repeat of the key (the first one's). */
+  queued: ApiOccurrenceQueued | null;
+  failure: CallFailure | null;
+  outcome: "queued" | "refused" | "unknown";
+  /** The Idempotency-Key to send next time: "" (a fresh one) after a receipt or a refusal. */
+  held: string;
+}
+
+/** Sends `body` with the held key (or a fresh one) and says what to hold next. */
+export async function sendOccurrence(client: ConsoleClient, body: ApiOccurrenceCreate, held: string): Promise<SendResult> {
+  const key = referenceFor(held);
+  try {
+    const { data } = await client.POST("/v1/occurrences", { params: { header: { "Idempotency-Key": key } }, body });
+    if (data === undefined) return { queued: null, failure: null, outcome: "unknown", held: key };
+    return { queued: data, failure: null, outcome: "queued", held: "" };
+  } catch (err: unknown) {
+    const f = failureOf(err);
+    const outcome = outcomeAfter(f);
+    return { queued: null, failure: f, outcome, held: outcome === "refused" ? "" : referenceAfter(key, f) };
+  }
 }
 
 /**

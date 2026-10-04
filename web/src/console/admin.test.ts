@@ -188,7 +188,7 @@ describe("occurrence", () => {
     expect(deadlinePreview(null)).toBeNull();
   });
 
-  it("calls a refusal refused and no answer, a 502 or a 504 unknown", () => {
+  it("calls only a 4xx with a problem refused; no answer, any 5xx or a 4xx without a problem unknown", () => {
     const f = (status: number, problem: boolean): CallFailure => ({
       status,
       problem: problem ? { type: "", title: "x", status, detail: null, instance: null, errors: [] } : null,
@@ -197,10 +197,15 @@ describe("occurrence", () => {
       fieldErrors: [],
     });
     expect(outcomeAfter(f(400, true))).toBe("refused");
-    expect(outcomeAfter(f(503, true))).toBe("refused");
+    expect(outcomeAfter(f(409, true))).toBe("refused");
+    expect(outcomeAfter(f(413, true))).toBe("refused");
+    // A 500 or a 503 may come after the report was committed: never a blind re-send.
+    expect(outcomeAfter(f(500, true))).toBe("unknown");
+    expect(outcomeAfter(f(503, true))).toBe("unknown");
     expect(outcomeAfter(f(0, false))).toBe("unknown");
     expect(outcomeAfter(f(502, true))).toBe("unknown");
     expect(outcomeAfter(f(504, true))).toBe("unknown");
+    expect(outcomeAfter(f(404, false))).toBe("unknown");
   });
 });
 
