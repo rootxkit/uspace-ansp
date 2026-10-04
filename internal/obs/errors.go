@@ -37,7 +37,10 @@ const maxStackBytes = 8 << 10
 // cause the handler noted (apierr.NoteCause, apierr.WriteInternal; "not
 // noted" when it noted none). A handler panic is recovered, counted
 // (CounterPanics), logged with its stack and answered 500 internal when
-// nothing was written yet; http.ErrAbortHandler is passed on. Neither
+// nothing was written yet; when the header was already written, the
+// response is aborted with http.ErrAbortHandler so the client sees a
+// transport error, not a truncated answer. A handler's own
+// http.ErrAbortHandler is passed on, not counted. Neither
 // the query, the headers nor the body is logged: they may hold
 // credentials.
 func ServerErrors(logger *slog.Logger, counters *core.Counters) func(http.Handler) http.Handler {
@@ -71,10 +74,18 @@ func ServerErrors(logger *slog.Logger, counters *core.Counters) func(http.Handle
 				}
 				// The status the client got: 500, or the one written before
 				// the panic (0 for a hijacked connection).
-				if !sw.wrote && !sw.hijacked {
+				begun := sw.wrote
+				if !begun && !sw.hijacked {
 					apierr.Write(sw, http.StatusInternalServerError, apierr.Internal().At(r))
 				}
 				internalError(logger, counters, r, start, sw.status, fmt.Errorf("panic: %v", v), stack)
+				if begun {
+					// The status and maybe part of the body are out: finishing
+					// the response would hand the client a truncated success.
+					// net/http's own abort closes the connection instead, so
+					// the client sees a transport error; it is logged above.
+					panic(http.ErrAbortHandler) //nolint:forbidigo // aborts the response already begun
+				}
 			}()
 			next.ServeHTTP(sw, r)
 		})

@@ -40,6 +40,8 @@ func errorsMux() *http.ServeMux {
 	mux.HandleFunc("GET /v1/panic", func(http.ResponseWriter, *http.Request) { panic("a nil map") })
 	mux.HandleFunc("GET /v1/panic-after-write", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
+		_, _ = io.WriteString(w, `{"half":`)
+		_ = http.NewResponseController(w).Flush()
 		panic("half way")
 	})
 	return mux
@@ -114,7 +116,9 @@ func TestServerErrorsLeavesOtherAnswers(t *testing.T) {
 }
 
 // A panic is recovered as 500 internal, logged with its stack and
-// counted; one after the header is written keeps that status.
+// counted; one after the header is written is logged with that status,
+// counted, and aborts the connection so the client sees a transport
+// error, not a truncated 200.
 func TestServerErrorsRecoversAPanic(t *testing.T) {
 	logs := &syncBuffer{}
 	var c core.Counters
@@ -135,14 +139,19 @@ func TestServerErrorsRecoversAPanic(t *testing.T) {
 		c.Get(CounterPanics) != 1 || c.Get(CounterInternalErrors) != 1 {
 		t.Fatalf("panics %d, internal %d:\n%s", c.Get(CounterPanics), c.Get(CounterInternalErrors), log)
 	}
+	// The header and half a body are on the wire when the handler
+	// panics: the client must not read that as a complete 200.
 	resp, err = http.Get(srv.URL + "/v1/panic-after-write")
-	if err != nil {
-		t.Fatal(err)
+	if err == nil {
+		body, err = io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		if err == nil {
+			t.Fatalf("after write: a complete %d %q, no transport error", resp.StatusCode, body)
+		}
 	}
-	_ = resp.Body.Close()
-	if resp.StatusCode != http.StatusOK || c.Get(CounterPanics) != 2 || !strings.Contains(logs.String(), `"status":200,"duration_ms"`) ||
+	if c.Get(CounterPanics) != 2 || c.Get(CounterInternalErrors) != 2 || !strings.Contains(logs.String(), `"status":200,"duration_ms"`) ||
 		!strings.Contains(logs.String(), "panic: half way") {
-		t.Fatalf("after write: %d, panics %d", resp.StatusCode, c.Get(CounterPanics))
+		t.Fatalf("after write: panics %d, internal %d:\n%s", c.Get(CounterPanics), c.Get(CounterInternalErrors), logs.String())
 	}
 }
 
