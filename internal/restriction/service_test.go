@@ -617,3 +617,50 @@ func TestSnapshot(t *testing.T) {
 		t.Fatalf("a snapshot of 5 restrictions made %d reads; want 2", f.repo.reads)
 	}
 }
+
+// An Idempotency-Key outside the contract's shape (api/openapi.yaml
+// IdempotencyKey, the restrictions.idempotency_key check) is refused 400
+// restriction_invalid naming the header, counted, with nothing stored
+// and nothing published. The key is the one uspace-lab's runner sent in
+// ussp-wp12-restriction: its ${time:0} was never expanded in a header,
+// so the database's check refused the insert and the API answered a
+// bare 500 with no log line. Paired with a key of the contract's shape,
+// the same plan is stored.
+func TestPlanIdempotencyKeyShape(t *testing.T) {
+	for _, tc := range []struct {
+		name, key string
+		refused   bool
+	}{
+		{"runner's literal placeholder", "uspace-lab-20261004-systems-rerun-wp12-plan-${time:0}", true},
+		{"empty", "", true},
+		{"space", "console 7f3a9c", true},
+		{"non-ASCII", "console-\u00e9", true},
+		{"129 characters", strings.Repeat("k", 129), true},
+		{"expanded runner key", "uspace-lab-20261004-systems-rerun-wp12-plan-2026-10-04T04:03:02Z", false},
+		{"128 characters", strings.Repeat("k", 128), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFixture(t)
+			ctx := context.Background()
+			key := &Idempotency{ActorID: supervisor.ID, Key: tc.key, SHA256: Hash([]byte("body"))}
+			_, _, err := f.svc.Plan(ctx, supervisor, input(t0, t0.Add(time.Hour)), PlanOptions{Idempotency: key})
+			if !tc.refused {
+				if err != nil || len(f.repo.rs) != 1 || len(f.bus.msgs) != 1 {
+					t.Fatalf("a key of the contract's shape: %v, %d stored", err, len(f.repo.rs))
+				}
+				return
+			}
+			rf := refusalOf(t, err)
+			if rf.Status != 400 || rf.Slug != SlugInvalid || !hasField(rf, "Idempotency-Key", "1 to 128 characters") {
+				t.Fatalf("refusal %+v", rf)
+			}
+			if len(f.repo.rs) != 0 || len(f.bus.msgs) != 0 || len(f.repo.events) != 0 {
+				t.Fatalf("something was stored or published: %d %d %d", len(f.repo.rs), len(f.bus.msgs), len(f.repo.events))
+			}
+			c := f.svc.Counters()
+			if c.Get(CounterRefused) != 1 || c.Get(CounterRefused+"_"+SlugInvalid) != 1 {
+				t.Fatalf("refusal not counted by reason: %v", c.Snapshot())
+			}
+		})
+	}
+}

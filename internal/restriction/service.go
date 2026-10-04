@@ -106,8 +106,10 @@ type VersionHook interface {
 
 // Counters of the service (E-09).
 const (
-	CounterPlanned              = "restriction_planned"
-	CounterTransitions          = "restriction_transitions"
+	CounterPlanned     = "restriction_planned"
+	CounterTransitions = "restriction_transitions"
+	// CounterRefused counts every refused plan or transition; the same
+	// refusal is counted again under CounterRefused_<slug>, its reason.
 	CounterRefused              = "restriction_refused"
 	CounterScheduled            = "restriction_activation_scheduled"
 	CounterScheduledActivations = "restriction_scheduled_activations"
@@ -177,6 +179,16 @@ type PlanOptions struct {
 // account: the same key and body answer the restriction first created
 // (replay true), another body under the key is 409.
 func (s *Service) Plan(ctx context.Context, actor Actor, in Input, opt PlanOptions) (Restriction, bool, error) {
+	// The key is judged before the transaction: one of another shape
+	// would reach the restrictions.idempotency_key check, which refuses
+	// the insert as a database error, not as a refusal.
+	if opt.Idempotency != nil {
+		if fe := CheckIdempotencyKey(opt.Idempotency.Key); fe != nil {
+			err := invalid(fe)
+			s.countRefusal(err)
+			return Restriction{}, false, err
+		}
+	}
 	var first string
 	var replay bool
 	var pub []Version
@@ -625,6 +637,7 @@ func (s *Service) countRefusal(err error) {
 	var r *Refusal
 	if errors.As(err, &r) {
 		s.counters.Inc(CounterRefused)
+		s.counters.Inc(CounterRefused + "_" + r.Slug)
 	}
 }
 

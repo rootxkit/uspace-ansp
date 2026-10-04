@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -76,6 +77,20 @@ func refuse(status int, slug, detail string, fields ...*core.FieldError) *Refusa
 
 func invalid(fields ...*core.FieldError) *Refusal {
 	return refuse(400, SlugInvalid, "the restriction is refused; nothing was stored", fields...)
+}
+
+// idempotencyKeyPattern is the contract's Idempotency-Key
+// (api/openapi.yaml IdempotencyKey) and the restrictions.idempotency_key
+// check of migration 0030.
+var idempotencyKeyPattern = regexp.MustCompile(`^[A-Za-z0-9._:-]{1,128}$`)
+
+// CheckIdempotencyKey is nil for a key of the contract's shape, else the
+// field problem (the value is not echoed).
+func CheckIdempotencyKey(key string) *core.FieldError {
+	if idempotencyKeyPattern.MatchString(key) {
+		return nil
+	}
+	return core.Fieldf("Idempotency-Key", "must be 1 to 128 characters of A-Z, a-z, 0-9, '.', '_', ':' or '-'")
 }
 
 // Input is a restriction to plan, as the console or a request gives it.
