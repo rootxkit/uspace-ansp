@@ -3,23 +3,32 @@
 Next.js (App Router, `output: 'standalone'`) on the shared kit
 [`uspace-ui`](https://github.com/rootxkit/uspace-ui), pinned to one
 GitHub Release tarball (`0.1.0-rc.1`). It plans, activates, extends,
-ends and cancels restrictions through the API and shows what the API
-says; it judges nothing: no geometry or geodesy library, no database, no
-NATS, no key (`docs/PLAN.md` D9; the lint rules in `eslint-rules/` and
-the bundle check enforce it). It never commands an aircraft.
+ends and cancels restrictions through the API, shows the manned traffic
+picture and the Annex V coordination inbox, and holds the source
+switches, the policy, the audit view and the occurrence report; it shows
+what the API and manned-feed say and judges nothing: no geometry or
+geodesy library, no database, no NATS, no key, no arithmetic on an
+altitude (`docs/PLAN.md` D9; the lint rules in `eslint-rules/`, the
+bundle check and `src/console/altitude.test.ts` enforce it). It never
+commands an aircraft.
 
 ```
 app/[locale]/login/            the sign-in with MFA (enrolment QR at a first sign-in)
 app/[locale]/(signed-in)/      restrictions, restrictions/new (the map editor),
-                               restrictions/<id>, requests, adapters
+                               restrictions/<id>, requests, adapters (WP-11);
+                               picture, inbox, occurrences/new, sources,
+                               policy, audit (WP-12)
 app/%5Fbff/                    the three BFF routes: /_bff/login, /_bff/logout, /_bff/api/*
 src/bff/handlers.ts            the BFF, on the kit's auth/server helpers
 src/api/                       generated types (uspace-ui-gen-api) and the typed client
-src/console/                   the pages, the status bar and their pure helpers
+src/console/                   the pages, the status bar and their pure helpers;
+                               manned.ts (the frame reducer), stream.ts (the
+                               manned stream client), inbox.ts, InboxProvider.tsx
 src/i18n/                      ka.json, en.json (every display string)
 eslint-rules/                  no-geometry-import, no-hardcoded-string, no-server-business-logic
 test/mock-api.mjs              the Playwright fixture server (stands in for Caddy and the API)
-test/e2e/                      the smoke run, and the screenshots run
+test/e2e/                      the smoke runs (smoke.spec.ts WP-11, console.spec.ts
+                               WP-12), and the screenshots run
 docs/screenshots/              every page in ka and en against the fixture server
 ```
 
@@ -66,14 +75,31 @@ The BFF is three routes and nothing else, on the kit's helpers:
 |---|---|
 | `POST /_bff/login` | `{username, password}` → `POST /v1/auth/login`; the API's challenge is sealed (AES-GCM under `WEB_MFA_CHALLENGE_SECRET`) into the `HttpOnly` `uspace_mfa` cookie (`Path=/_bff`) and the page gets `{status: "mfa_required", enrolment?}`. Then `{username, otp}` → `POST /v1/auth/mfa {mfa_token, code}`; its session sets `uspace_session` (`HttpOnly; Secure; SameSite=Strict`) and the readable `uspace_csrf`. The sign-in requires a same-origin `Origin`. |
 | `POST /_bff/logout` | the CSRF pair checked, `POST /v1/auth/logout` with the bearer, both cookies cleared whatever the API answers |
-| `/_bff/api/*` | the cookie forwarded as `Authorization: Bearer`; every unsafe method needs `X-CSRF-Token` equal to `uspace_csrf`; only `/v1/restrictions*`, `/v1/restriction-requests*`, `/v1/delivery-alarms*`, `/v1/adapters*`, `/v1/sources*` and `/v1/auth/me` are reached. An `Idempotency-Key` of the contract's shape is passed on `POST /v1/restrictions` (the kit forwards a fixed header list without it). |
+| `/_bff/api/*` | the cookie forwarded as `Authorization: Bearer`; every unsafe method needs `X-CSRF-Token` equal to `uspace_csrf`; only `/v1/restrictions*`, `/v1/restriction-requests*`, `/v1/delivery-alarms*`, `/v1/adapters*`, `/v1/sources*`, `/v1/coordination/inbox*`, `/v1/occurrences`, `/v1/policy`, `/v1/audit` and `/v1/auth/me` are reached (not the machine intake `/v1/coordination/notices`). An `Idempotency-Key` of the contract's shape is passed on `POST /v1/restrictions` (the kit forwards a fixed header list without it). |
 
 The BFF never verifies a token: the API decides every request. There is
-no ticket route: the restriction stream `WS /v1/restrictions/stream` is
-opened same-origin and the session cookie rides the upgrade (the API
-checks `Origin` against `ANSP_WS_ALLOWED_ORIGINS`); a `4401` close, like
-a `401` answer, is shown as "signed out, sign in again". The signed-in
-layout reads the cookie's claims without verification
+no ticket route: the three streams are opened same-origin and the
+session cookie rides the upgrade (`Origin` is checked against the
+allow-list): `WS /v1/restrictions/stream` and `WS
+/v1/coordination/stream` on api, shared by every signed-in page (the
+status bar says whether each is live and how many notices are escalated
+or awaiting), and `WS /v1/manned-traffic/stream` on manned-feed, opened
+by the picture page with `console/subscribe/v1 {bbox, layers:
+[manned]}` from the kit's bbox hook. A `4401` close of any of them, like
+a `401` answer, is shown as "signed out, sign in again".
+
+The manned stream runs on `src/console/stream.ts`, not the kit's
+`useFeed`: the kit `0.1.0-rc.1` passes on neither the status frame's
+`adapters[]` nor the members of a manned aircraft the picture needs
+(`docs/PLAN.md` section 15 row 51). It reuses the kit's URL rule, frame
+and status parsers and reconnect backoff. The picture keeps each
+aircraft's last sample by `icao24`: an older sample is dropped and
+counted, the feed's ageing (stale, source_disabled) at the sample's own
+instant is applied, an aircraft the feed still calls live is drawn stale
+once its age reaches the status frame's `stale_after_s`, and nothing is
+aged before a valid status frame gives that threshold.
+
+The signed-in layout reads the cookie's claims without verification
 (`sessionDisplay`, display only) and `GET /v1/auth/me` for the account.
 
 ## Running against compose
