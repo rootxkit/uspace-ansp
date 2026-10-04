@@ -1,9 +1,7 @@
 package cis
 
 import (
-	"bytes"
 	"context"
-	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -60,10 +58,12 @@ const reasonNoPublisherKeys = "no publisher keys are configured (ANSP_CIS_PUBLIS
 // provenance reads version v as its publisher sent it (GET
 // /v1/{dataset}/versions/{v}) and verifies X-Publisher-Signature over
 // those bytes with the key of the dataset's publisher (spec 06 T4). The
-// bytes installed are v.Body, read from the current path, so they must
-// be exactly the bytes the signature covers: a CISP or a proxy that
-// serves a signed document on one path and other bytes on the other is
-// held (B-1 of the 2026-10 audit). It returns an *UntrustedError when the signature is missing or does not
+// bytes installed are v.Body, read from the current path, which the
+// CISP serves as its own snapshot (top-level cis_* members, its own
+// metadata), so they must carry exactly the content the signature
+// covers (signedMatches): a CISP or a proxy that serves a signed
+// document on one path and other features on the other is held (B-1 of
+// the 2026-10 audit). It returns an *UntrustedError when the signature is missing or does not
 // verify, and another error when the version could not be read (a pull
 // failure: nothing is held, the next pull tries again).
 func provenance(ctx context.Context, c *Client, pubs PublisherVerifier, v *Version) error {
@@ -83,10 +83,6 @@ func provenance(ctx context.Context, c *Client, pubs PublisherVerifier, v *Versi
 	if f.Version != 0 && f.Version != v.Number {
 		return untrusted("the CISP served version %d for version %d", f.Version, v.Number)
 	}
-	if !bytes.Equal(f.Body, v.Body) {
-		return untrusted("the bytes at /v1/%s and at /v1/%s/versions/%d differ (sha256 %x, %x)",
-			v.Dataset, v.Dataset, v.Number, sha256.Sum256(v.Body), sha256.Sum256(f.Body))
-	}
 	if f.PublisherSignature == "" {
 		return untrusted("no %s", HeaderPublisherSignature)
 	}
@@ -97,6 +93,9 @@ func provenance(ctx context.Context, c *Client, pubs PublisherVerifier, v *Versi
 	}
 	if f.PublisherKID != "" && f.PublisherKID != sig.KID {
 		return untrusted("%s names %q, the signature's kid is %q", HeaderPublisherKID, short(f.PublisherKID), sig.KID)
+	}
+	if reason := signedMatches(v, f.Body); reason != "" {
+		return untrusted("%s (at /v1/%s and /v1/%s/versions/%d)", reason, v.Dataset, v.Dataset, v.Number)
 	}
 	return nil
 }
