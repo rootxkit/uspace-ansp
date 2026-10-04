@@ -170,3 +170,29 @@ export function outcomeAfter(f: CallFailure): "refused" | "unknown" {
   const answered = f.status >= 400 && f.problem !== null && f.status !== 502 && f.status !== 504;
   return answered ? "refused" : "unknown";
 }
+
+/**
+ * One send at a time, decided synchronously: React's busy state disables
+ * the button only after a render, so a double click or an Enter before
+ * it would send the report twice. `run` returns false, sending nothing,
+ * while a send is in flight; the flight ends when the send settles,
+ * failed included.
+ */
+export class SingleFlight {
+  private inFlight = false;
+
+  get busy(): boolean {
+    return this.inFlight;
+  }
+
+  async run(send: () => Promise<unknown>): Promise<boolean> {
+    if (this.inFlight) return false;
+    this.inFlight = true;
+    try {
+      await send();
+      return true;
+    } finally {
+      this.inFlight = false;
+    }
+  }
+}

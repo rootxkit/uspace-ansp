@@ -26,6 +26,7 @@ import {
   occurrenceBody,
   outcomeAfter,
   REPORTER_REF_MAX_CHARS,
+  SingleFlight,
   type ApiOccurrenceQueued,
   type FormProblem,
   type OccurrenceForm,
@@ -80,6 +81,8 @@ export function OccurrencePage() {
   const [resendAnyway, setResendAnyway] = useState(false);
   const [busy, setBusy] = useState(false);
   const [queued, setQueued] = useState<ApiOccurrenceQueued | null>(null);
+  // Decides "one send at a time" before React has rendered busy.
+  const [flight] = useState(() => new SingleFlight());
 
   if (!maySupervise(role)) return <Empty textKey="ansp.occurrence.role" testId="occurrence-role" />;
 
@@ -90,33 +93,34 @@ export function OccurrencePage() {
   };
   const deadline = deadlinePreview(form.became_aware_at);
 
-  const submit = async () => {
-    setFailure(null);
-    const built = occurrenceBody(form);
-    if ("problems" in built) {
-      setProblems(built.problems);
-      return;
-    }
-    setProblems([]);
-    setBusy(true);
-    try {
-      const { data } = await client.POST("/v1/occurrences", { body: built.body });
-      if (data !== undefined) {
-        setQueued(data);
-        setForm(emptyForm());
-        setTyped({ occurred_at: "", became_aware_at: "", min_at: "" });
-        setUnknown(false);
-        setResendAnyway(false);
+  const submit = () =>
+    flight.run(async () => {
+      setFailure(null);
+      const built = occurrenceBody(form);
+      if ("problems" in built) {
+        setProblems(built.problems);
+        return;
       }
-    } catch (err: unknown) {
-      const f = failureOf(err);
-      setFailure(f);
-      setUnknown(outcomeAfter(f) === "unknown");
-      setResendAnyway(false);
-    } finally {
-      setBusy(false);
-    }
-  };
+      setProblems([]);
+      setBusy(true);
+      try {
+        const { data } = await client.POST("/v1/occurrences", { body: built.body });
+        if (data !== undefined) {
+          setQueued(data);
+          setForm(emptyForm());
+          setTyped({ occurred_at: "", became_aware_at: "", min_at: "" });
+          setUnknown(false);
+          setResendAnyway(false);
+        }
+      } catch (err: unknown) {
+        const f = failureOf(err);
+        setFailure(f);
+        setUnknown(outcomeAfter(f) === "unknown");
+        setResendAnyway(false);
+      } finally {
+        setBusy(false);
+      }
+    });
 
   const timeField = (k: "occurred_at" | "became_aware_at" | "min_at", labelKey: string, required: boolean) => (
     <div className="flex flex-col gap-0.5">
@@ -150,7 +154,7 @@ export function OccurrencePage() {
         className="flex flex-col gap-3"
         onSubmit={(e) => {
           e.preventDefault();
-          if (!unknown || resendAnyway) void submit();
+          if (!busy && (!unknown || resendAnyway)) void submit();
         }}
       >
         <div className="grid gap-3 md:grid-cols-2">

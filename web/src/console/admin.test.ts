@@ -9,7 +9,7 @@ import { describe, expect, it } from "vitest";
 import type { CallFailure } from "../api/client";
 import type { ApiAdapter, ApiSourceControl } from "./adapters";
 import { auditQuery, exportDocument, exportFileName, shortHash, type ApiAuditEvent } from "./audit";
-import { deadlinePreview, emptyForm, occurrenceBody, outcomeAfter, type OccurrenceForm } from "./occurrence";
+import { deadlinePreview, emptyForm, occurrenceBody, outcomeAfter, SingleFlight, type OccurrenceForm } from "./occurrence";
 import { changes, formOf, historyVersions, HISTORY_VERSIONS, policyAuditEntity, policyBody, unitOf, type ApiPolicyUpdate } from "./policy";
 import { isEnabled, switchAuditEntity, switchBody, switchRows } from "./sources";
 
@@ -201,5 +201,45 @@ describe("occurrence", () => {
     expect(outcomeAfter(f(0, false))).toBe("unknown");
     expect(outcomeAfter(f(502, true))).toBe("unknown");
     expect(outcomeAfter(f(504, true))).toBe("unknown");
+  });
+});
+
+describe("the occurrence send's single flight", () => {
+  it("runs one send at a time: a second submit while one is in flight sends nothing", async () => {
+    const flight = new SingleFlight();
+    let release: () => void = () => undefined;
+    let sends = 0;
+    const send = () => {
+      sends += 1;
+      return new Promise<void>((r) => {
+        release = r;
+      });
+    };
+    const first = flight.run(send);
+    expect(flight.busy).toBe(true);
+    expect(await flight.run(send)).toBe(false);
+    expect(sends).toBe(1);
+    release();
+    expect(await first).toBe(true);
+    expect(flight.busy).toBe(false);
+  });
+
+  it("takes the next send once the one in flight settled, failed included", async () => {
+    const flight = new SingleFlight();
+    let sends = 0;
+    await expect(
+      flight.run(() => {
+        sends += 1;
+        return Promise.reject(new Error("refused"));
+      }),
+    ).rejects.toThrow("refused");
+    expect(flight.busy).toBe(false);
+    expect(
+      await flight.run(() => {
+        sends += 1;
+        return Promise.resolve();
+      }),
+    ).toBe(true);
+    expect(sends).toBe(2);
   });
 });
