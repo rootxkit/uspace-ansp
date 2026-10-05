@@ -46,11 +46,49 @@ func ReasonOf(op string) (cispclient.ChangeReason, error) {
 	return "", fmt.Errorf("op %q has no change reason", op)
 }
 
-// PullURL is this system's GET /v1/restrictions/{id} on
-// ANSP_PUBLIC_BASE_URL exactly (the receivers pull it only when its host
-// is the ANSP's configured base host, M5).
+// PullURL is this system's GET /v1/restrictions/{id}/direct on
+// ANSP_PUBLIC_BASE_URL exactly: the signed restriction/direct/v1 of the
+// restriction's current version (the receivers pull it only when its
+// host is the ANSP's configured base host, M5).
 func PullURL(publicBase, restrictionID string) string {
-	return strings.TrimRight(publicBase, "/") + "/v1/restrictions/" + restrictionID
+	return strings.TrimRight(publicBase, "/") + "/v1/restrictions/" + restrictionID + "/direct"
+}
+
+// DirectSchema names the body of GET /v1/restrictions/{id}/direct.
+const DirectSchema = "restriction/direct/v1"
+
+// DirectRestriction is restriction/direct/v1 (api/openapi.yaml
+// DirectRestriction): a restriction's version as a receiver of the
+// degraded direct path applies it. The version member is ansp_version
+// (M4).
+type DirectRestriction struct {
+	Schema           string          `json:"schema"`
+	ID               string          `json:"id"`
+	AnspRef          string          `json:"ansp_ref"`
+	AnspVersion      int64           `json:"ansp_version"`
+	Identifier       string          `json:"identifier"`
+	UspaceAirspaceID string          `json:"uspace_airspace_id"`
+	State            string          `json:"state"`
+	StartsAt         string          `json:"starts_at"`
+	EndsAt           string          `json:"ends_at"`
+	ChangedAt        string          `json:"changed_at"`
+	Feature          json.RawMessage `json:"feature"`
+}
+
+// BuildDirect is the restriction/direct/v1 body of version v: the bytes
+// GET /v1/restrictions/{id}/direct signs and serves.
+func BuildDirect(v VersionInfo) ([]byte, error) {
+	if v.RestrictionID == "" || v.AnspRef == "" || v.Identifier == "" || v.Version < 1 || len(v.Feature) == 0 {
+		return nil, errors.New("the version has no id, ansp_ref, identifier, version or feature")
+	}
+	if !json.Valid(v.Feature) {
+		return nil, errors.New("the version's feature is not JSON")
+	}
+	return json.Marshal(DirectRestriction{
+		Schema: DirectSchema, ID: v.RestrictionID, AnspRef: v.AnspRef, AnspVersion: v.Version, Identifier: v.Identifier,
+		UspaceAirspaceID: v.UspaceAirspaceID, State: v.State, StartsAt: restriction.Stamp(v.StartsAt),
+		EndsAt: restriction.Stamp(v.EndsAt), ChangedAt: restriction.Stamp(v.ChangedAt), Feature: v.Feature,
+	})
 }
 
 // BuildChange is the cis/change/v1 record of a degraded direct delivery
@@ -58,7 +96,10 @@ func PullURL(publicBase, restrictionID string) string {
 // is the delivery id, dataset restrictions, version the ansp_version,
 // etag "<ansp_ref>:<ansp_version>", feature_ids the identifier (in
 // removed_ids too once the restriction is ended or cancelled), at the
-// version's change, pull_url this system's read of the restriction.
+// version's change, pull_url this system's signed restriction/direct/v1
+// of the restriction (PullURL). The record is the CISP's closed
+// cis/change/v1, so the version member carries the ansp_version; a
+// receiver tells it from a CIS dataset version by its issuer.
 func BuildChange(v VersionInfo, op, deliveryID, publicBase string) ([]byte, error) {
 	reason, err := ReasonOf(op)
 	if err != nil {

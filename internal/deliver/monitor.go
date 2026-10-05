@@ -64,6 +64,10 @@ type MonitorReport struct {
 // AlarmDetail is the alarm's text (C-12: "not yet published to the CISP
 // since T", never "lost").
 func AlarmDetail(v VersionInfo) string {
+	if v.State == string(restriction.StateEnded) || v.State == string(restriction.StateCancelled) {
+		return fmt.Sprintf("restriction %s (version %d) is %s and the change is not yet published to the CISP since %s; delivering it directly to the USSPs and the authority",
+			v.Identifier, v.Version, v.State, restriction.Stamp(v.ChangedAt))
+	}
 	return fmt.Sprintf("restriction %s (version %d) is active and not yet published to the CISP since %s; delivering it directly to the USSPs and the authority",
 		v.Identifier, v.Version, restriction.Stamp(v.ChangedAt))
 }

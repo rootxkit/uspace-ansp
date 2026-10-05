@@ -1064,6 +1064,48 @@ components:
       type: string
       description: planned, active, ended or cancelled (02 F2, ATS.TR.237(b)).
       enum: [planned, active, ended, cancelled]
+    DirectRestriction:
+      type: object
+      additionalProperties: false
+      description: |
+        restriction/direct/v1: a restriction's current version as the
+        pull_url of a degraded direct delivery serves it (02 F2, M5). The
+        version member is ansp_version, never version (M4); the
+        cis/change/v1 record that named it carries the same number as its
+        version and "<ansp_ref>:<ansp_version>" as its etag. Owned here
+        (the HTTP body of this API, 04 §1).
+      required: [schema, id, ansp_ref, ansp_version, identifier, uspace_airspace_id, state, starts_at, ends_at, changed_at, feature]
+      properties:
+        schema:
+          type: string
+          enum: [restriction/direct/v1]
+        id:
+          $ref: "#/components/schemas/ULID"
+        ansp_ref:
+          type: string
+          minLength: 1
+          maxLength: 128
+        ansp_version:
+          type: integer
+          format: int64
+          minimum: 1
+        identifier:
+          type: string
+          pattern: "^DAR[0-9A-Z]{4}$"
+        uspace_airspace_id:
+          type: string
+          minLength: 1
+          maxLength: 7
+        state:
+          $ref: "#/components/schemas/RestrictionState"
+        starts_at:
+          $ref: "#/components/schemas/Timestamp"
+        ends_at:
+          $ref: "#/components/schemas/Timestamp"
+        changed_at:
+          $ref: "#/components/schemas/Timestamp"
+        feature:
+          $ref: "#/components/schemas/Ed318Feature"
     LngLat:
       type: array
       description: A GeoJSON position [lng, lat] in WGS84 degrees (SRID 4326).
@@ -2915,9 +2957,9 @@ paths:
       x-auth: token:ansp.coordination or session
       description: |
         The restriction, its current ED-318 feature, its F3548 constraint
-        reference and its deliveries summary (ATS.TR.237(b)). This is
-        also the pull_url of a degraded direct delivery (02 F2 failure
-        rule, M5).
+        reference and its deliveries summary (ATS.TR.237(b)). The
+        pull_url of a degraded direct delivery is
+        /v1/restrictions/{id}/direct, not this.
       security:
         - consoleSession: []
         - ecosystemToken: [ansp.coordination]
@@ -2935,6 +2977,61 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+
+  /v1/restrictions/{id}/direct:
+    get:
+      operationId: getRestrictionDirect
+      tags: [restrictions]
+      summary: The restriction as its degraded direct delivery names it
+      x-process: api
+      x-spec: 02 F2
+      x-auth: public
+      description: |
+        The pull_url of a degraded direct delivery (02 F2 failure rule,
+        M5): the restriction's current version as a
+        restriction/direct/v1 document, with its ansp_version (M4), its
+        state (an end or a cancel is delivered too) and its ED-318
+        feature, signed with this system's delivery key as a detached JWS
+        in X-JWS-Signature (02 §1 Signatures; RFC 7797, b64 false), the
+        key in /.well-known/jwks.json. The receivers verify the signature
+        with the ANSP's publisher keys and apply the version only when its
+        ansp_version is above the one they hold for the restriction.
+        Public: the content is what the CISP serves publicly once it
+        holds the version, and the signature, not the transport, is what
+        a receiver trusts; the rate limit is the edge proxy's. 503 while
+        no delivery key is configured: an unsigned document is never
+        served.
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/RestrictionID"
+      responses:
+        "200":
+          description: The current version, signed.
+          headers:
+            X-JWS-Signature:
+              description: Detached compact JWS over the body's bytes (RS256, b64 false, kid of /.well-known/jwks.json).
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DirectRestriction"
+              example:
+                schema: restriction/direct/v1
+                id: 01K6P0A1B2C3D4E5F6G7H8J9KM
+                ansp_ref: ansp-01:01K6P0A1B2C3D4E5F6G7H8J9KM
+                ansp_version: 2
+                identifier: DAR7K2Q
+                uspace_airspace_id: GEOTU01
+                state: active
+                starts_at: "2026-10-02T12:00:00.000Z"
+                ends_at: "2026-10-02T16:00:00.000Z"
+                changed_at: "2026-10-02T12:00:00.000Z"
+                feature: *Ed318Feature
         "404":
           $ref: "#/components/responses/NotFound"
         "503":

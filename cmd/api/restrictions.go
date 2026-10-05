@@ -256,6 +256,43 @@ func (s apiServer) GetRestriction(w http.ResponseWriter, r *http.Request, id gen
 	writeJSON(w, http.StatusOK, rs.restrictionJSON(r.Context(), res))
 }
 
+// directUnavailableRetry is the Retry-After of GET
+// /v1/restrictions/{id}/direct while no delivery key is configured.
+const directUnavailableRetry = 60 * time.Second
+
+// GetRestrictionDirect serves GET /v1/restrictions/{id}/direct, the
+// pull_url of a degraded direct delivery (02 F2, M5): the current
+// version as restriction/direct/v1, signed with the delivery key in
+// X-JWS-Signature. It fails closed: without the outbox or the key it
+// answers 503 and never serves an unsigned document.
+func (s apiServer) GetRestrictionDirect(w http.ResponseWriter, r *http.Request, id gen.RestrictionID) {
+	if s.rs == nil || s.rs.dl == nil || s.rs.dl.repo == nil || s.rs.dl.signer == nil {
+		apierr.WriteError(w, r, apierr.Unavailable(directUnavailableRetry,
+			"no delivery key is configured on this instance (ANSP_DELIVERY_KEY_FILE): the direct restriction is not served unsigned"))
+		return
+	}
+	v, err := s.rs.dl.repo.Version(r.Context(), id, 0)
+	if err != nil {
+		refusal(w, r, err)
+		return
+	}
+	body, err := deliver.BuildDirect(v)
+	if err != nil {
+		apierr.WriteInternal(w, r, err)
+		return
+	}
+	sig, err := s.rs.dl.signer.SignDetached(body, time.Now())
+	if err != nil {
+		apierr.WriteInternal(w, r, err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set(deliver.HeaderSignature, sig)
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(body)
+}
+
 // ListRestrictionVersions serves GET /v1/restrictions/{id}/versions.
 func (s apiServer) ListRestrictionVersions(w http.ResponseWriter, r *http.Request, id gen.RestrictionID) {
 	rs, _, ok := s.restrictions(w, r)

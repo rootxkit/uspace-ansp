@@ -122,6 +122,10 @@ func TestUnimplementedAndRefusals(t *testing.T) {
 		// Sign-in is not configured here: 503 that says so.
 		{"sign-in not configured", "POST", "/v1/auth/login", "", "application/json", `{"username":"a","password":"b"}`, 503, apierr.SlugUnavailable},
 		{"jwks not configured", "GET", "/.well-known/jwks.json", "", "", "", 503, apierr.SlugUnavailable},
+		// The degraded path's pull_url is public and fails closed: no
+		// delivery key, no document (the integration test serves it
+		// signed).
+		{"direct restriction without a key", "GET", "/v1/restrictions/01K6P0A1B2C3D4E5F6G7H8J9KM/direct", "", "", "", 503, apierr.SlugUnavailable},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			a := call(t, h, tc.method, tc.path, tc.token, tc.ctype, tc.body)

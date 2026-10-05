@@ -135,14 +135,21 @@ RETURNING id, target, ansp_version;
 
 -- name: OverdueRestrictions :many
 -- Active restrictions whose current version is not published to the
--- CISP for longer than after_s, without an open alarm at that version.
+-- CISP for longer than after_s, and ended or cancelled ones whose open
+-- alarm is at an earlier version (their active version went out on the
+-- degraded direct path, so their end goes there too, at once), without
+-- an open alarm at that version.
 SELECT r.id, r.ansp_version, v.changed_at,
        COALESCE((SELECT a.id FROM delivery_alarms a
                  WHERE a.restriction_id = r.id AND a.kind = 'cisp_not_published' AND a.cleared_at IS NULL), '')::text AS alarm_id
 FROM restrictions r
 JOIN restriction_versions v ON v.restriction_id = r.id AND v.version = r.ansp_version
-WHERE r.state = 'active' AND COALESCE(r.published_version, 0) < r.ansp_version
-  AND v.changed_at <= clock_timestamp() - make_interval(secs => sqlc.arg(after_s)::float8)
+WHERE COALESCE(r.published_version, 0) < r.ansp_version
+  AND ((r.state = 'active' AND v.changed_at <= clock_timestamp() - make_interval(secs => sqlc.arg(after_s)::float8))
+       OR (r.state IN ('ended', 'cancelled')
+           AND EXISTS (SELECT 1 FROM delivery_alarms a
+                       WHERE a.restriction_id = r.id AND a.kind = 'cisp_not_published' AND a.cleared_at IS NULL
+                         AND a.ansp_version < r.ansp_version)))
   AND NOT EXISTS (SELECT 1 FROM delivery_alarms a
                   WHERE a.restriction_id = r.id AND a.kind = 'cisp_not_published' AND a.cleared_at IS NULL
                     AND a.ansp_version >= r.ansp_version)
@@ -150,10 +157,18 @@ ORDER BY v.changed_at
 LIMIT sqlc.arg(page_size);
 
 -- name: ClearableAlarms :many
+-- Open cisp_not_published alarms whose current version the CISP holds,
+-- or whose restriction is no longer active and whose current version
+-- (its end) has been delivered directly: the alarm stands at that
+-- version and no direct delivery of it is still queued.
 SELECT a.id, a.restriction_id, r.state, r.ansp_version, COALESCE(r.published_version, 0)::bigint AS published_version
 FROM delivery_alarms a JOIN restrictions r ON r.id = a.restriction_id
 WHERE a.kind = 'cisp_not_published' AND a.cleared_at IS NULL
-  AND (r.state <> 'active' OR COALESCE(r.published_version, 0) >= r.ansp_version)
+  AND (COALESCE(r.published_version, 0) >= r.ansp_version
+       OR (r.state <> 'active' AND a.ansp_version >= r.ansp_version
+           AND NOT EXISTS (SELECT 1 FROM deliveries d
+                           WHERE d.kind = 'direct_degraded' AND d.restriction_id = r.id
+                             AND d.ansp_version = r.ansp_version AND d.state = 'queued')))
 ORDER BY a.raised_at
 LIMIT sqlc.arg(page_size);
 

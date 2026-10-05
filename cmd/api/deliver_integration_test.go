@@ -17,6 +17,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -631,7 +632,7 @@ func TestIntegrationDegradedPathAndReconciliation(t *testing.T) {
 		var ch cispclient.Change
 		strict(t, body, &ch)
 		if cl.Audience != p.host() || cl.Subject != r.ID || ch.Reason != cispclient.ChangeReasonRestrictionActivated ||
-			ch.PullUrl != "https://ansp.test/v1/restrictions/"+r.ID || ch.MsgId != cl.JTI || ch.Version != 2 {
+			ch.PullUrl != "https://ansp.test/v1/restrictions/"+r.ID+"/direct" || ch.MsgId != cl.JTI || ch.Version != 2 {
 			t.Fatalf("%s: claims %+v change %+v", p.host(), cl, ch)
 		}
 	}
@@ -712,6 +713,109 @@ func TestIntegrationDegradedPathAndReconciliation(t *testing.T) {
 	}
 	if n := s.deliveries(`SELECT count(*) FROM events WHERE entity_type = 'delivery_alarm' AND entity_id = $1 AND event_type = 'delivery_alarm_acknowledged'`, alarmID); n != 1 {
 		t.Fatalf("%d audit rows", n)
+	}
+}
+
+// The degraded path end to end, as a receiver sees it: with the CISP
+// down, the activation goes out directly, and its pull_url (on this
+// system, no credential) serves the signed restriction/direct/v1 of the
+// version the record named: ansp_version 2, active, the identifier the
+// record listed. The end, still with the CISP down, goes out the same
+// way at once (restriction_ended, version 3) and the pull_url then
+// serves the ended version 3; the alarm clears once it is delivered.
+func TestIntegrationDegradedPathDeliversTheEnd(t *testing.T) {
+	s := newDeliverStack(t)
+	r := s.plan("h2-end")
+	s.cisp.await(t, "/v1/restrictions", 1, 5*time.Second)
+	s.cisp.answer.Store(func(req peerRequest) int {
+		if req.Path == deliver.PathHeartbeat {
+			return http.StatusNoContent
+		}
+		return http.StatusServiceUnavailable
+	})
+	s.op(r.ID, "activate", map[string]string{"reason": "rescue helicopter on scene"})
+	verify := func(p *peer, n int) cispclient.Change {
+		t.Helper()
+		req := p.await(t, deliver.PathNotifications, n, 20*time.Second)
+		v, err := coreauth.NewCompactVerifier(s.ctx, coreauth.CompactConfig{
+			Issuers:   map[string]coreauth.IssuerConfig{"https://ansp.test": {JWKSURL: s.jwksURL()}},
+			Audiences: []string{p.host()}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, body, err := v.Verify(s.ctx, string(req.Body))
+		if err != nil {
+			t.Fatalf("%s refuses the delivery: %v", p.host(), err)
+		}
+		var ch cispclient.Change
+		strict(t, body, &ch)
+		return ch
+	}
+	pull := func(ch cispclient.Change) deliver.DirectRestriction {
+		t.Helper()
+		want := "https://ansp.test/v1/restrictions/" + r.ID + "/direct"
+		if ch.PullUrl != want {
+			t.Fatalf("pull_url %s", ch.PullUrl)
+		}
+		resp, err := http.Get(s.api.URL + strings.TrimPrefix(ch.PullUrl, "https://ansp.test"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		body, _ := io.ReadAll(resp.Body)
+		validateResponse(t, http.MethodGet, "/v1/restrictions/{id}/direct", resp.StatusCode, body)
+		if resp.StatusCode != http.StatusOK || resp.Header.Get("Cache-Control") != "no-store" {
+			t.Fatalf("pull: %d %s", resp.StatusCode, body)
+		}
+		dv, err := coreauth.NewDetachedVerifier(s.ctx, coreauth.DetachedConfig{Publishers: map[string]coreauth.IssuerConfig{"ansp": {JWKSURL: s.jwksURL()}}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := dv.Verify(s.ctx, "ansp", resp.Header.Get(deliver.HeaderSignature), body); err != nil {
+			t.Fatalf("the pulled restriction does not verify with the ANSP's keys: %v", err)
+		}
+		var d deliver.DirectRestriction
+		strict(t, body, &d)
+		if d.Schema != deliver.DirectSchema || d.ID != r.ID || d.AnspVersion != ch.Version || len(ch.FeatureIds) != 1 ||
+			d.Identifier != ch.FeatureIds[0] || ch.Etag != `"`+d.AnspRef+":"+strconv.FormatInt(d.AnspVersion, 10)+`"` {
+			t.Fatalf("direct %+v for change %+v", d, ch)
+		}
+		return d
+	}
+	for _, p := range []*peer{s.ussps[0], s.authority} {
+		ch := verify(p, 1)
+		if ch.Reason != cispclient.ChangeReasonRestrictionActivated || ch.Version != 2 {
+			t.Fatalf("%s: %+v", p.host(), ch)
+		}
+		if d := pull(ch); d.State != "active" {
+			t.Fatalf("state %s", d.State)
+		}
+	}
+	s.op(r.ID, "end", map[string]string{"reason": "rescue complete"})
+	for _, p := range []*peer{s.ussps[0], s.authority} {
+		ch := verify(p, 2)
+		if ch.Reason != cispclient.ChangeReasonRestrictionEnded || ch.Version != 3 || len(ch.RemovedIds) != 1 {
+			t.Fatalf("%s: the end is not delivered directly: %+v", p.host(), ch)
+		}
+		if d := pull(ch); d.State != "ended" {
+			t.Fatalf("state %s", d.State)
+		}
+	}
+	cleared := s.awaitBody(20*time.Second, func(b map[string]any) bool {
+		a, ok := b["alarm"].(map[string]any)
+		return ok && a["kind"] == "cisp_not_published" && a["state"] == "cleared"
+	})["alarm"].(map[string]any)
+	if cleared["clear_reason"] != deliver.CancelNotActive {
+		t.Fatalf("cleared %v", cleared)
+	}
+	// An unknown restriction: 404, never a signed empty document.
+	resp, err := http.Get(s.api.URL + "/v1/restrictions/01K6P0A1B2C3D4E5F6G7H8J9ZZ/direct")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound || resp.Header.Get(deliver.HeaderSignature) != "" {
+		t.Fatalf("unknown restriction: %d", resp.StatusCode)
 	}
 }
 

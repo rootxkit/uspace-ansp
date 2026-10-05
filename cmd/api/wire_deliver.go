@@ -47,6 +47,9 @@ type deliveryAPI struct {
 	repo   deliver.Repo
 	alarms *deliver.Alarms
 	keys   *auth.PublicKeys
+	// signer is the delivery key, nil without ANSP_DELIVERY_KEY_FILE:
+	// GET /v1/restrictions/{id}/direct then answers 503.
+	signer deliver.Signer
 }
 
 // deliverWiring is the outbox side of api (WP-8).
@@ -126,6 +129,7 @@ func wireDeliver(cfg config.Config, db *store.Relational, b *bus.Bus, keys *auth
 			return nil, err
 		}
 		signer = ring
+		w.api.signer = ring
 		logger.Info("delivery key loaded; its public part is in /.well-known/jwks.json", slog.String("kid", ring.ActiveKID()))
 	}
 

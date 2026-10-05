@@ -16,6 +16,24 @@ complete.
 
 ### Fixed
 
+- The degraded direct delivery (02 F2 failure rule, cross-plan M4, M5;
+  system audit 2026-10-05 H-2) was acknowledged by the USSPs and the
+  authority and then discarded: its record's `version` (the
+  restriction's `ansp_version`) was read as a CIS dataset version and
+  skipped, and its `pull_url` (`GET /v1/restrictions/{id}`, which needs
+  `ansp.coordination`) was never followed. Contract, additive: a new
+  public `GET /v1/restrictions/{id}/direct` serves the restriction's
+  current version as `restriction/direct/v1` (`ansp_version`, state,
+  ED-318 feature) signed with the delivery key in `X-JWS-Signature`
+  (`503` without a key, never unsigned), and the `cis/change/v1`
+  record's `pull_url` names it. The record itself is unchanged (the
+  CISP's closed schema: `version` carries the `ansp_version`, `etag`
+  `"<ansp_ref>:<ansp_version>"`). The end or cancel of a restriction
+  whose active version went out directly now goes out directly too, at
+  once; before, the alarm cleared as `restriction_not_active` and the
+  receivers never learnt of the end. The alarm now clears once the end
+  is delivered. `testdata/contract/direct` is the receivers' contract
+  fixture (uspace-ussp, uspace-authority vendor it).
 - A WebSocket upgrade with neither a credential nor an `Origin` was
   refused `403 forbidden` as a browser's cookie upgrade; it is now
   `401 unauthenticated` with `WWW-Authenticate: Bearer`, as a request

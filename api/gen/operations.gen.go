@@ -59,6 +59,7 @@ var Operations = []Operation{
 	{ID: "getRestriction", Method: "GET", Path: "/v1/restrictions/{id}", Pattern: "GET /v1/restrictions/{id}", Tag: "restrictions", Process: "api", Spec: "02 §3 ansp", Auth: "token:ansp.coordination or session", WebSocket: false},
 	{ID: "activateRestriction", Method: "POST", Path: "/v1/restrictions/{id}/activate", Pattern: "POST /v1/restrictions/{id}/activate", Tag: "restrictions", Process: "api", Spec: "ATS.TR.237(b) activation", Auth: "session:watch_supervisor", WebSocket: false},
 	{ID: "cancelRestriction", Method: "POST", Path: "/v1/restrictions/{id}/cancel", Pattern: "POST /v1/restrictions/{id}/cancel", Tag: "restrictions", Process: "api", Spec: "02 F2 states", Auth: "session:watch_supervisor", WebSocket: false},
+	{ID: "getRestrictionDirect", Method: "GET", Path: "/v1/restrictions/{id}/direct", Pattern: "GET /v1/restrictions/{id}/direct", Tag: "restrictions", Process: "api", Spec: "02 F2", Auth: "public", WebSocket: false},
 	{ID: "endRestriction", Method: "POST", Path: "/v1/restrictions/{id}/end", Pattern: "POST /v1/restrictions/{id}/end", Tag: "restrictions", Process: "api", Spec: "ATS.TR.237(b) deactivation", Auth: "session:watch_supervisor", WebSocket: false},
 	{ID: "extendRestriction", Method: "POST", Path: "/v1/restrictions/{id}/extend", Pattern: "POST /v1/restrictions/{id}/extend", Tag: "restrictions", Process: "api", Spec: "ATS.TR.237(b) temporary limitation", Auth: "session:watch_supervisor", WebSocket: false},
 	{ID: "listRestrictionVersions", Method: "GET", Path: "/v1/restrictions/{id}/versions", Pattern: "GET /v1/restrictions/{id}/versions", Tag: "restrictions", Process: "api", Spec: "01 N4, 02 §3 ansp", Auth: "session", WebSocket: false},
@@ -257,6 +258,11 @@ func (Unimplemented) ActivateRestriction(context.Context, ActivateRestrictionReq
 // CancelRestriction answers POST /v1/restrictions/{id}/cancel with a *NotImplementedError.
 func (Unimplemented) CancelRestriction(context.Context, CancelRestrictionRequestObject) (CancelRestrictionResponseObject, error) {
 	return nil, &NotImplementedError{Operation: "cancelRestriction"}
+}
+
+// GetRestrictionDirect answers GET /v1/restrictions/{id}/direct with a *NotImplementedError.
+func (Unimplemented) GetRestrictionDirect(context.Context, GetRestrictionDirectRequestObject) (GetRestrictionDirectResponseObject, error) {
+	return nil, &NotImplementedError{Operation: "getRestrictionDirect"}
 }
 
 // EndRestriction answers POST /v1/restrictions/{id}/end with a *NotImplementedError.

@@ -231,6 +231,12 @@ func (s exampleStub) CancelRestriction(_ context.Context, request gen.CancelRest
 
 func (c canned) VisitCancelRestrictionResponse(w http.ResponseWriter) error { return c.visit(w) }
 
+func (s exampleStub) GetRestrictionDirect(_ context.Context, request gen.GetRestrictionDirectRequestObject) (gen.GetRestrictionDirectResponseObject, error) {
+	return s.answer("getRestrictionDirect", request), nil
+}
+
+func (c canned) VisitGetRestrictionDirectResponse(w http.ResponseWriter) error { return c.visit(w) }
+
 func (s exampleStub) EndRestriction(_ context.Context, request gen.EndRestrictionRequestObject) (gen.EndRestrictionResponseObject, error) {
 	return s.answer("endRestriction", request), nil
 }
