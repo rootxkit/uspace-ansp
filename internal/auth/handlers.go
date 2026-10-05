@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"regexp"
 	"time"
+	"unicode/utf8"
 
 	"github.com/rootxkit/uspace-ansp/internal/apierr"
 )
@@ -76,6 +78,47 @@ func decode(w http.ResponseWriter, r *http.Request, v any) error {
 	return nil
 }
 
+// The bounds of the sign-in bodies, as api/openapi.yaml LoginRequest
+// and MfaRequest declare them (lengths in characters).
+const (
+	maxUsernameChars = 64
+	maxPasswordChars = 1024
+	maxMFATokenChars = 256
+)
+
+var mfaCodePattern = regexp.MustCompile(`^[0-9]{6}$`)
+
+// schemaField is the refusal of one member the contract's schema
+// refuses: missing or empty (every member here is required with
+// minLength 1), or longer than maxChars.
+func schemaField(field, v string, maxChars int) *apierr.FieldProblem {
+	switch {
+	case v == "":
+		return &apierr.FieldProblem{Field: field, Reason: "required"}
+	case utf8.RuneCountInString(v) > maxChars:
+		return &apierr.FieldProblem{Field: field, Reason: "longer than the contract's maximum"}
+	}
+	return nil
+}
+
+// invalidBody is 400 invalid_request naming every field at fault, or
+// nil when there is none. The sign-in operations judge their body
+// against the contract's schema before any credential, limiter or
+// audit (uspace-lab conformance finding C5): a body the schema refuses
+// is not a sign-in attempt.
+func invalidBody(fields ...*apierr.FieldProblem) error {
+	var out []apierr.FieldProblem
+	for _, f := range fields {
+		if f != nil {
+			out = append(out, *f)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return refusal(http.StatusBadRequest, SlugInvalidRequest, "the request is not valid", out...)
+}
+
 func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
@@ -101,6 +144,11 @@ func (h *Handlers) Login(w http.ResponseWriter, r *http.Request) {
 		Password string `json:"password"`
 	}
 	if err := decode(w, r, &in); err != nil {
+		apierr.WriteError(w, r, err)
+		return
+	}
+	if err := invalidBody(schemaField("username", in.Username, maxUsernameChars),
+		schemaField("password", in.Password, maxPasswordChars)); err != nil {
 		apierr.WriteError(w, r, err)
 		return
 	}
@@ -131,6 +179,14 @@ func (h *Handlers) VerifyMFA(w http.ResponseWriter, r *http.Request) {
 		Code     string `json:"code"`
 	}
 	if err := decode(w, r, &in); err != nil {
+		apierr.WriteError(w, r, err)
+		return
+	}
+	code := schemaField("code", in.Code, 6)
+	if code == nil && !mfaCodePattern.MatchString(in.Code) {
+		code = &apierr.FieldProblem{Field: "code", Reason: "not six digits"}
+	}
+	if err := invalidBody(schemaField("mfa_token", in.MFAToken, maxMFATokenChars), code); err != nil {
 		apierr.WriteError(w, r, err)
 		return
 	}
