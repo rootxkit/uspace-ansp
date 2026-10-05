@@ -337,6 +337,14 @@ func (g *Guard) session(ctx context.Context, token string, a Access) (Principal,
 // live session admitted by a. There is no ticket. A refusal is an HTTP
 // problem before the upgrade; a session that ends mid-stream is the
 // stream's to close with CloseReLogin.
+//
+// The order of the refusals: an upgrade with neither a credential (no
+// Authorization, no cookie) nor an Origin is a machine client without
+// its token, 401 as on any other route (uspace-lab conformance finding
+// C4); an Origin that is present and not allowed, or a cookie without
+// an Origin, is 403 whatever else the request carries, so a browser's
+// cross-site upgrade never learns more than that; an allowed Origin
+// without a cookie is 401.
 func (g *Guard) RequireUpgrade(a Access) func(http.Handler) http.Handler {
 	byBearer := g.Require(a)
 	return func(next http.Handler) http.Handler {
@@ -352,6 +360,9 @@ func (g *Guard) RequireUpgrade(a Access) func(http.Handler) http.Handler {
 					reLogin(w, r)
 					return
 				}
+				if err.Status == http.StatusUnauthorized {
+					w.Header().Set("WWW-Authenticate", `Bearer`)
+				}
 				apierr.WriteError(w, r, err)
 				return
 			}
@@ -362,13 +373,19 @@ func (g *Guard) RequireUpgrade(a Access) func(http.Handler) http.Handler {
 
 func (g *Guard) fromCookie(r *http.Request, a Access) (Principal, *apierr.Problem) {
 	origin := r.Header.Get("Origin")
+	c, err := r.Cookie(CookieSession)
+	noCookie := err != nil || c.Value == ""
+	if origin == "" && noCookie {
+		g.counters.Inc(CounterNoCredential)
+		return Principal{}, refusal(http.StatusUnauthorized, SlugUnauthenticated, "no bearer token",
+			apierr.FieldProblem{Field: "Authorization", Reason: "no bearer token"})
+	}
 	if origin == "" || !slices.Contains(g.Origins, origin) {
 		g.counters.Inc(CounterOriginRefused)
 		return Principal{}, refusal(http.StatusForbidden, SlugForbidden, "the Origin of this upgrade is not allowed",
 			apierr.FieldProblem{Field: "Origin", Reason: "not on the allow-list"})
 	}
-	c, err := r.Cookie(CookieSession)
-	if err != nil || c.Value == "" {
+	if noCookie {
 		g.counters.Inc(CounterNoCredential)
 		return Principal{}, refusal(http.StatusUnauthorized, SlugUnauthenticated, "no "+CookieSession+" cookie and no bearer token")
 	}

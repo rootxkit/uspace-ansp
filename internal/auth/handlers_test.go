@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 
@@ -181,6 +182,37 @@ func TestHTTPRefusals(t *testing.T) {
 	if rec := do(t, h, http.MethodPost, "/v1/users", res.Token, `{`); rec.Code != http.StatusForbidden {
 		t.Fatalf("the guard runs before the body is read: %d", rec.Code)
 	}
+	// Lab finding C5: a body the contract's schema refuses is 400 naming
+	// every field at fault, before any credential is judged, counted or
+	// audited; a body the schema admits is judged (401 below).
+	refusedBefore := len(w.store.events(EventLoginRefused)) + len(w.store.events(EventMFARefused))
+	for _, tc := range []struct {
+		path   string
+		body   any
+		fields []string
+	}{
+		{"/v1/auth/login", map[string]string{}, []string{"username", "password"}},
+		{"/v1/auth/login", map[string]string{"username": "", "password": "x"}, []string{"username"}},
+		{"/v1/auth/login", map[string]string{"username": strings.Repeat("a", 65), "password": "x"}, []string{"username"}},
+		{"/v1/auth/login", map[string]string{"username": "viewer1", "password": strings.Repeat("p", 1025)}, []string{"password"}},
+		{"/v1/auth/mfa", map[string]string{}, []string{"mfa_token", "code"}},
+		{"/v1/auth/mfa", map[string]string{"mfa_token": "x", "code": "12345a"}, []string{"code"}},
+		{"/v1/auth/mfa", map[string]string{"mfa_token": "x", "code": "1234567"}, []string{"code"}},
+		{"/v1/auth/mfa", map[string]string{"mfa_token": strings.Repeat("t", 257), "code": "123456"}, []string{"mfa_token"}},
+	} {
+		rec := do(t, h, http.MethodPost, tc.path, "", tc.body)
+		p := problemOf(t, rec)
+		var got []string
+		for _, e := range p.Errors {
+			got = append(got, e.Field)
+		}
+		if rec.Code != http.StatusBadRequest || p.Slug() != SlugInvalidRequest || !slices.Equal(got, tc.fields) {
+			t.Fatalf("%s %v: %d %s", tc.path, tc.body, rec.Code, rec.Body.String())
+		}
+	}
+	if n := len(w.store.events(EventLoginRefused)) + len(w.store.events(EventMFARefused)); n != refusedBefore {
+		t.Fatalf("a refused body was audited as a sign-in: %d events, %d before", n, refusedBefore)
+	}
 	rec := do(t, h, http.MethodPost, "/v1/auth/login", "", map[string]string{"username": "viewer1", "password": "wrong password!"})
 	if p := problemOf(t, rec); rec.Code != http.StatusUnauthorized || p.Slug() != SlugInvalidCredentials {
 		t.Fatalf("%d %s", rec.Code, rec.Body.String())
@@ -260,6 +292,22 @@ func TestRequireUpgrade(t *testing.T) {
 	rec, _ = up(map[string]string{"Origin": "https://ansp.test"}, "")
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("no cookie: %d", rec.Code)
+	}
+	// Lab finding C4: neither a credential nor an Origin is a machine
+	// client without its token, 401 and not counted as an Origin refusal;
+	// a disallowed Origin stays 403 without a cookie too.
+	origins := w.guard.Counters().Get(CounterOriginRefused)
+	none := w.guard.Counters().Get(CounterNoCredential)
+	rec, _ = up(nil, "")
+	if pb := problemOf(t, rec); rec.Code != http.StatusUnauthorized || pb.Slug() != SlugUnauthenticated ||
+		rec.Header().Get("WWW-Authenticate") != "Bearer" || len(pb.Errors) != 1 || pb.Errors[0].Field != "Authorization" ||
+		w.guard.Counters().Get(CounterOriginRefused) != origins || w.guard.Counters().Get(CounterNoCredential) != none+1 {
+		t.Fatalf("neither credential nor Origin: %d %v %s", rec.Code, rec.Header(), rec.Body.String())
+	}
+	rec, _ = up(map[string]string{"Origin": "https://evil.test"}, "")
+	if pb := problemOf(t, rec); rec.Code != http.StatusForbidden || pb.Slug() != SlugForbidden ||
+		w.guard.Counters().Get(CounterOriginRefused) != origins+1 {
+		t.Fatalf("other origin without a cookie: %d %s", rec.Code, rec.Body.String())
 	}
 	machine := w.eco.token(t, ussp, ownHost, []string{"ansp.traffic"}, w.clock.Now())
 	rec, _ = up(map[string]string{"Origin": "https://ansp.test"}, machine)

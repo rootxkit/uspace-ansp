@@ -16,6 +16,21 @@ complete.
 
 ### Fixed
 
+- A WebSocket upgrade with neither a credential nor an `Origin` was
+  refused `403 forbidden` as a browser's cookie upgrade; it is now
+  `401 unauthenticated` with `WWW-Authenticate: Bearer`, as a request
+  without credential is on every other route (uspace-lab conformance
+  finding C4: `streamCoordination`, `streamMannedTraffic`,
+  `streamRestrictions`). An `Origin` that is present and not on
+  `ANSP_WS_ALLOWED_ORIGINS`, or a cookie without an `Origin`, stays
+  `403`; the order is stated in the contract's `sessionCookie` scheme
+  (description only).
+- `POST /v1/auth/login` and `POST /v1/auth/mfa` answered a body their
+  schema refuses (a required member missing or empty, a member over its
+  `maxLength`, a `code` that is not six digits) `401`; they now answer
+  the declared `400 invalid_request` with `errors[]` naming every field,
+  before any credential is judged, limited or audited (uspace-lab
+  conformance finding C5). A body the schema admits is judged as before.
 - `POST /v1/restrictions` answered a bare `500` with no log line to an
   `Idempotency-Key` outside the contract's `^[A-Za-z0-9._:-]{1,128}$`
   (seen in uspace-lab `ussp-wp12-restriction`, whose runner sent
