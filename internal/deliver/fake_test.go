@@ -379,10 +379,16 @@ func (f *fakeRepo) Overdue(_ context.Context, after time.Duration, limit int) ([
 		if r.published != nil {
 			pub = *r.published
 		}
-		if r.state != "active" || pub >= cur.Version || cur.ChangedAt.After(now.Add(-after)) {
+		open := f.openCISP(id)
+		terminal := r.state == "ended" || r.state == "cancelled"
+		switch {
+		case pub >= cur.Version:
+			continue
+		case r.state == "active" && cur.ChangedAt.After(now.Add(-after)):
+			continue
+		case r.state != "active" && (!terminal || open == nil || open.AnspVersion >= cur.Version):
 			continue
 		}
-		open := f.openCISP(id)
 		if open != nil && open.AnspVersion >= cur.Version {
 			continue
 		}
@@ -424,7 +430,13 @@ func (f *fakeRepo) Clearable(_ context.Context, limit int) ([]Clearable, error) 
 			pub = *r.published
 		}
 		cur := int64(len(r.versions))
-		if r.state != "active" || pub >= cur {
+		queued := false
+		for _, d := range f.rows {
+			if d.Kind == KindDirect && d.RestrictionID == a.RestrictionID && d.AnspVersion == cur && d.State == StateQueued {
+				queued = true
+			}
+		}
+		if pub >= cur || (r.state != "active" && a.AnspVersion >= cur && !queued) {
 			out = append(out, Clearable{AlarmID: a.ID, RestrictionID: a.RestrictionID, State: r.state, AnspVersion: cur, PublishedVersion: pub})
 		}
 		if len(out) >= limit {

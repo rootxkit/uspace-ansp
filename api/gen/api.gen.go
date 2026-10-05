@@ -562,6 +562,21 @@ func (e DeliveryChannelState) Valid() bool {
 	}
 }
 
+// Defines values for DirectRestrictionSchema.
+const (
+	DirectRestrictionSchemaRestrictiondirectv1 DirectRestrictionSchema = "restriction/direct/v1"
+)
+
+// Valid indicates whether the value is a known member of the DirectRestrictionSchema enum.
+func (e DirectRestrictionSchema) Valid() bool {
+	switch e {
+	case DirectRestrictionSchemaRestrictiondirectv1:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for DssStatusState.
 const (
 	DssStatusStateDeleted DssStatusState = "deleted"
@@ -1979,6 +1994,54 @@ type DeliveryChannel struct {
 
 // DeliveryChannelState defines model for DeliveryChannel.State.
 type DeliveryChannelState string
+
+// DirectRestriction restriction/direct/v1: a restriction's current version as the
+// pull_url of a degraded direct delivery serves it (02 F2, M5). The
+// version member is ansp_version, never version (M4); the
+// cis/change/v1 record that named it carries the same number as its
+// version and "<ansp_ref>:<ansp_version>" as its etag. Owned here
+// (the HTTP body of this API, 04 §1).
+type DirectRestriction struct {
+	AnspRef     string `json:"ansp_ref"`
+	AnspVersion int64  `json:"ansp_version"`
+
+	// ChangedAt RFC 3339 UTC with Z, millisecond precision (02 §1).
+	ChangedAt Timestamp `json:"changed_at"`
+
+	// EndsAt RFC 3339 UTC with Z, millisecond precision (02 §1).
+	EndsAt Timestamp `json:"ends_at"`
+
+	// Feature The ED-318 Feature of a restriction as published to the CISP: a
+	// GeoJSON Feature whose properties are a UASZone, with reason
+	// [DAR], variant COMMON, identifier DAR plus 4 base-36 characters
+	// and the window in limitedApplicability (02 F2, D4). Member names
+	// mirror uspace-core/ed318 (model.go), which reads and writes them;
+	// this schema names the members a client relies on and leaves the
+	// rest open. From uspace-core/ed318 doc.go: UNVERIFIED: the names
+	// of a zone's vertical limits (the geometry's layer object with
+	// upper, upperReference, lower, lowerReference and uom, as the
+	// ED-318 JSON schema and uas_standards show them); UNVERIFIED: an
+	// absent uom means metres; UNVERIFIED: the unit of a circle's
+	// radius (always metres, owner decision on uspace-core PR #16).
+	// The EUROCAE ED-318 text is not available to the project (spec 09
+	// §3).
+	Feature Ed318Feature `json:"feature"`
+
+	// Id Crockford base32, 26 characters (04 §2).
+	Id         ULID                    `json:"id"`
+	Identifier string                  `json:"identifier"`
+	Schema     DirectRestrictionSchema `json:"schema"`
+
+	// StartsAt RFC 3339 UTC with Z, millisecond precision (02 §1).
+	StartsAt Timestamp `json:"starts_at"`
+
+	// State planned, active, ended or cancelled (02 F2, ATS.TR.237(b)).
+	State            RestrictionState `json:"state"`
+	UspaceAirspaceId string           `json:"uspace_airspace_id"`
+}
+
+// DirectRestrictionSchema defines model for DirectRestriction.Schema.
+type DirectRestrictionSchema string
 
 // DssStatus A restriction's standing in the DSS (WP-9, 02 F2, 02 F6): none
 // (never written: planned or cancelled), pending since T while a
@@ -4530,9 +4593,9 @@ type ClientInterface interface {
 	// GetRestriction One restriction
 	//
 	// The restriction, its current ED-318 feature, its F3548 constraint
-	// reference and its deliveries summary (ATS.TR.237(b)). This is
-	// also the pull_url of a degraded direct delivery (02 F2 failure
-	// rule, M5).
+	// reference and its deliveries summary (ATS.TR.237(b)). The
+	// pull_url of a degraded direct delivery is
+	// /v1/restrictions/{id}/direct, not this.
 	//
 	// Corresponds with GET /v1/restrictions/{id} (the `GetRestriction` operationId).
 	GetRestriction(ctx context.Context, id RestrictionID, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -4578,6 +4641,26 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /v1/restrictions/{id}/cancel (the `CancelRestriction` operationId).
 	CancelRestriction(ctx context.Context, id RestrictionID, body CancelRestrictionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetRestrictionDirect The restriction as its degraded direct delivery names it
+	//
+	// The pull_url of a degraded direct delivery (02 F2 failure rule,
+	// M5): the restriction's current version as a
+	// restriction/direct/v1 document, with its ansp_version (M4), its
+	// state (an end or a cancel is delivered too) and its ED-318
+	// feature, signed with this system's delivery key as a detached JWS
+	// in X-JWS-Signature (02 §1 Signatures; RFC 7797, b64 false), the
+	// key in /.well-known/jwks.json. The receivers verify the signature
+	// with the ANSP's publisher keys and apply the version only when its
+	// ansp_version is above the one they hold for the restriction.
+	// Public: the content is what the CISP serves publicly once it
+	// holds the version, and the signature, not the transport, is what
+	// a receiver trusts; the rate limit is the edge proxy's. 503 while
+	// no delivery key is configured: an unsigned document is never
+	// served.
+	//
+	// Corresponds with GET /v1/restrictions/{id}/direct (the `GetRestrictionDirect` operationId).
+	GetRestrictionDirect(ctx context.Context, id RestrictionID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// EndRestrictionWithBody End an active restriction now
 	//
@@ -5727,9 +5810,9 @@ func (c *Client) StreamRestrictions(ctx context.Context, reqEditors ...RequestEd
 // GetRestriction One restriction
 //
 // The restriction, its current ED-318 feature, its F3548 constraint
-// reference and its deliveries summary (ATS.TR.237(b)). This is
-// also the pull_url of a degraded direct delivery (02 F2 failure
-// rule, M5).
+// reference and its deliveries summary (ATS.TR.237(b)). The
+// pull_url of a degraded direct delivery is
+// /v1/restrictions/{id}/direct, not this.
 //
 // Corresponds with GET /v1/restrictions/{id} (the `GetRestriction` operationId).
 func (c *Client) GetRestriction(ctx context.Context, id RestrictionID, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -5816,6 +5899,36 @@ func (c *Client) CancelRestrictionWithBody(ctx context.Context, id RestrictionID
 // Corresponds with POST /v1/restrictions/{id}/cancel (the `CancelRestriction` operationId).
 func (c *Client) CancelRestriction(ctx context.Context, id RestrictionID, body CancelRestrictionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewCancelRestrictionRequest(c.Server, id, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetRestrictionDirect The restriction as its degraded direct delivery names it
+//
+// The pull_url of a degraded direct delivery (02 F2 failure rule,
+// M5): the restriction's current version as a
+// restriction/direct/v1 document, with its ansp_version (M4), its
+// state (an end or a cancel is delivered too) and its ED-318
+// feature, signed with this system's delivery key as a detached JWS
+// in X-JWS-Signature (02 §1 Signatures; RFC 7797, b64 false), the
+// key in /.well-known/jwks.json. The receivers verify the signature
+// with the ANSP's publisher keys and apply the version only when its
+// ansp_version is above the one they hold for the restriction.
+// Public: the content is what the CISP serves publicly once it
+// holds the version, and the signature, not the transport, is what
+// a receiver trusts; the rate limit is the edge proxy's. 503 while
+// no delivery key is configured: an unsigned document is never
+// served.
+//
+// Corresponds with GET /v1/restrictions/{id}/direct (the `GetRestrictionDirect` operationId).
+func (c *Client) GetRestrictionDirect(ctx context.Context, id RestrictionID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetRestrictionDirectRequest(c.Server, id)
 	if err != nil {
 		return nil, err
 	}
@@ -7585,6 +7698,40 @@ func NewCancelRestrictionRequestWithBody(server string, id RestrictionID, conten
 	return req, nil
 }
 
+// NewGetRestrictionDirectRequest constructs an http.Request for the GetRestrictionDirect method
+func NewGetRestrictionDirectRequest(server string, id RestrictionID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/restrictions/%s/direct", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewEndRestrictionRequest calls the generic EndRestriction builder with application/json body
 func NewEndRestrictionRequest(server string, id RestrictionID, body EndRestrictionJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -8631,9 +8778,9 @@ type ClientWithResponsesInterface interface {
 	// GetRestrictionWithResponse One restriction
 	//
 	// The restriction, its current ED-318 feature, its F3548 constraint
-	// reference and its deliveries summary (ATS.TR.237(b)). This is
-	// also the pull_url of a degraded direct delivery (02 F2 failure
-	// rule, M5).
+	// reference and its deliveries summary (ATS.TR.237(b)). The
+	// pull_url of a degraded direct delivery is
+	// /v1/restrictions/{id}/direct, not this.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -8681,6 +8828,28 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /v1/restrictions/{id}/cancel (the `CancelRestriction` operationId).
 	CancelRestrictionWithResponse(ctx context.Context, id RestrictionID, body CancelRestrictionJSONRequestBody, reqEditors ...RequestEditorFn) (*CancelRestrictionResponse, error)
+
+	// GetRestrictionDirectWithResponse The restriction as its degraded direct delivery names it
+	//
+	// The pull_url of a degraded direct delivery (02 F2 failure rule,
+	// M5): the restriction's current version as a
+	// restriction/direct/v1 document, with its ansp_version (M4), its
+	// state (an end or a cancel is delivered too) and its ED-318
+	// feature, signed with this system's delivery key as a detached JWS
+	// in X-JWS-Signature (02 §1 Signatures; RFC 7797, b64 false), the
+	// key in /.well-known/jwks.json. The receivers verify the signature
+	// with the ANSP's publisher keys and apply the version only when its
+	// ansp_version is above the one they hold for the restriction.
+	// Public: the content is what the CISP serves publicly once it
+	// holds the version, and the signature, not the transport, is what
+	// a receiver trusts; the rate limit is the edge proxy's. 503 while
+	// no delivery key is configured: an unsigned document is never
+	// served.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/restrictions/{id}/direct (the `GetRestrictionDirect` operationId).
+	GetRestrictionDirectWithResponse(ctx context.Context, id RestrictionID, reqEditors ...RequestEditorFn) (*GetRestrictionDirectResponse, error)
 
 	// EndRestrictionWithBodyWithResponse End an active restriction now
 	//
@@ -11705,6 +11874,75 @@ func (r CancelRestrictionResponse) ContentType() string {
 	return ""
 }
 
+// GetRestrictionDirectResponse200Headers the declared response headers of an HTTP 200 response for GetRestrictionDirect
+type GetRestrictionDirectResponse200Headers struct {
+	XJWSSignature *string
+}
+
+// GetRestrictionDirectResponse503Headers the declared response headers of an HTTP 503 response for GetRestrictionDirect
+type GetRestrictionDirectResponse503Headers struct {
+	RetryAfter int
+}
+
+type GetRestrictionDirectResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *DirectRestriction
+	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationproblemJSON404 *NotFound
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *Unavailable
+	// Headers200 the parsed response headers for an HTTP 200 response
+	Headers200 *GetRestrictionDirectResponse200Headers
+	// Headers503 the parsed response headers for an HTTP 503 response
+	Headers503 *GetRestrictionDirectResponse503Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetRestrictionDirectResponse) GetJSON200() *DirectRestriction {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r GetRestrictionDirectResponse) GetApplicationproblemJSON404() *NotFound {
+	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r GetRestrictionDirectResponse) GetApplicationproblemJSON503() *Unavailable {
+	return r.ApplicationproblemJSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r GetRestrictionDirectResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetRestrictionDirectResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetRestrictionDirectResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetRestrictionDirectResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 // EndRestrictionResponse401Headers the declared response headers of an HTTP 401 response for EndRestriction
 type EndRestrictionResponse401Headers struct {
 	WWWAuthenticate *string
@@ -13410,9 +13648,9 @@ func (c *ClientWithResponses) StreamRestrictionsWithResponse(ctx context.Context
 // GetRestrictionWithResponse One restriction
 //
 // The restriction, its current ED-318 feature, its F3548 constraint
-// reference and its deliveries summary (ATS.TR.237(b)). This is
-// also the pull_url of a degraded direct delivery (02 F2 failure
-// rule, M5).
+// reference and its deliveries summary (ATS.TR.237(b)). The
+// pull_url of a degraded direct delivery is
+// /v1/restrictions/{id}/direct, not this.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -13489,6 +13727,34 @@ func (c *ClientWithResponses) CancelRestrictionWithResponse(ctx context.Context,
 		return nil, err
 	}
 	return ParseCancelRestrictionResponse(rsp)
+}
+
+// GetRestrictionDirectWithResponse The restriction as its degraded direct delivery names it
+//
+// The pull_url of a degraded direct delivery (02 F2 failure rule,
+// M5): the restriction's current version as a
+// restriction/direct/v1 document, with its ansp_version (M4), its
+// state (an end or a cancel is delivered too) and its ED-318
+// feature, signed with this system's delivery key as a detached JWS
+// in X-JWS-Signature (02 §1 Signatures; RFC 7797, b64 false), the
+// key in /.well-known/jwks.json. The receivers verify the signature
+// with the ANSP's publisher keys and apply the version only when its
+// ansp_version is above the one they hold for the restriction.
+// Public: the content is what the CISP serves publicly once it
+// holds the version, and the signature, not the transport, is what
+// a receiver trusts; the rate limit is the edge proxy's. 503 while
+// no delivery key is configured: an unsigned document is never
+// served.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/restrictions/{id}/direct (the `GetRestrictionDirect` operationId).
+func (c *ClientWithResponses) GetRestrictionDirectWithResponse(ctx context.Context, id RestrictionID, reqEditors ...RequestEditorFn) (*GetRestrictionDirectResponse, error) {
+	rsp, err := c.GetRestrictionDirect(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetRestrictionDirectResponse(rsp)
 }
 
 // EndRestrictionWithBodyWithResponse End an active restriction now
@@ -16348,6 +16614,69 @@ func ParseCancelRestrictionResponse(rsp *http.Response) (*CancelRestrictionRespo
 	return response, nil
 }
 
+// ParseGetRestrictionDirectResponse parses an HTTP response from a GetRestrictionDirectWithResponse call
+func ParseGetRestrictionDirectResponse(rsp *http.Response) (*GetRestrictionDirectResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetRestrictionDirectResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest DirectRestriction
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 200:
+		var headers GetRestrictionDirectResponse200Headers
+		if values := rsp.Header.Values("X-JWS-Signature"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-JWS-Signature", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XJWSSignature = &value
+		}
+		response.Headers200 = &headers
+	case rsp.StatusCode == 503:
+		var headers GetRestrictionDirectResponse503Headers
+		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.RetryAfter = value
+		}
+		response.Headers503 = &headers
+	}
+
+	return response, nil
+}
+
 // ParseEndRestrictionResponse parses an HTTP response from a EndRestrictionWithResponse call
 func ParseEndRestrictionResponse(rsp *http.Response) (*EndRestrictionResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -17216,6 +17545,9 @@ type ServerInterface interface {
 	// CancelRestriction Cancel a planned restriction
 	// (POST /v1/restrictions/{id}/cancel)
 	CancelRestriction(w http.ResponseWriter, r *http.Request, id RestrictionID)
+	// GetRestrictionDirect The restriction as its degraded direct delivery names it
+	// (GET /v1/restrictions/{id}/direct)
+	GetRestrictionDirect(w http.ResponseWriter, r *http.Request, id RestrictionID)
 	// EndRestriction End an active restriction now
 	// (POST /v1/restrictions/{id}/end)
 	EndRestriction(w http.ResponseWriter, r *http.Request, id RestrictionID)
@@ -18155,6 +18487,32 @@ func (siw *ServerInterfaceWrapper) CancelRestriction(w http.ResponseWriter, r *h
 	handler.ServeHTTP(w, r)
 }
 
+// GetRestrictionDirect operation middleware
+func (siw *ServerInterfaceWrapper) GetRestrictionDirect(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id RestrictionID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetRestrictionDirect(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // EndRestriction operation middleware
 func (siw *ServerInterfaceWrapper) EndRestriction(w http.ResponseWriter, r *http.Request) {
 
@@ -18521,6 +18879,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/restrictions", wrapper.CreateRestriction)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/restrictions/stream", wrapper.StreamRestrictions)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/restrictions/{id}", wrapper.GetRestriction)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/restrictions/{id}/direct", wrapper.GetRestrictionDirect)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/restrictions/{id}/versions", wrapper.ListRestrictionVersions)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/restrictions/{id}/versions/{version}", wrapper.GetRestrictionVersion)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/restrictions/{id}/activate", wrapper.ActivateRestriction)
@@ -21889,6 +22248,71 @@ func (response CancelRestriction409ApplicationProblemPlusJSONResponse) VisitCanc
 	return err
 }
 
+type GetRestrictionDirectRequestObject struct {
+	Id RestrictionID `json:"id"`
+}
+
+type GetRestrictionDirectResponseObject interface {
+	VisitGetRestrictionDirectResponse(w http.ResponseWriter) error
+}
+
+type GetRestrictionDirect200ResponseHeaders struct {
+	XJWSSignature *string
+}
+
+type GetRestrictionDirect200JSONResponse struct {
+	Body    DirectRestriction
+	Headers GetRestrictionDirect200ResponseHeaders
+}
+
+func (response GetRestrictionDirect200JSONResponse) VisitGetRestrictionDirectResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if response.Headers.XJWSSignature != nil {
+		w.Header().Set("X-JWS-Signature", fmt.Sprint(*response.Headers.XJWSSignature))
+	}
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetRestrictionDirect404ApplicationProblemPlusJSONResponse struct {
+	NotFoundApplicationProblemPlusJSONResponse
+}
+
+func (response GetRestrictionDirect404ApplicationProblemPlusJSONResponse) VisitGetRestrictionDirectResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetRestrictionDirect503ApplicationProblemPlusJSONResponse struct {
+	UnavailableApplicationProblemPlusJSONResponse
+}
+
+func (response GetRestrictionDirect503ApplicationProblemPlusJSONResponse) VisitGetRestrictionDirectResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type EndRestrictionRequestObject struct {
 	Id   RestrictionID `json:"id"`
 	Body *EndRestrictionJSONRequestBody
@@ -22944,6 +23368,9 @@ type StrictServerInterface interface {
 	// CancelRestriction Cancel a planned restriction
 	// (POST /v1/restrictions/{id}/cancel)
 	CancelRestriction(ctx context.Context, request CancelRestrictionRequestObject) (CancelRestrictionResponseObject, error)
+	// GetRestrictionDirect The restriction as its degraded direct delivery names it
+	// (GET /v1/restrictions/{id}/direct)
+	GetRestrictionDirect(ctx context.Context, request GetRestrictionDirectRequestObject) (GetRestrictionDirectResponseObject, error)
 	// EndRestriction End an active restriction now
 	// (POST /v1/restrictions/{id}/end)
 	EndRestriction(ctx context.Context, request EndRestrictionRequestObject) (EndRestrictionResponseObject, error)
@@ -23988,6 +24415,32 @@ func (sh *strictHandler) CancelRestriction(w http.ResponseWriter, r *http.Reques
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(CancelRestrictionResponseObject); ok {
 		if err := validResponse.VisitCancelRestrictionResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetRestrictionDirect operation middleware
+func (sh *strictHandler) GetRestrictionDirect(w http.ResponseWriter, r *http.Request, id RestrictionID) {
+	var request GetRestrictionDirectRequestObject
+
+	request.Id = id
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetRestrictionDirect(ctx, request.(GetRestrictionDirectRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetRestrictionDirect")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetRestrictionDirectResponseObject); ok {
+		if err := validResponse.VisitGetRestrictionDirectResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

@@ -2,9 +2,9 @@ package deliver
 
 import (
 	"context"
-	"encoding/json"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -124,7 +124,7 @@ func TestAlarmAndDegradedDirectDelivery(t *testing.T) {
 		}
 		row := h.repo.row(cl.JTI)
 		if row == nil || ch.MsgId != cl.JTI || ch.Reason != cispclient.ChangeReasonRestrictionActivated ||
-			ch.PullUrl != "https://ansp.test/v1/restrictions/"+testRID || ch.Dataset != cispclient.ChangeDatasetRestrictions ||
+			ch.PullUrl != "https://ansp.test/v1/restrictions/"+testRID+"/direct" || ch.Dataset != cispclient.ChangeDatasetRestrictions ||
 			ch.Version != 2 || len(ch.FeatureIds) != 1 || ch.FeatureIds[0] != "DAR7K2Q" || ch.Schema != cispclient.ChangeSchemaCischangev1 {
 			t.Fatalf("change %+v", ch)
 		}
@@ -158,11 +158,21 @@ func TestAlarmAndDegradedDirectDelivery(t *testing.T) {
 }
 
 // A new version while the alarm is open moves it and delivers the new
-// version directly; the restriction ending clears it (not active), and
-// the direct jobs still queued are cancelled.
-func TestAlarmAdvancesAndClearsWhenNotActive(t *testing.T) {
+// version directly; the restriction ending moves it again and delivers
+// the end directly (restriction_ended, the identifier in removed_ids):
+// a receiver that applied the activation from the degraded path learns
+// of the end on the same path. The alarm clears once the end is
+// delivered (restriction_not_active), and the activation's direct jobs
+// still queued are cancelled.
+func TestAlarmAdvancesAndDeliversTheEnd(t *testing.T) {
 	h := newHarness(t, nil)
-	ussp := newReceiver(t, h, func(int, recorded) (int, string) { return 503, "" })
+	var up atomic.Bool
+	ussp := newReceiver(t, h, func(int, recorded) (int, string) {
+		if up.Load() {
+			return 204, ""
+		}
+		return 503, ""
+	})
 	mon := monitorOf(h, Target{"ussp-a", ussp.srv.URL})
 	h.repo.addVersion(version(1, "active"))
 	h.clock.Advance(11 * time.Second)
@@ -177,24 +187,64 @@ func TestAlarmAdvancesAndClearsWhenNotActive(t *testing.T) {
 	if rep.Advanced != 1 || rep.DirectQueued != 1 || h.repo.alarms[0].AnspVersion != 2 {
 		t.Fatalf("advance %+v %+v", rep, h.repo.alarms[0])
 	}
-	var ch cispclient.Change
-	for _, id := range h.repo.order {
-		if r := h.repo.row(id); r.AnspVersion == 2 && r.Kind == KindDirect {
-			_ = json.Unmarshal(r.Body, &ch)
+	changeOf := func(v int64) cispclient.Change {
+		var ch cispclient.Change
+		for _, id := range h.repo.order {
+			if r := h.repo.row(id); r.AnspVersion == v && r.Kind == KindDirect {
+				strict(t, r.Body, &ch)
+			}
 		}
+		return ch
 	}
-	if ch.Reason != cispclient.ChangeReasonRestrictionExtended {
+	if ch := changeOf(2); ch.Reason != cispclient.ChangeReasonRestrictionExtended {
 		t.Fatalf("reason %s", ch.Reason)
 	}
+	// The end, at once (no cisp_alarm_after_s wait: the CISP is known
+	// down), while the activation's jobs are still queued.
 	h.repo.addVersion(version(3, "ended"))
+	rep, _ = mon.Tick(context.Background())
+	if rep.Advanced != 1 || rep.DirectQueued != 1 || rep.Cleared != 0 || h.repo.alarms[0].AnspVersion != 3 ||
+		!strings.Contains(h.repo.alarms[0].Detail, "is ended and the change is not yet published") {
+		t.Fatalf("the end is not delivered directly: %+v %+v", rep, h.repo.alarms[0])
+	}
+	end := changeOf(3)
+	if end.Reason != cispclient.ChangeReasonRestrictionEnded || end.Version != 3 || len(end.RemovedIds) != 1 || end.RemovedIds[0] != "DAR7K2Q" ||
+		end.Etag != `"ansp-01:01K6P0A1B2C3D4E5F6G7H8J9KM:3"` {
+		t.Fatalf("end %+v", end)
+	}
+	// Queued, not delivered: the alarm stands.
+	if rep, _ := mon.Tick(context.Background()); rep.Cleared != 0 || rep.DirectQueued != 0 {
+		t.Fatalf("cleared before the end was delivered: %+v", rep)
+	}
+	// The receiver answers: the versions go in order (one channel per
+	// target), the end last; then the alarm clears.
+	up.Store(true)
+	h.handDirect()
 	rep, _ = mon.Tick(context.Background())
 	if rep.Cleared != 1 || h.repo.alarms[0].ClearReason != CancelNotActive {
 		t.Fatalf("clear %+v %+v", rep, h.repo.alarms[0])
 	}
+	sent := 0
 	for _, id := range h.repo.order {
-		if r := h.repo.row(id); r.Kind == KindDirect && r.State != StateCancelled {
-			t.Fatalf("direct %s still %s", id, r.State)
+		if r := h.repo.row(id); r.Kind == KindDirect {
+			if r.State != StateSent {
+				t.Fatalf("direct %s (version %d) is %s", id, r.AnspVersion, r.State)
+			}
+			sent++
 		}
+	}
+	if sent != 3 {
+		t.Fatalf("%d direct deliveries sent", sent)
+	}
+	// The absence: a restriction that ends without its active version
+	// ever going out directly (no alarm) is not delivered directly.
+	h3 := newHarness(t, nil)
+	mon3 := monitorOf(h3, Target{"ussp-a", ussp.srv.URL})
+	h3.repo.addVersion(version(1, "active"))
+	h3.repo.addVersion(version(2, "ended"))
+	h3.clock.Advance(11 * time.Second)
+	if rep, _ := mon3.Tick(context.Background()); rep.Raised != 0 || rep.DirectQueued != 0 || len(h3.repo.alarms) != 0 {
+		t.Fatalf("an end delivered directly without a direct activation: %+v", rep)
 	}
 	// No target at all: counted and said.
 	h2 := newHarness(t, nil)
@@ -238,7 +288,7 @@ func TestBuildChangeAndOps(t *testing.T) {
 		var ch cispclient.Change
 		strict(t, raw, &ch)
 		if ch.Reason != tc.reason || (len(ch.RemovedIds) == 1) != tc.removed || ch.Etag != `"ansp-01:01K6P0A1B2C3D4E5F6G7H8J9KM:2"` ||
-			ch.Producer != Producer || ch.PullUrl != "https://ansp.test/v1/restrictions/"+testRID {
+			ch.Producer != Producer || ch.PullUrl != "https://ansp.test/v1/restrictions/"+testRID+"/direct" {
 			t.Fatalf("%s: %+v", tc.op, ch)
 		}
 	}
