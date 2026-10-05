@@ -261,6 +261,22 @@ func TestRequireUpgrade(t *testing.T) {
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("no cookie: %d", rec.Code)
 	}
+	// Lab finding C4: neither a credential nor an Origin is a machine
+	// client without its token, 401 and not counted as an Origin refusal;
+	// a disallowed Origin stays 403 without a cookie too.
+	origins := w.guard.Counters().Get(CounterOriginRefused)
+	none := w.guard.Counters().Get(CounterNoCredential)
+	rec, _ = up(nil, "")
+	if pb := problemOf(t, rec); rec.Code != http.StatusUnauthorized || pb.Slug() != SlugUnauthenticated ||
+		rec.Header().Get("WWW-Authenticate") != "Bearer" || len(pb.Errors) != 1 || pb.Errors[0].Field != "Authorization" ||
+		w.guard.Counters().Get(CounterOriginRefused) != origins || w.guard.Counters().Get(CounterNoCredential) != none+1 {
+		t.Fatalf("neither credential nor Origin: %d %v %s", rec.Code, rec.Header(), rec.Body.String())
+	}
+	rec, _ = up(map[string]string{"Origin": "https://evil.test"}, "")
+	if pb := problemOf(t, rec); rec.Code != http.StatusForbidden || pb.Slug() != SlugForbidden ||
+		w.guard.Counters().Get(CounterOriginRefused) != origins+1 {
+		t.Fatalf("other origin without a cookie: %d %s", rec.Code, rec.Body.String())
+	}
 	machine := w.eco.token(t, ussp, ownHost, []string{"ansp.traffic"}, w.clock.Now())
 	rec, _ = up(map[string]string{"Origin": "https://ansp.test"}, machine)
 	if rec.Code != http.StatusUnauthorized {

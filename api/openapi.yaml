@@ -99,7 +99,10 @@ components:
       description: |
         The same session in the uspace_session cookie, accepted only on a
         same-origin WebSocket upgrade whose Origin is on
-        ANSP_WS_ALLOWED_ORIGINS (M22).
+        ANSP_WS_ALLOWED_ORIGINS (M22). An upgrade with no credential (no
+        bearer, no cookie) and no Origin is 401; an Origin not on the
+        list, or a cookie without an Origin, is 403; an allowed Origin
+        without a cookie is 401.
 
   parameters:
     IdempotencyKey:
