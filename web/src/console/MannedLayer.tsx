@@ -8,8 +8,8 @@
 // sample in the ageing colour; a relevant aircraft (inside a U-space
 // volume plus the margin, as the feed flagged it) larger and ringed, the
 // rest smaller. Each is drawn at its last position with its label,
-// never moved by the browser (B-13). The kit 0.1.0-rc.1 has no
-// MannedLayer (docs/PLAN.md section 15 row 51); this is built on its
+// never moved by the browser (B-13). The kit's MannedLayer (1.0.0) has
+// no state or relevance (docs/PLAN.md section 15 row 51); this is built on its
 // useLayer, icons and tokens.
 import { useMemo } from "react";
 import type { ExpressionSpecification, GeoJSONSource, Map as MapLibreMap } from "maplibre-gl";

@@ -1,5 +1,5 @@
 // A console WebSocket that hands the app every frame as sent, for a
-// stream whose status and snapshot carry members the kit 0.1.0-rc.1's
+// stream whose status and snapshot carry members the kit 1.0.0's
 // live client does not pass on: manned-feed's console/status/v1 has this
 // system's adapters[] (api/openapi.yaml ConsoleStatus) and its snapshot's
 // manned[] items carry state, relevant and source_instance, which the

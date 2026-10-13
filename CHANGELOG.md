@@ -14,6 +14,14 @@ in docs/runbooks/n-m1.md and n-m2.md, the lab's conformance suite has run
 green against `make conformance-target`, and `docs/runbooks/` is
 complete.
 
+### Changed
+
+- `web/`: `@rootxkit/uspace-ui` `1.0.0` (from `0.1.0-rc.1`), its release
+  tarball checked against `SHA256SUMS` and its provenance attestation.
+  `WEB_TRUSTED_PROXY_HOPS` is required (0: no proxy), unset the BFF
+  answers 503 naming it; the kit forwards `Idempotency-Key`, and the BFF
+  drops one not of the contract's shape or on another operation.
+
 ### Fixed
 
 - The degraded direct delivery (02 F2 failure rule, cross-plan M4, M5;

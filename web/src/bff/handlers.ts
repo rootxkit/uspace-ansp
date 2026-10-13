@@ -22,11 +22,11 @@
 //   /v1/auth/logout.
 // - Idempotency-Key: POST /v1/restrictions requires it and POST
 //   /v1/occurrences takes it (the client's reference, api/openapi.yaml
-//   IdempotencyKey, OccurrenceIdempotencyKey), and the kit's forward
-//   passes only its fixed header list (FORWARDED_REQUEST_HEADERS of
-//   uspace-ui 0.1.0-rc.1), so a key of the contract's shape is added to
-//   those calls here, through the kit's own forward and its checks.
-//   Nothing else is added; any other header stays the kit's decision.
+//   IdempotencyKey, OccurrenceIdempotencyKey). The kit's proxy forwards
+//   the client's key from uspace-ui 1.0.0 (FORWARDED_REQUEST_HEADERS);
+//   the console forwards it only in the contract's shape on those two
+//   operations and drops it from every other call. Any other header
+//   stays the kit's decision.
 //
 // The WebSockets are not proxied: the browser upgrades /v1/restrictions/
 // stream, /v1/coordination/stream and /v1/manned-traffic/stream
@@ -38,12 +38,11 @@
 import {
   BFF_API_PREFIX,
   bffHandlers,
-  forward,
   MIN_CHALLENGE_SECRET_BYTES,
   type BffHandlers,
   type SessionCookieOptions,
 } from "@rootxkit/uspace-ui/auth/server";
-import { NextResponse, type NextRequest } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 
 /** The API's sign-in, its second step and its sign-out (api/openapi.yaml, tag auth). */
 export const API_LOGIN_PATH = "/v1/auth/login";
@@ -79,8 +78,14 @@ export interface BffConfig {
   sessionMaxAgeS: number;
   /** The upstream timeout of every call, ms (WEB_UPSTREAM_TIMEOUT_MS). */
   timeoutMs: number;
-  /** Reverse proxies in front of Next.js (WEB_TRUSTED_PROXY_HOPS). */
-  trustedProxyHops?: number;
+  /**
+   * Reverse proxies in front of Next.js that append to X-Forwarded-For
+   * (WEB_TRUSTED_PROXY_HOPS, required; 1 behind Caddy). 0 says there is
+   * none: the kit's `noTrustedProxy`, and the API gets no client address.
+   * From uspace-ui 0.1.0 a secure session never builds without one or
+   * the other.
+   */
+  trustedProxyHops: number;
   /**
    * Seals the MFA challenge cookie between the two sign-in steps
    * (WEB_MFA_CHALLENGE_SECRET, at least 32 bytes; a secret, never in the
@@ -108,6 +113,37 @@ function problem(status: number, slug: string, title: string, detail: string): N
   );
 }
 
+/** The request without its Idempotency-Key, the body passed on unread. */
+function withoutIdempotencyKey(req: NextRequest): NextRequest {
+  const headers = new Headers(req.headers);
+  headers.delete(IDEMPOTENCY_HEADER);
+  const init: NonNullable<ConstructorParameters<typeof NextRequest>[1]> & { duplex?: "half" } = { method: req.method, headers };
+  if (req.body !== null) {
+    init.body = req.body;
+    init.duplex = "half";
+  }
+  return new NextRequest(req.nextUrl, init);
+}
+
+/** The kit's option for a hop count: 0 is `noTrustedProxy`. */
+function proxyHops(hops: number): { trustedProxyHops: number } | { noTrustedProxy: true } {
+  return hops === 0 ? { noTrustedProxy: true } : { trustedProxyHops: hops };
+}
+
+/** The largest WEB_TRUSTED_PROXY_HOPS taken (a bound on a malformed value, not a policy). */
+export const MAX_TRUSTED_PROXY_HOPS = 8;
+
+/**
+ * WEB_TRUSTED_PROXY_HOPS as a whole number 0..MAX_TRUSTED_PROXY_HOPS, or
+ * null when it is unset or malformed: never a default, because a wrong
+ * count lets a client choose the address the API rate-limits.
+ */
+export function trustedProxyHopsOf(raw: string | undefined): number | null {
+  if (raw === undefined || !/^[0-9]{1,2}$/.test(raw)) return null;
+  const n = Number(raw);
+  return n <= MAX_TRUSTED_PROXY_HOPS ? n : null;
+}
+
 /** The three handlers for one configuration. */
 export function createBff(cfg: BffConfig): Bff {
   const session: SessionCookieOptions = { secure: true, maxAgeS: cfg.sessionMaxAgeS };
@@ -120,34 +156,19 @@ export function createBff(cfg: BffConfig): Bff {
     session,
     allowPaths: PROXY_ALLOW_PATHS,
     timeoutMs: cfg.timeoutMs,
-    ...(cfg.trustedProxyHops === undefined ? {} : { trustedProxyHops: cfg.trustedProxyHops }),
+    ...proxyHops(cfg.trustedProxyHops),
     ...(cfg.fetch === undefined ? {} : { fetch: cfg.fetch }),
   });
-  const base = new URL(cfg.apiBase);
-  const baseFetch = cfg.fetch ?? fetch;
 
-  // The kit's proxy, but for a call that carries an Idempotency-Key of
-  // the contract's shape on an operation that takes one: the same target,
-  // forwarded by the kit with the key added to the upstream request.
+  // The kit's proxy forwards the client's Idempotency-Key (uspace-ui
+  // 1.0.0). The console keeps its narrower rule: a key of the contract's
+  // shape on an operation that takes one, and no key anywhere else.
   const proxy: Handler = (req) => {
     const key = req.headers.get(IDEMPOTENCY_HEADER);
+    if (key === null) return kit.proxy(req);
     const apiPath = req.nextUrl.pathname.startsWith(`${BFF_API_PREFIX}/`) ? req.nextUrl.pathname.slice(BFF_API_PREFIX.length) : null;
     const takesKey = apiPath !== null && IDEMPOTENT_OPERATIONS.some((o) => o.method === req.method && o.path.test(apiPath));
-    if (key === null || !IDEMPOTENCY_KEY.test(key) || !takesKey || apiPath === null) return kit.proxy(req);
-    const target = new URL(base.pathname.replace(/\/$/, "") + apiPath, base);
-    target.search = req.nextUrl.search;
-    const withKey: typeof fetch = (input, init) => {
-      const headers = new Headers(init?.headers);
-      headers.set(IDEMPOTENCY_HEADER, key);
-      return baseFetch(input, { ...init, headers });
-    };
-    return forward(req, target, {
-      session,
-      allowPaths: PROXY_ALLOW_PATHS,
-      timeoutMs: cfg.timeoutMs,
-      fetch: withKey,
-      ...(cfg.trustedProxyHops === undefined ? {} : { trustedProxyHops: cfg.trustedProxyHops }),
-    });
+    return kit.proxy(takesKey && IDEMPOTENCY_KEY.test(key) ? req : withoutIdempotencyKey(req));
   };
   return { login: kit.login, logout: kit.logout, proxy };
 }
@@ -163,7 +184,8 @@ function positiveInt(name: string, fallback: number): number {
 /**
  * What the environment lacks for the BFF, naming the variable, or null
  * when it is complete. Without it every BFF route answers 503 naming it
- * (fail closed: no sign-in path without the MFA step).
+ * (fail closed: no sign-in path without the MFA step, and no client
+ * address the API rate-limits on taken from a header a client wrote).
  */
 export function configProblem(): string | null {
   const apiBase = process.env["WEB_API_INTERNAL_URL"];
@@ -172,13 +194,17 @@ export function configProblem(): string | null {
   if (new TextEncoder().encode(secret).length < MIN_CHALLENGE_SECRET_BYTES) {
     return `WEB_MFA_CHALLENGE_SECRET is not set or shorter than ${MIN_CHALLENGE_SECRET_BYTES} bytes`;
   }
+  if (trustedProxyHopsOf(process.env["WEB_TRUSTED_PROXY_HOPS"]) === null) {
+    return `WEB_TRUSTED_PROXY_HOPS is not set or not a whole number 0 to ${MAX_TRUSTED_PROXY_HOPS} (1 behind Caddy, 0 with no proxy)`;
+  }
   return null;
 }
 
 /** The configuration from the environment, read at the first request. */
 export function configFromEnv(): BffConfig | null {
   if (configProblem() !== null) return null;
-  const hops = process.env["WEB_TRUSTED_PROXY_HOPS"];
+  const hops = trustedProxyHopsOf(process.env["WEB_TRUSTED_PROXY_HOPS"]);
+  if (hops === null) return null;
   return {
     apiBase: process.env["WEB_API_INTERNAL_URL"] ?? "",
     mfaChallengeSecret: process.env["WEB_MFA_CHALLENGE_SECRET"] ?? "",
@@ -186,7 +212,7 @@ export function configFromEnv(): BffConfig | null {
     // shortens it through expires_at.
     sessionMaxAgeS: positiveInt("WEB_SESSION_MAX_AGE_S", 12 * 3600),
     timeoutMs: positiveInt("WEB_UPSTREAM_TIMEOUT_MS", 10_000),
-    ...(hops === undefined || hops === "" ? {} : { trustedProxyHops: positiveInt("WEB_TRUSTED_PROXY_HOPS", 1) }),
+    trustedProxyHops: hops,
   };
 }
 
