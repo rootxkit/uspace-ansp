@@ -16,6 +16,15 @@ complete.
 
 ### Fixed
 
+- H-2 review: an end was delivered directly only when an alarm was
+  already open at an earlier version. When the activation reached the
+  CISP and the CISP then went down, the end was neither published nor
+  delivered directly and no alarm was raised, so every receiver kept the
+  restriction in force. An ended or cancelled restriction an earlier
+  version of which the CISP holds now raises `cisp_not_published` once
+  its end is not published for `cisp_alarm_after_s`, and the end goes
+  out on the degraded direct path; the alarm clears once it is
+  delivered.
 - The degraded direct delivery (02 F2 failure rule, cross-plan M4, M5;
   system audit 2026-10-05 H-2) was acknowledged by the USSPs and the
   authority and then discarded: its record's `version` (the

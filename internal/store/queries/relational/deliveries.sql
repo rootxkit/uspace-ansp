@@ -135,10 +135,14 @@ RETURNING id, target, ansp_version;
 
 -- name: OverdueRestrictions :many
 -- Active restrictions whose current version is not published to the
--- CISP for longer than after_s, and ended or cancelled ones whose open
--- alarm is at an earlier version (their active version went out on the
--- degraded direct path, so their end goes there too, at once), without
--- an open alarm at that version.
+-- CISP for longer than after_s; ended or cancelled ones whose open alarm
+-- is at an earlier version (their active version went out on the
+-- degraded direct path, so their end goes there too, at once); and
+-- ended or cancelled ones an earlier version of which the CISP holds,
+-- whose end is not published to it for longer than after_s (the CISP
+-- went down after the activation: every receiver holds the restriction
+-- in force until the end reaches it). Each without an open alarm at
+-- that version.
 SELECT r.id, r.ansp_version, v.changed_at,
        COALESCE((SELECT a.id FROM delivery_alarms a
                  WHERE a.restriction_id = r.id AND a.kind = 'cisp_not_published' AND a.cleared_at IS NULL), '')::text AS alarm_id
@@ -149,7 +153,9 @@ WHERE COALESCE(r.published_version, 0) < r.ansp_version
        OR (r.state IN ('ended', 'cancelled')
            AND EXISTS (SELECT 1 FROM delivery_alarms a
                        WHERE a.restriction_id = r.id AND a.kind = 'cisp_not_published' AND a.cleared_at IS NULL
-                         AND a.ansp_version < r.ansp_version)))
+                         AND a.ansp_version < r.ansp_version))
+       OR (r.state IN ('ended', 'cancelled') AND COALESCE(r.published_version, 0) > 0
+           AND v.changed_at <= clock_timestamp() - make_interval(secs => sqlc.arg(after_s)::float8)))
   AND NOT EXISTS (SELECT 1 FROM delivery_alarms a
                   WHERE a.restriction_id = r.id AND a.kind = 'cisp_not_published' AND a.cleared_at IS NULL
                     AND a.ansp_version >= r.ansp_version)

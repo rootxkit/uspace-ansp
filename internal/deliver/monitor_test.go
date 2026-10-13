@@ -262,6 +262,55 @@ func TestAlarmAdvancesAndDeliversTheEnd(t *testing.T) {
 	}
 }
 
+// The activation reached the CISP, then the CISP went down: the end is
+// not published, and no alarm is open (the active version never went out
+// directly). Before cisp_alarm_after_s nothing is raised (the absence);
+// at it the alarm is raised at the end's version and the end is
+// delivered directly (the presence), else every receiver keeps the
+// restriction in force. The alarm clears once the end is delivered.
+func TestEndDeliveredDirectlyWhenTheCISPFailsAfterTheActivation(t *testing.T) {
+	h := newHarness(t, func(int, recorded) (int, string) { return 503, "down" })
+	ussp := newReceiver(t, h, func(int, recorded) (int, string) { return 204, "" })
+	authority := newReceiver(t, h, func(int, recorded) (int, string) { return 204, "" })
+	mon := monitorOf(h, Target{"ussp-a", ussp.srv.URL}, Target{"authority", authority.srv.URL})
+	h.repo.addVersion(version(1, "active"))
+	one := int64(1)
+	h.repo.restrictions[testRID].published = &one
+	h.repo.addVersion(version(2, "ended"))
+	h.deliver(h.enqueue(2, OpEnd))
+	if p := h.repo.restrictions[testRID].published; p == nil || *p != 1 {
+		t.Fatalf("the end reached the CISP: %v", p)
+	}
+	h.clock.Advance(9 * time.Second)
+	if rep, err := mon.Tick(context.Background()); err != nil || rep.Raised != 0 || rep.DirectQueued != 0 || len(h.repo.alarms) != 0 {
+		t.Fatalf("raised before cisp_alarm_after_s: %+v %v", rep, err)
+	}
+	h.clock.Advance(time.Second)
+	rep, err := mon.Tick(context.Background())
+	if err != nil || rep.Raised != 1 || rep.DirectQueued != 2 || rep.Cleared != 0 || len(h.repo.alarms) != 1 {
+		t.Fatalf("the end is not delivered directly: %+v %v", rep, err)
+	}
+	al := h.repo.alarms[0]
+	if al.Kind != AlarmCISPNotPublished || al.AnspVersion != 2 || !strings.Contains(al.Detail, "is ended and the change is not yet published") {
+		t.Fatalf("alarm %+v", al)
+	}
+	h.handDirect()
+	for _, rc := range []*receiver{ussp, authority} {
+		reqs := rc.requests()
+		if len(reqs) != 1 {
+			t.Fatalf("%s: %d requests", rc.host, len(reqs))
+		}
+		_, ch := rc.verify(t, h, jwksServer(t, h.ring), reqs[0])
+		if ch.Reason != cispclient.ChangeReasonRestrictionEnded || ch.Version != 2 || len(ch.RemovedIds) != 1 || ch.RemovedIds[0] != "DAR7K2Q" {
+			t.Fatalf("%s: %+v", rc.host, ch)
+		}
+	}
+	rep, _ = mon.Tick(context.Background())
+	if rep.Cleared != 1 || h.repo.alarms[0].ClearReason != CancelNotActive {
+		t.Fatalf("clear %+v %+v", rep, h.repo.alarms[0])
+	}
+}
+
 // The cis/change/v1 record of every op, and the op of every version.
 func TestBuildChangeAndOps(t *testing.T) {
 	for _, tc := range []struct {

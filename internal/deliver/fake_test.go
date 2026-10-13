@@ -386,7 +386,9 @@ func (f *fakeRepo) Overdue(_ context.Context, after time.Duration, limit int) ([
 			continue
 		case r.state == "active" && cur.ChangedAt.After(now.Add(-after)):
 			continue
-		case r.state != "active" && (!terminal || open == nil || open.AnspVersion >= cur.Version):
+		case r.state != "active" && !terminal:
+			continue
+		case terminal && (open == nil || open.AnspVersion >= cur.Version) && (pub == 0 || cur.ChangedAt.After(now.Add(-after))):
 			continue
 		}
 		if open != nil && open.AnspVersion >= cur.Version {
