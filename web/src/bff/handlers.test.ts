@@ -35,8 +35,8 @@ function mockApi(answer: (c: Call) => Response) {
   return { calls, fetch: fetchMock as unknown as typeof fetch };
 }
 
-function bffWith(f: typeof fetch) {
-  const cfg: BffConfig = { apiBase: API, sessionMaxAgeS: 43200, timeoutMs: 2000, mfaChallengeSecret: MFA_SECRET, fetch: f };
+function bffWith(f: typeof fetch, trustedProxyHops = 1) {
+  const cfg: BffConfig = { apiBase: API, sessionMaxAgeS: 43200, timeoutMs: 2000, mfaChallengeSecret: MFA_SECRET, trustedProxyHops, fetch: f };
   return createBff(cfg);
 }
 
@@ -193,7 +193,7 @@ describe("two-step sign-in (MFA)", () => {
 });
 
 describe("configuration", () => {
-  const keys = ["WEB_API_INTERNAL_URL", "WEB_MFA_CHALLENGE_SECRET"] as const;
+  const keys = ["WEB_API_INTERNAL_URL", "WEB_MFA_CHALLENGE_SECRET", "WEB_TRUSTED_PROXY_HOPS"] as const;
   function withEnv(env: Partial<Record<(typeof keys)[number], string>>, run: () => void) {
     try {
       for (const k of keys) vi.stubEnv(k, env[k]);
@@ -211,13 +211,51 @@ describe("configuration", () => {
     withEnv({ WEB_API_INTERNAL_URL: API, WEB_MFA_CHALLENGE_SECRET: "t".repeat(31) }, () => {
       expect(configProblem()).toMatch(/WEB_MFA_CHALLENGE_SECRET/);
     });
-    withEnv({ WEB_API_INTERNAL_URL: API, WEB_MFA_CHALLENGE_SECRET: MFA_SECRET }, () => {
+    withEnv({ WEB_API_INTERNAL_URL: API, WEB_MFA_CHALLENGE_SECRET: MFA_SECRET, WEB_TRUSTED_PROXY_HOPS: "1" }, () => {
       expect(configProblem()).toBeNull();
       expect(configFromEnv()?.mfaChallengeSecret).toBe(MFA_SECRET);
     });
     withEnv({ WEB_MFA_CHALLENGE_SECRET: MFA_SECRET }, () => {
       expect(configProblem()).toMatch(/WEB_API_INTERNAL_URL/);
     });
+  });
+
+  it("requires WEB_TRUSTED_PROXY_HOPS: unset, empty or malformed, the BFF is not configured and names it", () => {
+    for (const hops of [undefined, "", "-1", "1.5", "one", "9", "100"]) {
+      withEnv({ WEB_API_INTERNAL_URL: API, WEB_MFA_CHALLENGE_SECRET: MFA_SECRET, ...(hops === undefined ? {} : { WEB_TRUSTED_PROXY_HOPS: hops }) }, () => {
+        expect(configProblem(), String(hops)).toMatch(/WEB_TRUSTED_PROXY_HOPS/);
+        expect(configFromEnv(), String(hops)).toBeNull();
+      });
+    }
+  });
+
+  it("takes WEB_TRUSTED_PROXY_HOPS 0 to 8, 1 behind Caddy", () => {
+    for (const [raw, n] of [["0", 0], ["1", 1], ["8", 8]] as const) {
+      withEnv({ WEB_API_INTERNAL_URL: API, WEB_MFA_CHALLENGE_SECRET: MFA_SECRET, WEB_TRUSTED_PROXY_HOPS: raw }, () => {
+        expect(configProblem()).toBeNull();
+        expect(configFromEnv()?.trustedProxyHops).toBe(n);
+      });
+    }
+  });
+});
+
+describe("trusted proxy hops", () => {
+  const cookie = "uspace_session=tok123; uspace_csrf=csrf456";
+  const me = (xff: string) =>
+    req("/_bff/api/v1/auth/me", { method: "GET", headers: { cookie, "x-forwarded-for": xff } });
+
+  it("with one hop the API gets the address Caddy appended, never the client's own", async () => {
+    const api = mockApi(() => Response.json({ ok: true }));
+    await bffWith(api.fetch, 1).proxy(me("6.6.6.6, 203.0.113.7"));
+    expect(api.calls).toHaveLength(1);
+    expect(api.calls[0]?.headers.get("x-forwarded-for")).toBe("203.0.113.7");
+  });
+
+  it("with 0 the API gets no client address at all", async () => {
+    const api = mockApi(() => Response.json({ ok: true }));
+    await bffWith(api.fetch, 0).proxy(me("6.6.6.6"));
+    expect(api.calls).toHaveLength(1);
+    expect(api.calls[0]?.headers.get("x-forwarded-for")).toBeNull();
   });
 });
 
@@ -237,6 +275,7 @@ describe("proxy", () => {
     "/v1/occurrences",
     "/v1/policy",
     "/v1/audit",
+    "/v1/outlines/circle",
   ])("forwards /_bff/api%s with the session cookie as the bearer", async (p) => {
     const api = mockApi(() => Response.json({ ok: true }));
     const res = await bffWith(api.fetch).proxy(req(`/_bff/api${p}?state=active`, { method: "GET", headers: { cookie } }));

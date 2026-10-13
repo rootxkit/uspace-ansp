@@ -559,6 +559,15 @@ function upgrade(req, socket) {
 const SUPERVISOR = "watch_supervisor";
 const ADMIN = "admin";
 
+/** The outline the mock answers for any circle within the bounds (a fixture, [lng, lat]). */
+const CIRCLE_FIXTURE = [
+  [44.8, 41.7285],
+  [44.782, 41.715],
+  [44.8, 41.7015],
+  [44.818, 41.715],
+  [44.8, 41.7285],
+];
+
 async function api(req, res, url) {
   const path = url.pathname;
   const body = req.method === "POST" || req.method === "PUT" ? await readJson(req) : {};
@@ -569,6 +578,7 @@ async function api(req, res, url) {
     idempotencyKey: req.headers["idempotency-key"] ?? null,
     authorization: bearer(req) !== null,
     body: path.startsWith("/v1/auth/") ? undefined : body,
+    query: Object.fromEntries(url.searchParams),
   });
 
   if (req.method === "POST" && path === "/v1/auth/login") {
@@ -616,6 +626,19 @@ async function api(req, res, url) {
     return json(res, 200, { ...user(session.account), session_expires_at: iso(session.expiresMs) });
   }
 
+  // GET /v1/outlines/circle: the API's bounds, refused as it refuses them
+  // (cmd/api/outlines.go); a drawn answer is a fixed fixture ring, not a
+  // computation (the API draws it with uspace-core's geodesy).
+  if (path === "/v1/outlines/circle" && req.method === "GET") {
+    const num = (k) => (url.searchParams.has(k) ? Number(url.searchParams.get(k)) : Number.NaN);
+    const lat = num("lat");
+    const lng = num("lng");
+    const radius = num("radius_m");
+    if (!(Math.abs(lat) <= 89)) return problem(res, 400, "invalid_request", "Invalid request", null, [{ field: "lat", reason: "must be a number within 89 degrees of the equator" }]);
+    if (!(Math.abs(lng) <= 180)) return problem(res, 400, "invalid_request", "Invalid request", null, [{ field: "lng", reason: "must be a number from -180 to 180" }]);
+    if (!(radius > 0 && radius <= 1_000_000)) return problem(res, 400, "invalid_request", "Invalid request", null, [{ field: "radius_m", reason: "must be above 0 and at most 1000000 m" }]);
+    return json(res, 200, { vertices: 4, outline: { type: "Polygon", coordinates: [CIRCLE_FIXTURE] } });
+  }
   if (path === "/v1/restrictions" && req.method === "GET") {
     const st = url.searchParams.get("state");
     const list = state.restrictions.filter((r) => st === null || r.state === st);

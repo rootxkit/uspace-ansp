@@ -14,6 +14,14 @@ in docs/runbooks/n-m1.md and n-m2.md, the lab's conformance suite has run
 green against `make conformance-target`, and `docs/runbooks/` is
 complete.
 
+### Changed
+
+- `web/`: `@rootxkit/uspace-ui` `1.0.0` (from `0.1.0-rc.1`), its release
+  tarball checked against `SHA256SUMS` and its provenance attestation.
+  `WEB_TRUSTED_PROXY_HOPS` is required (0: no proxy), unset the BFF
+  answers 503 naming it; the kit forwards `Idempotency-Key`, and the BFF
+  drops one not of the contract's shape or on another operation.
+
 ### Fixed
 
 - The degraded direct delivery (02 F2 failure rule, cross-plan M4, M5;
@@ -83,6 +91,12 @@ complete.
 
 ### Added
 
+- `GET /v1/outlines/circle?lat=&lng=&radius_m=` (session, additive): a
+  circle drawn as a closed Polygon of 64 vertices by uspace-core
+  `geodesy.Destination` (`internal/outline`), display only. The
+  restriction editor draws its area with the kit's `DrawLayer` and
+  `OutlineFields` (at most 999 vertices, the contract's ring bound) and
+  shows a circle's outline as the API drew it (PLAN section 15 row 53).
 - WP-13 deploy proof: `deploy/compose.prod.yaml` (the production and
   staging shape: one timescaledb-ha container with both databases, the
   one-shot migrate, read-only Go services, limits on every service, the

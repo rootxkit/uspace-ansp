@@ -5,6 +5,7 @@
 // request the page makes goes to this one origin (no third-party tile,
 // font or script), and every act reached the API with its reason.
 import { expect, test, type APIRequestContext, type Page } from "@playwright/test";
+import { typeCircle, typeVertices } from "./outline";
 
 // The mock's test account and code (test/mock-api.mjs), not credentials.
 const SUPER = { username: "super1", password: "super1-test-password" };
@@ -19,6 +20,7 @@ interface Recorded {
   authorization?: boolean;
   cookie?: boolean;
   body?: Record<string, unknown>;
+  query?: Record<string, string>;
 }
 
 async function recorded(request: APIRequestContext): Promise<Recorded[]> {
@@ -65,11 +67,17 @@ test("sign in with MFA, plan a restriction, activate it, see the delivery change
   await expect(page.getByTestId("alarms-none")).toBeVisible();
   await expect(page.getByTestId("account")).toContainText("super1 (watch supervisor)");
 
-  // Plan: the area typed as the vertex list, the rest through the form.
+  // Plan: the area typed through the kit's outline fields, the rest
+  // through the form.
   await page.getByTestId("plan-link").click();
   await expect(page).toHaveURL(/\/en\/restrictions\/new$/);
-  await page.getByTestId("vertices").fill("44.78, 41.70\n44.82, 41.70\n44.82, 41.73\n44.78, 41.73");
-  await expect(page.getByTestId("vertex-count")).toHaveText("4 vertices");
+  await typeVertices(page, [
+    [44.78, 41.7],
+    [44.82, 41.7],
+    [44.82, 41.73],
+    [44.78, 41.73],
+  ]);
+  await expect(page.locator("[data-vertex-count]")).toHaveText("4 of at most 999 points");
   await page.getByLabel("U-space airspace (ED-318 identifier)").fill("GEOTU01");
   await page.getByRole("textbox", { name: "Lower limit (m)", exact: true }).fill("0");
   await page.getByRole("textbox", { name: "Upper limit (m)", exact: true }).fill("1200");
@@ -146,7 +154,11 @@ test("sign in with MFA, plan a restriction, activate it, see the delivery change
 test("a long window comes back as the chain the API proposes, planned only when ticked", async ({ page, request }) => {
   await signIn(page, SUPER, true);
   await page.getByTestId("plan-link").click();
-  await page.getByTestId("vertices").fill("44.78, 41.70\n44.82, 41.70\n44.80, 41.73");
+  await typeVertices(page, [
+    [44.78, 41.7],
+    [44.82, 41.7],
+    [44.8, 41.73],
+  ]);
   await page.getByLabel("U-space airspace (ED-318 identifier)").fill("GEOTU01");
   await page.getByRole("textbox", { name: "Lower limit (m)", exact: true }).fill("0");
   await page.getByRole("textbox", { name: "Upper limit (m)", exact: true }).fill("600");
@@ -173,7 +185,11 @@ test("a long window comes back as the chain the API proposes, planned only when 
 test("cancelling the confirmation sends nothing", async ({ page, request }) => {
   await signIn(page, SUPER, true);
   await page.getByTestId("plan-link").click();
-  await page.getByTestId("vertices").fill("44.78, 41.70\n44.82, 41.70\n44.80, 41.73");
+  await typeVertices(page, [
+    [44.78, 41.7],
+    [44.82, 41.7],
+    [44.8, 41.73],
+  ]);
   await page.getByLabel("U-space airspace (ED-318 identifier)").fill("GEOTU01");
   await page.getByRole("textbox", { name: "Lower limit (m)", exact: true }).fill("0");
   await page.getByRole("textbox", { name: "Upper limit (m)", exact: true }).fill("600");
@@ -184,6 +200,42 @@ test("cancelling the confirmation sends nothing", async ({ page, request }) => {
   await page.getByRole("alertdialog").getByRole("button", { name: "Cancel" }).click();
   await expect(page.getByText("not sent: the confirmation was cancelled")).toBeVisible();
   expect((await recorded(request)).filter((c) => c.method === "POST" && c.path === "/v1/restrictions")).toEqual([]);
+});
+
+// The kit's drawing tool with a circle (docs/PLAN.md section 15 row 53):
+// the outline on the map is the one the API drew, and the plan sends the
+// circle as its centre and radius, never the outline.
+test("a circle is drawn from the API's outline and planned as its centre and radius", async ({ page, request }) => {
+  await signIn(page, SUPER, true);
+  await page.getByTestId("plan-link").click();
+  await typeCircle(page, [44.8, 41.715], 1500);
+  await expect(page.locator("[data-circle-outline]")).toHaveText("The circle on the map is the outline the system drew.");
+  await expect(page.getByTestId("circle-outline-refused")).toHaveCount(0);
+  const asked = (await recorded(request)).filter((c) => c.method === "GET" && c.path === "/v1/outlines/circle");
+  expect(asked.at(-1)?.query).toEqual({ lat: "41.715", lng: "44.8", radius_m: "1500" });
+
+  await page.getByLabel("U-space airspace (ED-318 identifier)").fill("GEOTU01");
+  await page.getByRole("textbox", { name: "Lower limit (m)", exact: true }).fill("0");
+  await page.getByRole("textbox", { name: "Upper limit (m)", exact: true }).fill("600");
+  await page.getByLabel("Starts, UTC").fill("2026-10-05T12:00");
+  await page.getByLabel("Ends, UTC").fill("2026-10-05T14:00");
+  await page.getByRole("textbox", { name: "Reason", exact: true }).fill("Exercise (synthetic)");
+  await page.getByRole("button", { name: "Plan", exact: true }).click();
+  await page.getByRole("alertdialog").getByRole("button", { name: "Plan and send" }).click();
+  await expect(page).toHaveURL(/\/en\/restrictions\/[0-9A-Z]{26}$/);
+  const plans = (await recorded(request)).filter((c) => c.method === "POST" && c.path === "/v1/restrictions");
+  expect(plans).toHaveLength(1);
+  expect(plans[0]?.body).toMatchObject({ geometry: { type: "Point", coordinates: [44.8, 41.715] }, radius_m: 1500 });
+});
+
+test("a circle the API will not draw shows its centre and says so", async ({ page, request }) => {
+  await signIn(page, SUPER, true);
+  await page.getByTestId("plan-link").click();
+  await typeCircle(page, [44.8, 41.715], 2_000_000);
+  await expect(page.getByTestId("circle-outline-refused")).toBeVisible();
+  await expect(page.locator("[data-circle-outline]")).toHaveText("The system draws a circle's outline; until it has, the map shows its centre only.");
+  const asked = (await recorded(request)).filter((c) => c.method === "GET" && c.path === "/v1/outlines/circle");
+  expect(asked.at(-1)?.query).toEqual({ lat: "41.715", lng: "44.8", radius_m: "2000000" });
 });
 
 test("a viewer reads restrictions and adapters but is offered no act; disabled is not silent", async ({ page }) => {
