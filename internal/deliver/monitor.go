@@ -21,10 +21,12 @@ type Target struct {
 
 // Monitor raises cisp_not_published for a restriction active here and
 // not published to the CISP at its current version for more than
-// cisp_alarm_after_s (on the database clock), starts the degraded direct
-// delivery to every target, and clears the alarm, with its duration,
-// when the publication succeeds or the restriction is no longer active
-// (the direct jobs still queued are then cancelled). It runs on every
+// cisp_alarm_after_s (on the database clock), and for the end of one an
+// earlier version of which the CISP holds or went out directly; starts
+// the degraded direct delivery to every target; and clears the alarm,
+// with its duration, when the publication succeeds or the restriction
+// is no longer active and its end is delivered (the direct jobs still
+// queued are then cancelled). It runs on every
 // replica; the alarm's unique index makes one of them raise it.
 type Monitor struct {
 	Repo   Repo

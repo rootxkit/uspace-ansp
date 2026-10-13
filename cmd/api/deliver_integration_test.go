@@ -819,6 +819,79 @@ func TestIntegrationDegradedPathDeliversTheEnd(t *testing.T) {
 	}
 }
 
+// The activation reaches the CISP, then the CISP goes down: the end
+// cannot be published, and no alarm is open (the activation never went
+// out directly). At cisp_alarm_after_s the alarm is raised at the end's
+// version and the end is delivered directly to the USSPs and the
+// authority, else every receiver keeps the restriction in force; the
+// alarm clears once it is delivered. The activation itself is never
+// delivered directly (the CISP held it).
+func TestIntegrationEndDeliveredDirectlyWhenTheCISPFailsAfterTheActivation(t *testing.T) {
+	s := newDeliverStack(t)
+	r := s.plan("h2-cisp-down-after-activation")
+	s.cisp.await(t, "/v1/restrictions", 1, 5*time.Second)
+	s.op(r.ID, "activate", map[string]string{"reason": "rescue helicopter on scene"})
+	s.awaitBody(10*time.Second, func(b map[string]any) bool { return b["published"] == true && b["ansp_version"] == 2.0 })
+	s.cisp.answer.Store(func(req peerRequest) int {
+		if req.Path == deliver.PathHeartbeat {
+			return http.StatusNoContent
+		}
+		return http.StatusServiceUnavailable
+	})
+	s.op(r.ID, "end", map[string]string{"reason": "rescue complete"})
+	endedAt := s.changedAt(r.ID, 3)
+	raised := s.awaitBody(20*time.Second, func(b map[string]any) bool {
+		a, ok := b["alarm"].(map[string]any)
+		return ok && a["kind"] == "cisp_not_published" && a["state"] == "open"
+	})["alarm"].(map[string]any)
+	if !strings.Contains(raised["detail"].(string), "is ended and the change is not yet published to the CISP since") {
+		t.Fatalf("detail %v", raised["detail"])
+	}
+	if at, _ := time.Parse(time.RFC3339Nano, raised["raised_at"].(string)); at.Sub(endedAt) < 10*time.Second {
+		t.Fatalf("the alarm was raised %v after the end, before cisp_alarm_after_s", at.Sub(endedAt))
+	}
+	for _, p := range []*peer{s.ussps[0], s.authority} {
+		req := p.await(t, deliver.PathNotifications, 1, 20*time.Second)
+		v, err := coreauth.NewCompactVerifier(s.ctx, coreauth.CompactConfig{
+			Issuers:   map[string]coreauth.IssuerConfig{"https://ansp.test": {JWKSURL: s.jwksURL()}},
+			Audiences: []string{p.host()}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, body, err := v.Verify(s.ctx, string(req.Body))
+		if err != nil {
+			t.Fatalf("%s refuses the delivery: %v", p.host(), err)
+		}
+		var ch cispclient.Change
+		strict(t, body, &ch)
+		if ch.Reason != cispclient.ChangeReasonRestrictionEnded || ch.Version != 3 || len(ch.RemovedIds) != 1 {
+			t.Fatalf("%s: the end is not delivered directly: %+v", p.host(), ch)
+		}
+	}
+	cleared := s.awaitBody(20*time.Second, func(b map[string]any) bool {
+		a, ok := b["alarm"].(map[string]any)
+		return ok && a["kind"] == "cisp_not_published" && a["state"] == "cleared"
+	})["alarm"].(map[string]any)
+	if cleared["clear_reason"] != deliver.CancelNotActive {
+		t.Fatalf("cleared %v", cleared)
+	}
+	if n := s.deliveries(`SELECT count(*) FROM deliveries WHERE restriction_id = $1 AND kind = 'direct_degraded' AND ansp_version <> 3`, r.ID); n != 0 {
+		t.Fatalf("%d direct deliveries of a version the CISP held", n)
+	}
+	// A later tick, the CISP still down: the end is delivered and its
+	// alarm cleared, so nothing is raised or delivered again.
+	rep, err := s.dw.monitor.Tick(s.ctx)
+	if err != nil || rep.Raised != 0 || rep.DirectQueued != 0 {
+		t.Fatalf("the delivered end is raised again: %+v %v", rep, err)
+	}
+	if n := s.deliveries(`SELECT count(*) FROM delivery_alarms WHERE restriction_id = $1 AND kind = 'cisp_not_published'`, r.ID); n != 1 {
+		t.Fatalf("%d cisp_not_published alarms, want the one cleared", n)
+	}
+	if n := s.deliveries(`SELECT count(*) FROM deliveries WHERE restriction_id = $1 AND kind = 'direct_degraded'`, r.ID); n != len(s.ussps)+1 {
+		t.Fatalf("%d direct deliveries of the end, want one per target", n)
+	}
+}
+
 func (s *deliverStack) planWithReason(key, reason string) restrictionWire {
 	s.t.Helper()
 	start := time.Now().UTC().Truncate(time.Millisecond)

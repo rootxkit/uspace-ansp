@@ -386,10 +386,15 @@ func (f *fakeRepo) Overdue(_ context.Context, after time.Duration, limit int) ([
 			continue
 		case r.state == "active" && cur.ChangedAt.After(now.Add(-after)):
 			continue
-		case r.state != "active" && (!terminal || open == nil || open.AnspVersion >= cur.Version):
+		case r.state != "active" && !terminal:
+			continue
+		case terminal && (open == nil || open.AnspVersion >= cur.Version) && (pub == 0 || cur.ChangedAt.After(now.Add(-after))):
 			continue
 		}
 		if open != nil && open.AnspVersion >= cur.Version {
+			continue
+		}
+		if f.wentOutDirectly(id, cur.Version) {
 			continue
 		}
 		o := Overdue{RestrictionID: id, AnspVersion: cur.Version, ChangedAt: cur.ChangedAt}
@@ -402,6 +407,23 @@ func (f *fakeRepo) Overdue(_ context.Context, after time.Duration, limit int) ([
 		}
 	}
 	return out, nil
+}
+
+// wentOutDirectly is a version of rid whose cisp_not_published alarm
+// is cleared, or a direct delivery of which is settled.
+func (f *fakeRepo) wentOutDirectly(rid string, version int64) bool {
+	for _, a := range f.alarms {
+		if a.Kind == AlarmCISPNotPublished && a.RestrictionID == rid && a.ClearedAt != nil && a.AnspVersion >= version {
+			return true
+		}
+	}
+	for _, d := range f.rows {
+		if d.Kind == KindDirect && d.RestrictionID == rid && d.AnspVersion == version &&
+			(d.State == StateSent || d.State == StateFailed || d.State == StateAbandoned) {
+			return true
+		}
+	}
+	return false
 }
 
 func (f *fakeRepo) openCISP(rid string) *Alarm {

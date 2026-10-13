@@ -69,6 +69,9 @@ type deliverWiring struct {
 	tokens deliver.Tokens
 	policy deliver.Policy
 	roots  *x509.CertPool
+	// monitor is the alarm monitor run by run (a test ticks it once
+	// more to see what a later tick does).
+	monitor *deliver.Monitor
 }
 
 // wireDeliver builds the outbox on the relational database and the bus:
@@ -236,6 +239,7 @@ func wireDeliver(cfg config.Config, db *store.Relational, b *bus.Bus, keys *auth
 	if issuer == "" {
 		monitor.Targets = nil
 	}
+	w.monitor = monitor
 	w.run = append(w.run, outbox.RunScan, monitor.Run)
 	if pub != nil {
 		w.run = append(w.run, func(ctx context.Context) { worker.Run(ctx, consumerNext(b, pol, logger)) })
