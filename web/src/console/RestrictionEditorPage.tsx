@@ -1,9 +1,13 @@
 "use client";
 
 // /<locale>/restrictions/new: plan a restriction on the map (ATS.TR.237(a),
-// 02 F2). The supervisor draws a polygon (a click per vertex, or the
-// vertex list typed) or a circle (a click for the centre and a radius in
-// metres), enters the lower and upper limits with their reference (AMSL
+// 02 F2). The supervisor draws the area with the kit's drawing tool
+// (layers/DrawLayer: a click per polygon vertex or for a circle's centre,
+// a drag to move a point) or types it (form/OutlineFields, the keyboard
+// path: vertices, or a circle's centre and radius in metres); a circle's
+// outline on the map is the one the API drew (GET /v1/outlines/circle,
+// docs/PLAN.md section 15 row 53), the centre alone until it has. Then
+// the lower and upper limits with their reference (AMSL
 // or WGS84; AGL is shown as unavailable with the API's reason, D3), the
 // window in UTC, the reason, and the U-space airspace the restriction
 // lies in. The kit's form checks shape only; the API judges everything
@@ -12,21 +16,21 @@
 // chain of re-issues the API proposes, shown and planned only when the
 // supervisor ticks it. Nothing is sent before the confirmation that says
 // what will be sent to whom.
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { z } from "zod";
-import { CheckboxField, EnumField, Form, NumberField, TextField, UTCDateTimeField } from "@rootxkit/uspace-ui/form";
+import { CheckboxField, EnumField, Form, NumberField, OutlineFields, TextField, UTCDateTimeField, emptyOutline } from "@rootxkit/uspace-ui/form";
 import { ConfirmDialog } from "@rootxkit/uspace-ui/form";
 import { useLang, useT } from "@rootxkit/uspace-ui/i18n";
-import type { FieldError } from "@rootxkit/uspace-ui/model";
-import { Button, Label, Textarea } from "@rootxkit/uspace-ui/ui";
+import { DrawLayer } from "@rootxkit/uspace-ui/layers";
+import type { DrawOutline, FieldError } from "@rootxkit/uspace-ui/model";
 import { chainProposal, failureOf, type CallFailure } from "../api/client";
 import type { components } from "../api/types";
 import { toView } from "./adapt";
-import { ConsoleMap, DraftLayer } from "./ConsoleMap";
+import { ConsoleMap } from "./ConsoleMap";
 import { useConsole } from "./context";
-import { parseVertices, roundClick, verticesText, type Position } from "./draft";
-import { planBody, planSchema, VERTICAL_REFS, ZONE_TYPES, type AreaMode, type PlanValues } from "./plan";
+import { MAX_VERTICES, useCircleOutline } from "./outline";
+import { planBody, planSchema, VERTICAL_REFS, ZONE_TYPES, type PlanValues } from "./plan";
 import { referenceAfter, referenceFor } from "./reference";
 import { maySupervise } from "./roles";
 import { Empty } from "./ui";
@@ -47,45 +51,14 @@ export function RestrictionEditorPage() {
   const { client, role } = useConsole();
   const others = useRestrictions("active");
   const views = useMemo(() => (others.restrictions ?? []).map((r) => toView(r, lang)), [others.restrictions, lang]);
-  const [mode, setMode] = useState<AreaMode>("polygon");
-  const [vertices, setVertices] = useState<Position[]>([]);
-  const [text, setText] = useState("");
-  const [textProblem, setTextProblem] = useState<string | null>(null);
-  const [centre, setCentre] = useState<Position | null>(null);
+  const [outline, setOutline] = useState<DrawOutline>(() => emptyOutline("polygon"));
+  const circle = useCircleOutline(client, outline);
   const [pending, setPending] = useState<Pending | null>(null);
   const [chain, setChain] = useState<FieldError[]>([]);
   const [failure, setFailure] = useState<CallFailure | null>(null);
   // One reference per editor: a resend of the same plan is answered with
   // the restriction first created (api/openapi.yaml createRestriction).
   const ref = useRef<string>("");
-
-  const onMapClick = useCallback(
-    (at: Position) => {
-      const p = roundClick(at);
-      if (mode === "circle") {
-        setCentre(p);
-        return;
-      }
-      setVertices((vs) => {
-        const next = [...vs, p];
-        setText(verticesText(next));
-        setTextProblem(null);
-        return next;
-      });
-    },
-    [mode],
-  );
-
-  const onText = (v: string) => {
-    setText(v);
-    const parsed = parseVertices(v);
-    if ("vertices" in parsed) {
-      setVertices(parsed.vertices);
-      setTextProblem(null);
-    } else {
-      setTextProblem(t(`ansp.editor.vertices.${parsed.problem}`, { line: parsed.line }));
-    }
-  };
 
   const defaults: z.input<typeof planSchema> = {
     uspace_airspace_id: "",
@@ -97,13 +70,12 @@ export function RestrictionEditorPage() {
     starts_at: "",
     ends_at: "",
     reason_text: "",
-    radius_m: null,
     confirm_chain: false,
   };
 
   const onSubmit = (values: PlanValues): Promise<FieldError[] | undefined> => {
     setFailure(null);
-    const built = planBody(values, mode, vertices, centre, {
+    const built = planBody(values, outline, {
       polygon: t("ansp.editor.polygon_required"),
       centre: t("ansp.editor.centre_required"),
       radius: t("ansp.editor.radius_required"),
@@ -136,53 +108,17 @@ export function RestrictionEditorPage() {
 
   if (!maySupervise(role)) return <Empty textKey="ansp.editor.role" testId="editor-role" />;
 
-  const closedDraft = mode === "polygon";
-  const drawn = mode === "polygon" ? vertices : centre === null ? [] : [centre];
-
   return (
     <div className="flex flex-col gap-4 lg:flex-row">
       <div className="flex flex-col gap-2 lg:w-[45%]">
         <h2 className="m-0 text-lg font-semibold">{t("ansp.editor.title")}</h2>
-        <fieldset className="flex flex-col gap-2 rounded border border-[var(--us-border)] p-2">
-          <legend className="px-1 text-sm font-semibold">{t("ansp.editor.area")}</legend>
-          <div className="flex gap-3 text-sm" role="radiogroup" aria-label={t("ansp.editor.mode")}>
-            {(["polygon", "circle"] as const).map((m) => (
-              <label key={m} className="flex items-center gap-1">
-                <input type="radio" name="area-mode" value={m} checked={mode === m} onChange={() => setMode(m)} data-testid={`mode-${m}`} />
-                {t(`ansp.editor.mode.${m}`)}
-              </label>
-            ))}
-          </div>
-          <p className="m-0 text-xs text-[var(--us-text-muted)]">{t(mode === "polygon" ? "ansp.editor.hint_polygon" : "ansp.editor.hint_circle")}</p>
-          {mode === "polygon" ? (
-            <div className="flex flex-col gap-1">
-              <Label htmlFor="vertices">{t("ansp.editor.vertices")}</Label>
-              <Textarea id="vertices" rows={6} value={text} onChange={(e) => onText(e.target.value)} className="font-mono text-xs" data-testid="vertices" />
-              {textProblem !== null && (
-                <p role="alert" className="m-0 text-xs text-[var(--us-danger)]">
-                  {textProblem}
-                </p>
-              )}
-              <p className="m-0 text-xs" data-testid="vertex-count">
-                {t("ansp.editor.vertex_count", { count: vertices.length })}
-              </p>
-              <div className="flex gap-2">
-                <Button type="button" size="sm" variant="outline" disabled={vertices.length === 0} onClick={() => onText(verticesText(vertices.slice(0, -1)))}>
-                  {t("ansp.editor.undo")}
-                </Button>
-                <Button type="button" size="sm" variant="outline" disabled={vertices.length === 0} onClick={() => onText("")}>
-                  {t("ansp.editor.clear")}
-                </Button>
-              </div>
-            </div>
-          ) : (
-            <p className="m-0 text-sm" data-testid="centre">
-              {centre === null ? t("ansp.editor.centre_none") : t("ansp.editor.centre", { lng: centre[0], lat: centre[1] })}
-            </p>
-          )}
-        </fieldset>
+        <OutlineFields outline={outline} onChange={setOutline} maxVertices={MAX_VERTICES} circleOutlineShown={circle.kind === "drawn"} legendKey="ansp.editor.area" />
+        {circle.kind === "refused" && (
+          <p role="status" className="m-0 text-xs" data-testid="circle-outline-refused">
+            {t("ansp.editor.circle_outline_refused")}
+          </p>
+        )}
         <Form schema={planSchema} defaults={defaults} onSubmit={onSubmit} submitLabelKey="ansp.editor.submit" successKey="ansp.editor.planned">
-          {mode === "circle" && <NumberField name="radius_m" labelKey="ansp.field.radius_m" unit="form.unit.m" required />}
           <TextField name="uspace_airspace_id" labelKey="ansp.field.uspace_airspace_id" hintKey="ansp.field.uspace_airspace_id.hint" required />
           <EnumField name="zone_type" labelKey="ansp.field.zone_type" values={ZONE_TYPES} i18nPrefix="ansp.zone_type" required />
           <NumberField name="lower_m" labelKey="ansp.field.lower_m" unit="form.unit.m" required />
@@ -232,7 +168,13 @@ export function RestrictionEditorPage() {
       </div>
       <div className="flex flex-1 flex-col gap-1">
         <ConsoleMap restrictions={views} className="h-[70vh]">
-          <DraftLayer vertices={drawn} closed={closedDraft} onClick={onMapClick} />
+          <DrawLayer
+            id="ansp-draw"
+            outline={outline}
+            onChange={setOutline}
+            maxVertices={MAX_VERTICES}
+            circleOutline={circle.kind === "drawn" ? circle.outline : null}
+          />
         </ConsoleMap>
         <p className="m-0 text-xs text-[var(--us-text-muted)]">{t("ansp.editor.map_hint")}</p>
       </div>

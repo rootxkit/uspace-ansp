@@ -2,7 +2,7 @@
 
 Next.js (App Router, `output: 'standalone'`) on the shared kit
 [`uspace-ui`](https://github.com/rootxkit/uspace-ui), pinned to one
-GitHub Release tarball (`0.1.0-rc.1`). It plans, activates, extends,
+GitHub Release tarball (`1.0.0`). It plans, activates, extends,
 ends and cancels restrictions through the API, shows the manned traffic
 picture and the Annex V coordination inbox, and holds the source
 switches, the policy, the audit view and the occurrence report; it shows
@@ -89,7 +89,7 @@ by the picture page with `console/subscribe/v1 {bbox, layers:
 a `401` answer, is shown as "signed out, sign in again".
 
 The manned stream runs on `src/console/stream.ts`, not the kit's
-`useFeed`: the kit `0.1.0-rc.1` passes on neither the status frame's
+`useFeed`: the kit (`1.0.0` as `0.1.0-rc.1`) passes on neither the status frame's
 `adapters[]` nor the members of a manned aircraft the picture needs
 (`docs/PLAN.md` section 15 row 51). It reuses the kit's URL rule, frame
 and status parsers and reconnect backoff. The picture keeps each
@@ -137,7 +137,7 @@ unknown `ANSP_*` names.
 |---|---|
 | `WEB_API_INTERNAL_URL` | the API as the BFF reaches it (`http://api:8080` in compose); unset, every BFF route answers 503 naming it |
 | `WEB_MFA_CHALLENGE_SECRET` | seals the MFA challenge between the two sign-in steps; at least 32 bytes from the deployment's secret store; unset or shorter, every BFF route answers 503 naming it |
-| `WEB_TRUSTED_PROXY_HOPS` | reverse proxies in front of Next.js that append to `X-Forwarded-For` (1 behind Caddy); the API lists the web container in `ANSP_TRUSTED_PROXIES` |
+| `WEB_TRUSTED_PROXY_HOPS` | reverse proxies in front of Next.js that append to `X-Forwarded-For`: required, 1 behind Caddy, 0 with none (the API then gets no client address); unset or not 0 to 8, every `/_bff/*` route answers 503 naming it; the API lists the web container in `ANSP_TRUSTED_PROXIES` |
 | `WEB_SESSION_MAX_AGE_S` | ceiling of the session cookie's `Max-Age` (43200); the API's `expires_at` shortens it |
 | `WEB_UPSTREAM_TIMEOUT_MS` | timeout of each BFF call to the API (10000) |
 | `WEB_BRANDING_FILE` | JSON `{name, short_name, logo_url, contact, accent}`; unset uses the code-name defaults; an unknown member fails the page naming it |
@@ -156,9 +156,12 @@ every request the page makes goes to its own origin.
 
 ## What the console does not do
 
-It never judges an area: the editor sends the vertices as clicked or
-typed (the ring closed, nothing else), and the API answers containment,
-size, vertices and limits through uspace-core, its problems put on the
-fields. A circle is drawn as its centre: the API sends no outline, and
-drawing one would be geodesy. The gaps the brief met in the contract are
-in `docs/PLAN.md` section 15 (rows 45 to 50).
+It never judges an area: the editor draws it with the kit's `DrawLayer`
+and `OutlineFields` and sends the vertices as clicked or typed (the ring
+closed, nothing else), and the API answers containment, size, vertices
+and limits through uspace-core, its problems put on the fields. A
+circle's outline on the editor's map is the one the API drew
+(`GET /v1/outlines/circle`, uspace-core geodesy); the circle is sent as
+its centre and radius, and elsewhere a stored circle is still drawn as
+its centre. The gaps the brief met in the contract are in
+`docs/PLAN.md` section 15 (rows 45 to 53).

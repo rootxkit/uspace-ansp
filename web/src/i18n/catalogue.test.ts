@@ -43,8 +43,6 @@ const DYNAMIC: Record<string, readonly string[]> = {
   "ansp.requests.source": ["authority", "console"],
   "ansp.adapters.kind": ["replay", "dump1090_sbs", "dump1090_json", "asterix_cat021", "atm_api"],
   "ansp.adapters.class": ["ads_b", "mode_s", "ssr", "atm_feed", "ads_l"],
-  "ansp.editor.mode": ["polygon", "circle"],
-  "ansp.editor.vertices": ["pair", "range"],
   "ansp.locale": ["ka", "en"],
   "ansp.login.problem": [...LOGIN_SLUGS, "other", "unavailable"],
   "ansp.picture.adapter": ["live", "stale", "disabled", "down", "unknown"],
@@ -112,6 +110,6 @@ describe("catalogues", () => {
 
   it("the check finds a key that is not there", () => {
     expect(present(en, "ansp.no.such.key")).toBe(false);
-    expect(present(en, "ansp.editor.vertex_count")).toBe(true);
+    expect(present(en, "ansp.restrictions.alarms_open")).toBe(true);
   });
 });

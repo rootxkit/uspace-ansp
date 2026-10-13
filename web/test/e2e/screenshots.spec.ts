@@ -4,6 +4,7 @@
 //
 //   SCREENSHOT_DIR=docs/screenshots pnpm e2e screenshots
 import { expect, test, type Page } from "@playwright/test";
+import { typeVertices } from "./outline";
 
 const DIR = process.env["SCREENSHOT_DIR"];
 const SUPER = { username: "super1", password: "super1-test-password" };
@@ -33,7 +34,12 @@ test("every page in ka and en", async ({ page, request }) => {
 
   // One restriction planned and activated through the API, as the smoke run does.
   await page.goto("/en/restrictions/new");
-  await page.getByTestId("vertices").fill("44.78, 41.70\n44.82, 41.70\n44.82, 41.73\n44.78, 41.73");
+  await typeVertices(page, [
+    [44.78, 41.7],
+    [44.82, 41.7],
+    [44.82, 41.73],
+    [44.78, 41.73],
+  ]);
   await page.getByLabel("U-space airspace (ED-318 identifier)").fill("GEOTU01");
   await page.getByRole("textbox", { name: "Lower limit (m)", exact: true }).fill("0");
   await page.getByRole("textbox", { name: "Upper limit (m)", exact: true }).fill("1200");
@@ -59,7 +65,7 @@ test("every page in ka and en", async ({ page, request }) => {
     await expect(page.getByTestId("restriction-detail")).toBeVisible();
     await shot(page, `${lang}-detail`);
     await page.goto(`/${lang}/restrictions/new`);
-    await expect(page.getByTestId("vertices")).toBeVisible();
+    await expect(page.locator("[data-vertex-count]")).toBeVisible();
     await shot(page, `${lang}-new`);
     await page.goto(`/${lang}/requests?id=01K6P0R0000000000000000001`);
     await expect(page.getByTestId("request")).toBeVisible();
