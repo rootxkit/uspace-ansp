@@ -878,6 +878,18 @@ func TestIntegrationEndDeliveredDirectlyWhenTheCISPFailsAfterTheActivation(t *te
 	if n := s.deliveries(`SELECT count(*) FROM deliveries WHERE restriction_id = $1 AND kind = 'direct_degraded' AND ansp_version <> 3`, r.ID); n != 0 {
 		t.Fatalf("%d direct deliveries of a version the CISP held", n)
 	}
+	// A later tick, the CISP still down: the end is delivered and its
+	// alarm cleared, so nothing is raised or delivered again.
+	rep, err := s.dw.monitor.Tick(s.ctx)
+	if err != nil || rep.Raised != 0 || rep.DirectQueued != 0 {
+		t.Fatalf("the delivered end is raised again: %+v %v", rep, err)
+	}
+	if n := s.deliveries(`SELECT count(*) FROM delivery_alarms WHERE restriction_id = $1 AND kind = 'cisp_not_published'`, r.ID); n != 1 {
+		t.Fatalf("%d cisp_not_published alarms, want the one cleared", n)
+	}
+	if n := s.deliveries(`SELECT count(*) FROM deliveries WHERE restriction_id = $1 AND kind = 'direct_degraded'`, r.ID); n != len(s.ussps)+1 {
+		t.Fatalf("%d direct deliveries of the end, want one per target", n)
+	}
 }
 
 func (s *deliverStack) planWithReason(key, reason string) restrictionWire {

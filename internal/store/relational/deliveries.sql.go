@@ -878,6 +878,12 @@ WHERE COALESCE(r.published_version, 0) < r.ansp_version
   AND NOT EXISTS (SELECT 1 FROM delivery_alarms a
                   WHERE a.restriction_id = r.id AND a.kind = 'cisp_not_published' AND a.cleared_at IS NULL
                     AND a.ansp_version >= r.ansp_version)
+  AND NOT EXISTS (SELECT 1 FROM delivery_alarms a
+                  WHERE a.restriction_id = r.id AND a.kind = 'cisp_not_published' AND a.cleared_at IS NOT NULL
+                    AND a.ansp_version >= r.ansp_version)
+  AND NOT EXISTS (SELECT 1 FROM deliveries d
+                  WHERE d.kind = 'direct_degraded' AND d.restriction_id = r.id
+                    AND d.ansp_version = r.ansp_version AND d.state IN ('sent', 'failed', 'abandoned'))
 ORDER BY v.changed_at
 LIMIT $2
 `
@@ -902,7 +908,9 @@ type OverdueRestrictionsRow struct {
 // whose end is not published to it for longer than after_s (the CISP
 // went down after the activation: every receiver holds the restriction
 // in force until the end reaches it). Each without an open alarm at
-// that version.
+// that version, and without a cleared one or a settled direct delivery
+// at it: that version has gone out directly already, and raising again
+// would deliver it again on every tick.
 func (q *Queries) OverdueRestrictions(ctx context.Context, arg OverdueRestrictionsParams) ([]OverdueRestrictionsRow, error) {
 	rows, err := q.db.Query(ctx, overdueRestrictions, arg.AfterS, arg.PageSize)
 	if err != nil {

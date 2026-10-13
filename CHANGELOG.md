@@ -32,7 +32,8 @@ complete.
   version of which the CISP holds now raises `cisp_not_published` once
   its end is not published for `cisp_alarm_after_s`, and the end goes
   out on the degraded direct path; the alarm clears once it is
-  delivered.
+  delivered, and a version with a cleared alarm or a settled direct
+  delivery is not raised again (each tick raised and cleared it anew).
 - The degraded direct delivery (02 F2 failure rule, cross-plan M4, M5;
   system audit 2026-10-05 H-2) was acknowledged by the USSPs and the
   authority and then discarded: its record's `version` (the

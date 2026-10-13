@@ -309,6 +309,21 @@ func TestEndDeliveredDirectlyWhenTheCISPFailsAfterTheActivation(t *testing.T) {
 	if rep.Cleared != 1 || h.repo.alarms[0].ClearReason != CancelNotActive {
 		t.Fatalf("clear %+v %+v", rep, h.repo.alarms[0])
 	}
+	// Later ticks, the CISP still down: the end is delivered and its
+	// alarm cleared, so nothing is raised or delivered again.
+	for i := range 2 {
+		h.clock.Advance(10 * time.Second)
+		rep, err = mon.Tick(context.Background())
+		if err != nil || rep.Raised != 0 || rep.DirectQueued != 0 || rep.Cleared != 0 || len(h.repo.alarms) != 1 {
+			t.Fatalf("tick %d after the clear: %+v %v, %d alarms", i, rep, err, len(h.repo.alarms))
+		}
+	}
+	h.handDirect()
+	for _, rc := range []*receiver{ussp, authority} {
+		if n := len(rc.requests()); n != 1 {
+			t.Fatalf("%s: the end delivered %d times", rc.host, n)
+		}
+	}
 }
 
 // The cis/change/v1 record of every op, and the op of every version.
