@@ -91,6 +91,12 @@ complete.
 
 ### Added
 
+- `GET /v1/outlines/circle?lat=&lng=&radius_m=` (session, additive): a
+  circle drawn as a closed Polygon of 64 vertices by uspace-core
+  `geodesy.Destination` (`internal/outline`), display only. The
+  restriction editor draws its area with the kit's `DrawLayer` and
+  `OutlineFields` (at most 999 vertices, the contract's ring bound) and
+  shows a circle's outline as the API drew it (PLAN section 15 row 53).
 - WP-13 deploy proof: `deploy/compose.prod.yaml` (the production and
   staging shape: one timescaledb-ha container with both databases, the
   one-shot migrate, read-only Go services, limits on every service, the

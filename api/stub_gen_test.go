@@ -157,6 +157,12 @@ func (s exampleStub) CreateOccurrence(_ context.Context, request gen.CreateOccur
 
 func (c canned) VisitCreateOccurrenceResponse(w http.ResponseWriter) error { return c.visit(w) }
 
+func (s exampleStub) GetCircleOutline(_ context.Context, request gen.GetCircleOutlineRequestObject) (gen.GetCircleOutlineResponseObject, error) {
+	return s.answer("getCircleOutline", request), nil
+}
+
+func (c canned) VisitGetCircleOutlineResponse(w http.ResponseWriter) error { return c.visit(w) }
+
 func (s exampleStub) GetPolicy(_ context.Context, request gen.GetPolicyRequestObject) (gen.GetPolicyResponseObject, error) {
 	return s.answer("getPolicy", request), nil
 }

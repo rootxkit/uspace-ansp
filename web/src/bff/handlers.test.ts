@@ -275,6 +275,7 @@ describe("proxy", () => {
     "/v1/occurrences",
     "/v1/policy",
     "/v1/audit",
+    "/v1/outlines/circle",
   ])("forwards /_bff/api%s with the session cookie as the bearer", async (p) => {
     const api = mockApi(() => Response.json({ ok: true }));
     const res = await bffWith(api.fetch).proxy(req(`/_bff/api${p}?state=active`, { method: "GET", headers: { cookie } }));

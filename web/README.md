@@ -156,9 +156,12 @@ every request the page makes goes to its own origin.
 
 ## What the console does not do
 
-It never judges an area: the editor sends the vertices as clicked or
-typed (the ring closed, nothing else), and the API answers containment,
-size, vertices and limits through uspace-core, its problems put on the
-fields. A circle is drawn as its centre: the API sends no outline, and
-drawing one would be geodesy. The gaps the brief met in the contract are
-in `docs/PLAN.md` section 15 (rows 45 to 50).
+It never judges an area: the editor draws it with the kit's `DrawLayer`
+and `OutlineFields` and sends the vertices as clicked or typed (the ring
+closed, nothing else), and the API answers containment, size, vertices
+and limits through uspace-core, its problems put on the fields. A
+circle's outline on the editor's map is the one the API drew
+(`GET /v1/outlines/circle`, uspace-core geodesy); the circle is sent as
+its centre and radius, and elsewhere a stored circle is still drawn as
+its centre. The gaps the brief met in the contract are in
+`docs/PLAN.md` section 15 (rows 45 to 53).

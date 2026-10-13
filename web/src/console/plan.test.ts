@@ -1,7 +1,7 @@
 // The plan body: the form's values and the drawn area become the
 // RestrictionCreate the API takes; a missing area is named on its field.
 import { describe, expect, it } from "vitest";
-import type { Position } from "./draft";
+import type { DrawOutline } from "@rootxkit/uspace-ui/model";
 import { planBody, planSchema, type PlanValues } from "./plan";
 
 const VALUES: PlanValues = {
@@ -14,19 +14,21 @@ const VALUES: PlanValues = {
   starts_at: "2026-10-02T12:00:00Z",
   ends_at: "2026-10-02T16:00:00Z",
   reason_text: "Search and rescue (synthetic)",
-  radius_m: null,
   confirm_chain: false,
 };
 const REASONS = { polygon: "p", centre: "c", radius: "r" };
-const TRI: Position[] = [
-  [44.78, 41.7],
-  [44.82, 41.7],
-  [44.8, 41.73],
-];
+const TRI: DrawOutline = {
+  kind: "polygon",
+  vertices: [
+    { lng: 44.78, lat: 41.7 },
+    { lng: 44.82, lat: 41.7 },
+    { lng: 44.8, lat: 41.73 },
+  ],
+};
 
 describe("planBody", () => {
   it("sends a closed Polygon with radius_m null and no confirm_chain", () => {
-    expect(planBody(VALUES, "polygon", TRI, null, REASONS)).toEqual({
+    expect(planBody(VALUES, TRI, REASONS)).toEqual({
       body: {
         uspace_airspace_id: "GEOTU01",
         zone_type: "PROHIBITED",
@@ -37,28 +39,28 @@ describe("planBody", () => {
         starts_at: "2026-10-02T12:00:00Z",
         ends_at: "2026-10-02T16:00:00Z",
         reason_text: "Search and rescue (synthetic)",
-        geometry: { type: "Polygon", coordinates: [[...TRI, [44.78, 41.7]]] },
+        geometry: { type: "Polygon", coordinates: [[[44.78, 41.7], [44.82, 41.7], [44.8, 41.73], [44.78, 41.7]]] },
         radius_m: null,
       },
     });
   });
 
   it("sends confirm_chain only when ticked", () => {
-    const b = planBody({ ...VALUES, confirm_chain: true }, "polygon", TRI, null, REASONS);
+    const b = planBody({ ...VALUES, confirm_chain: true }, TRI, REASONS);
     expect("body" in b && b.body.confirm_chain).toBe(true);
   });
 
   it("names the geometry when the polygon has under three vertices", () => {
-    expect(planBody(VALUES, "polygon", TRI.slice(0, 2), null, REASONS)).toEqual({ errors: [{ field: "geometry", reason: "p" }] });
+    expect(planBody(VALUES, { kind: "polygon", vertices: TRI.vertices.slice(0, 2) }, REASONS)).toEqual({ errors: [{ field: "geometry", reason: "p" }] });
   });
 
-  it("sends a Point with its radius for a circle", () => {
-    const b = planBody({ ...VALUES, radius_m: 500 }, "circle", [], [44.8, 41.71], REASONS);
+  it("sends a circle as its Point and radius, never as an outline", () => {
+    const b = planBody(VALUES, { kind: "circle", center: { lng: 44.8, lat: 41.71 }, radiusM: 500 }, REASONS);
     expect(b).toMatchObject({ body: { geometry: { type: "Point", coordinates: [44.8, 41.71] }, radius_m: 500 } });
   });
 
   it("names the centre and the radius a circle lacks", () => {
-    expect(planBody(VALUES, "circle", [], null, REASONS)).toEqual({
+    expect(planBody(VALUES, { kind: "circle", center: null, radiusM: null }, REASONS)).toEqual({
       errors: [
         { field: "geometry", reason: "c" },
         { field: "radius_m", reason: "r" },

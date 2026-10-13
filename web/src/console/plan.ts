@@ -2,9 +2,10 @@
 // RestrictionCreate). Shape only: the API judges the meaning.
 import { z } from "zod";
 import { shapes } from "@rootxkit/uspace-ui/form";
-import type { FieldError } from "@rootxkit/uspace-ui/model";
+import type { DrawOutline, FieldError } from "@rootxkit/uspace-ui/model";
 import type { components } from "../api/types";
-import { pointOf, polygonOf, type Position } from "./draft";
+import { pointOf, polygonOf } from "./draft";
+import { positionOf, verticesOfOutline } from "./outline";
 
 type ApiRestrictionCreate = components["schemas"]["RestrictionCreate"];
 
@@ -22,24 +23,21 @@ export const planSchema = z.object({
   starts_at: shapes.utcTime(),
   ends_at: shapes.utcTime(),
   reason_text: z.string().trim().min(1).max(500),
-  radius_m: z.number().positive().nullable(),
   confirm_chain: z.boolean(),
 });
 
 export type PlanValues = z.output<typeof planSchema>;
 
-export type AreaMode = "polygon" | "circle";
-
 /**
- * The RestrictionCreate body of the form's values and the drawn area, or
- * the field errors that keep it from being sent (the area is not a form
- * field, so its shape errors are named here, on `geometry`).
+ * The RestrictionCreate body of the form's values and the drawn outline
+ * (the kit's DrawOutline), or the field errors that keep it from being
+ * sent (the outline is not a form field, so its shape errors are named
+ * here, on `geometry` and `radius_m`). A circle is sent as its centre and
+ * radius, never as the outline the API drew for the map.
  */
 export function planBody(
   values: PlanValues,
-  mode: AreaMode,
-  vertices: readonly Position[],
-  centre: Position | null,
+  outline: DrawOutline,
   reasons: { polygon: string; centre: string; radius: string },
 ): { body: ApiRestrictionCreate } | { errors: FieldError[] } {
   const common = {
@@ -54,14 +52,14 @@ export function planBody(
     reason_text: values.reason_text,
     ...(values.confirm_chain ? { confirm_chain: true } : {}),
   };
-  if (mode === "polygon") {
-    const geometry = polygonOf(vertices);
+  if (outline.kind === "polygon") {
+    const geometry = polygonOf(verticesOfOutline(outline));
     if (geometry === null) return { errors: [{ field: "geometry", reason: reasons.polygon }] };
     return { body: { ...common, geometry, radius_m: null } };
   }
   const errors: FieldError[] = [];
-  if (centre === null) errors.push({ field: "geometry", reason: reasons.centre });
-  if (values.radius_m === null) errors.push({ field: "radius_m", reason: reasons.radius });
-  if (centre === null || values.radius_m === null) return { errors };
-  return { body: { ...common, geometry: pointOf(centre), radius_m: values.radius_m } };
+  if (outline.center === null) errors.push({ field: "geometry", reason: reasons.centre });
+  if (outline.radiusM === null) errors.push({ field: "radius_m", reason: reasons.radius });
+  if (outline.center === null || outline.radiusM === null) return { errors };
+  return { body: { ...common, geometry: pointOf(positionOf(outline.center)), radius_m: outline.radiusM } };
 }

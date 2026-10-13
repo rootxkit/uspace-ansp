@@ -88,7 +88,7 @@ func TestSpecValidates(t *testing.T) {
 var (
 	camelCase  = regexp.MustCompile(`^[a-z][a-zA-Z0-9]*$`)
 	processes  = []string{"api", "manned-feed", auth.ProcessEach}
-	tags       = []string{"restrictions", "restriction-requests", "coordination", "manned-traffic", "adapters", "sources", "policy", "occurrences", "audit", "auth", "uss", "cis", "health"}
+	tags       = []string{"restrictions", "restriction-requests", "outlines", "coordination", "manned-traffic", "adapters", "sources", "policy", "occurrences", "audit", "auth", "uss", "cis", "health"}
 	problemCTs = "application/problem+json"
 )
 
