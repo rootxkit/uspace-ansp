@@ -648,7 +648,7 @@ system-level additions below. The repo's `CLAUDE.md` is the authoritative
 short form.
 
 - `gofmt`, `go vet` (+ `govet enable-all` minus `fieldalignment`,
-  `shadow`), staticcheck v0.8.1, golangci-lint v2.14.0 with the core
+  `shadow`), staticcheck v0.8.2, golangci-lint v2.14.0 with the core
   `.golangci.yml` adapted: `forbidigo` forbids `panic`, `fmt.Print*`,
   `log.*` and `os.Exit` outside `cmd/*/main.go` and tests; `exhaustive`
   over every state enum; generated files (`*.gen.go`, `*.sql.go`) exempt
