@@ -16,6 +16,15 @@ complete.
 
 ### Changed
 
+- The timeseries tree's retention and compression come from the
+  configuration: `migrate timeseries` (api's and manned-feed's) sets
+  manned_tracks' and feed_products' retention to
+  `ANSP_TIMESERIES_RETENTION_DAYS` (default 90, spec 05 section 4,
+  pending GCAA; at least 30) and manned_tracks' compression to
+  `ANSP_TIMESERIES_COMPRESS_AFTER_DAYS` (default 7, before the
+  retention), and logs each job it changed. 0002's and 0003's intervals
+  are the defaults; a small host (the staging droplet's 512 MiB per
+  database) compresses after a day.
 - `web/`: `@rootxkit/uspace-ui` `1.0.0` (from `0.1.0-rc.1`), its release
   tarball checked against `SHA256SUMS` and its provenance attestation.
   `WEB_TRUSTED_PROXY_HOPS` is required (0: no proxy), unset the BFF
