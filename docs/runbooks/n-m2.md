@@ -12,6 +12,33 @@ paused or switched off, a report filed) or the host's logs and counters;
 none was done in this round. The lab's systems runs exercised none of the
 ANSP's N-M2 paths.
 
+## Run on the droplet, 2026-10-14
+
+**State: N-M2 is still not proven; SC-15 passes on staging.** Same host,
+deploy and limits as [n-m1.md](n-m1.md) "Run on the droplet,
+2026-10-14": without a `watch_supervisor` or `admin` session (the
+bootstrap admin's TOTP is not on the host) the inbox acknowledgement,
+the CISP-down direct path and alarm, SC-08's switch (`PUT /v1/sources`,
+admin) and the occurrence report (watch_supervisor) could not be
+driven. What needs no session was run:
+
+| Criterion | Result | Evidence (2026-10-14, UTC) |
+|---|---|---|
+| An adapter stalled for 30 s raises nothing from old positions (SC-15) | **pass** | `docker pause uspace-ansp-manned-adapter-1` 10:17:54 to 10:18:24, the snapshot read every 10 s: at 10 s the track `live` with its position 10.1 s old; at 20 s `stale` (20.1 s), adapter `down`, `degraded: [adapters_silent]`; at 30 s `stale` (30.1 s); `alerts` 0 throughout. After `unpause`: at +1 s a fresh position (0.0 s, `backlog: false`), the adapter `live` by +3 s and `degraded: []`. No position older than the pause reappeared as live. |
+| Inbox, CISP down (direct path, alarm at 10 s, reconciliation), SC-08, occurrence | **not run** | No console session (above). |
+
+Resources at the end of the run (`docker stats --no-stream`, 10:16:25):
+api 76 MiB of 256, web 56 of 224, nats 28 of 96, manned-feed 10 of 96,
+manned-adapter 6 of 64, timescaledb **342 of 384 MiB**: the database is
+near its limit and `ansp_ts` (594 MiB on 2026-10-13) grows with the
+looped replay, with no retention setting in this release.
+
+To run the rest, the owner either resets the bootstrap admin's MFA and
+keeps the new TOTP secret on the host (uspace-deploy keeps the
+authority's as `secrets/authority/admin-totp.txt`, 0600), or creates a
+`watch_supervisor` and an `admin` for the proof with their TOTP kept the
+same way; then the steps of "To run the proof" below.
+
 ## The N-M2 criteria
 
 | Criterion (`PLAN` section 12) | Result | Evidence |
