@@ -12,6 +12,31 @@ stack, which are writes to the server, and this round was read-only. The
 lab's own run of the restriction scenario against the systems stack
 failed (below). Every row says what decided it.
 
+## Run on the droplet, 2026-10-14
+
+**State: N-M1 is still not proven.** This run had a shell on the droplet
+(as root, through `uspace-deploy`), after `./deploy.sh ansp cisp ussp`
+of uspace-deploy a3bcf5e (ansp 3864302, `sha256:1fcfb3c9...` and web
+`sha256:67d3ded0...`, both verified with cosign v3 by
+`tools/verify-pins.sh`; `state/deploy.log`: `20261014T101103Z a3bcf5e
+demo ansp cisp ussp ok`). The restriction chain could not be driven:
+every write of it needs a console session of a `watch_supervisor`,
+created by an `admin`, and the ANSP's bootstrap `admin` enrolled TOTP at
+its first sign-in on 2026-10-05 outside the deployment's tooling (its
+`last_login_at`); the TOTP secret is not on the host, so no session can
+be opened and no supervisor created. Nothing was changed to get round
+that: resetting the admin's MFA is the owner's act.
+
+| Check | Result | Evidence (2026-10-14, UTC) |
+|---|---|---|
+| Images deployed are the signed ones | **pass** | `tools/verify-pins.sh` (uspace-deploy): `ANSP_GO_IMAGE ... signed by uspace-ansp CI at 3864302`, the same for web; `./deploy.sh` re-verified them before the pull. |
+| Health and readiness on the host | **pass** | `./deploy.sh` probes: api, manned-feed, manned-adapter `/healthz` 200 and `/readyz` ready; api's status line at 10:15:42: `nats: ok`, `relational: ok`, `jwks: ok`, `cis_publisher_keys: ok`, `cisp: ok (age 30 s)`, `geoid: ok (mapped: true)`, `dss: ok`, `cisp_publisher: ok`. Migrations: relational 71, timeseries 10, nothing pending. |
+| `/readyz` not served outside | **pass, as this repo's site** | uspace-deploy #16: every host answers `/readyz` 404 from Caddy, never routed (the row above now holds). |
+| Staging `mtls: off` line at error level (E-02) | **pass** | `docker logs uspace-ansp-api-1`: 12 lines `mTLS is off: ANSP_MTLS_MODE=off, client certificates are not required on /v1/manned-traffic/* and /v1/coordination/*` at error level in the 10 minutes before 10:15:42, one per status period. |
+| Baseline: feed status `adapters: replay running` | **pass** | `GET /v1/manned-traffic/snapshot` (read with authority-01's `ansp.traffic` token, mTLS off) at 10:15:42: adapter `replay` `live`, `enabled`, last frame 0.36 s old, `degraded: []`. |
+| A supervisor activates a restriction; CISP within 1 s; DSS within 5 s; USSP `restriction_activated`; the authority shows it; deactivation; every delivery `sent` | **not run** | No `watch_supervisor` session (above). The CISP's `restrictions` dataset still has no version. |
+| The replayed manned file streams to the authority | **pass (looped `two-aircraft-converging.ndjson`)** | The authority's manned-ingest status line counts `aircraft_published` rising (72064 to 72142 over its last three status periods to 10:19); the ANSP snapshot holds the replayed aircraft live. The USSP's monitor reads the stream as `ansp_feed` (`live since 2026-10-14T10:18:28Z`, reconnected after the SC-15 pause of n-m2.md) and publishes 0 tracks on `man.v1`: the replay's aircraft are outside the demo U-space airspace, as the relevance filter intends (lab finding D). `helicopter-near-uspace.ndjson` was not switched in (a compose change of the deployment). |
+
 ## Sources and how they were read
 
 | Source | Read how | When (UTC) |
