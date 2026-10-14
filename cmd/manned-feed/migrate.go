@@ -54,8 +54,31 @@ func subcommand(ctx context.Context, logger *slog.Logger, cfg config.Config, arg
 		}
 		logger.Info("migrate: tree current", slog.String("tree", name), slog.Int64("from_version", res.From),
 			slog.Int64("version", res.To), slog.Int("applied", res.Applied))
+		if name == store.TreeTimeseries.Name && !applyPolicies(ctx, logger, cfg, dsn) {
+			return 1
+		}
 	}
 	return 0
+}
+
+// applyPolicies sets the timeseries tree's retention and compression
+// jobs to the configuration (ANSP_TIMESERIES_RETENTION_DAYS,
+// ANSP_TIMESERIES_COMPRESS_AFTER_DAYS) and says what it changed, or that
+// nothing needed to change. False when they could not be set.
+func applyPolicies(ctx context.Context, logger *slog.Logger, cfg config.Config, dsn string) bool {
+	p := store.TimeseriesPolicies{RetentionDays: cfg.TimeseriesRetentionDays, CompressAfterDays: cfg.TimeseriesCompressAfterDays}
+	changes, err := store.ApplyTimeseriesPolicies(ctx, dsn, p)
+	if err != nil {
+		logger.Error("migrate: timeseries policies not set", slog.String("error", err.Error()))
+		return false
+	}
+	for _, c := range changes {
+		logger.Info("migrate: timeseries policy set", slog.String("table", c.Table), slog.String("policy", c.Policy),
+			slog.String("from", c.From), slog.String("to", c.To))
+	}
+	logger.Info("migrate: timeseries policies current", slog.Int("retention_days", p.RetentionDays),
+		slog.Int("compress_after_days", p.CompressAfterDays), slog.Int("changed", len(changes)))
+	return true
 }
 
 // treeDSN is the variable naming tree's database and its value in cfg.

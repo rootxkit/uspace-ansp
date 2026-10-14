@@ -69,6 +69,17 @@ type Config struct {
 	// DBTxTimeoutS bounds a transaction that has no deadline of its own
 	// and an idle transaction on the server.
 	DBTxTimeoutS int `env:"ANSP_DB_TX_TIMEOUT_S" default:"15" min:"1" max:"600"`
+	// TimeseriesRetentionDays is how long manned_tracks and feed_products
+	// keep a row online; `migrate timeseries` sets their retention jobs
+	// to it. Spec 05 section 4: 90 days; a longer national period is Q8,
+	// pending GCAA. At least the 30 days the ecosystem keeps operational
+	// records (2021/664 Art. 15(1)(g)).
+	TimeseriesRetentionDays int `env:"ANSP_TIMESERIES_RETENTION_DAYS" default:"90" min:"30" max:"3650"`
+	// TimeseriesCompressAfterDays is the age at which a manned_tracks
+	// chunk is compressed (0002: 7 days); `migrate timeseries` sets the
+	// compression job to it. Not a policy value: a host with a small disk
+	// budget compresses sooner. Before the retention.
+	TimeseriesCompressAfterDays int `env:"ANSP_TIMESERIES_COMPRESS_AFTER_DAYS" default:"7" min:"1" max:"3650"`
 
 	// TokenIssuers are the issuers of the tokens this system accepts
 	// (the authority and, in the lab, the lab issuer), as iss=jwks_url.
@@ -314,6 +325,11 @@ func (c *Config) validate() []error {
 		if u, err := url.Parse(c.PublicBaseURL); err == nil && !slices.Contains(c.Audiences, u.Host) {
 			errs = append(errs, core.Fieldf("ANSP_AUDIENCES", "does not contain %q, the host of ANSP_PUBLIC_BASE_URL", u.Host))
 		}
+	}
+	// Compared only when both loaded (an invalid one is refused above).
+	if c.TimeseriesRetentionDays > 0 && c.TimeseriesCompressAfterDays > 0 && c.TimeseriesCompressAfterDays >= c.TimeseriesRetentionDays {
+		errs = append(errs, core.Fieldf("ANSP_TIMESERIES_COMPRESS_AFTER_DAYS", "%d is not before ANSP_TIMESERIES_RETENTION_DAYS (%d): a chunk would be dropped before it is compressed",
+			c.TimeseriesCompressAfterDays, c.TimeseriesRetentionDays))
 	}
 	if c.RelationalDSN != "" && c.RelationalDSN == c.TimeseriesDSN {
 		// CLAUDE.md rule 6: two trees, two databases, never one.

@@ -380,6 +380,73 @@ func TestIntegrationCompressionAndRetentionJobs(t *testing.T) {
 	}
 }
 
+// ApplyTimeseriesPolicies sets the three jobs to the configuration, in
+// the database TimescaleDB runs them from; a second call changes nothing;
+// the defaults put 0002's and 0003's intervals back; a job that is gone
+// is refused with nothing changed, and so is the relational database.
+func TestIntegrationTimeseriesPoliciesFromConfig(t *testing.T) {
+	ctx := ctxT(t)
+	dsn := storetest.Scratch(t, store.TreeTimeseries, true)
+	job := func(table, proc, key string) string {
+		return scalar[string](t, dsn, `SELECT config->>$3 FROM timescaledb_information.jobs
+			WHERE hypertable_name = $1 AND proc_name = $2`, table, proc, key)
+	}
+	want := func(compress, keep string) {
+		t.Helper()
+		if got := job("manned_tracks", "policy_compression", "compress_after"); got != compress {
+			t.Fatalf("manned_tracks compress_after %q, want %q", got, compress)
+		}
+		for _, table := range []string{"manned_tracks", "feed_products"} {
+			if got := job(table, "policy_retention", "drop_after"); got != keep {
+				t.Fatalf("%s drop_after %q, want %q", table, got, keep)
+			}
+		}
+	}
+	want("7 days", "90 days")
+
+	changes, err := store.ApplyTimeseriesPolicies(ctx, dsn, store.TimeseriesPolicies{RetentionDays: 45, CompressAfterDays: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(changes) != 3 {
+		t.Fatalf("%d changes, want 3: %+v", len(changes), changes)
+	}
+	want("1 day", "45 days")
+	if c := changes[0]; c.Table != "manned_tracks" || c.Policy != "policy_compression" || c.From != "7 days" || c.To != "1 day" {
+		t.Fatalf("first change %+v", c)
+	}
+
+	// Equal intervals written differently are the same: nothing changes.
+	changes, err = store.ApplyTimeseriesPolicies(ctx, dsn, store.TimeseriesPolicies{RetentionDays: 45, CompressAfterDays: 1})
+	if err != nil || len(changes) != 0 {
+		t.Fatalf("second call: %+v %v", changes, err)
+	}
+	changes, err = store.ApplyTimeseriesPolicies(ctx, dsn, store.TimeseriesPolicies{RetentionDays: 90, CompressAfterDays: 7})
+	if err != nil || len(changes) != 3 {
+		t.Fatalf("back to the defaults: %+v %v", changes, err)
+	}
+	want("7 days", "90 days")
+
+	// Refused before anything is changed.
+	if _, err := store.ApplyTimeseriesPolicies(ctx, dsn, store.TimeseriesPolicies{RetentionDays: 30, CompressAfterDays: 30}); err == nil {
+		t.Fatal("compression at the retention was accepted")
+	}
+	if err := exec(t, dsn, `SELECT remove_retention_policy('feed_products')`); err != nil {
+		t.Fatal(err)
+	}
+	_, err = store.ApplyTimeseriesPolicies(ctx, dsn, store.TimeseriesPolicies{RetentionDays: 60, CompressAfterDays: 2})
+	if !errors.Is(err, store.ErrPolicyMissing) {
+		t.Fatalf("a missing job: %v, want ErrPolicyMissing", err)
+	}
+	if got := job("manned_tracks", "policy_compression", "compress_after"); got != "7 days" {
+		t.Fatalf("a refused call changed manned_tracks to %q", got)
+	}
+	rel := storetest.Scratch(t, store.TreeRelational, true)
+	if _, err := store.ApplyTimeseriesPolicies(ctx, rel, store.TimeseriesPolicies{RetentionDays: 90, CompressAfterDays: 7}); !errors.Is(err, store.ErrWrongDatabase) {
+		t.Fatalf("the relational database: %v, want ErrWrongDatabase", err)
+	}
+}
+
 // 10 000 rows by CopyFrom land and are read back by icao24 and window;
 // a row that does not validate is left out and counted.
 func TestIntegrationCopyFrom10000(t *testing.T) {

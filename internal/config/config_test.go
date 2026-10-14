@@ -164,6 +164,9 @@ func TestLoadRefusesNamingTheVariable(t *testing.T) {
 		{"pool size not a number", map[string]string{"ANSP_DB_MAX_CONNS": "ten"}, []string{"ANSP_DB_MAX_CONNS"}},
 		{"pool size zero", map[string]string{"ANSP_DB_MAX_CONNS": "0"}, []string{"ANSP_DB_MAX_CONNS"}},
 		{"statement timeout above the bound", map[string]string{"ANSP_DB_STATEMENT_TIMEOUT_S": "301"}, []string{"ANSP_DB_STATEMENT_TIMEOUT_S"}},
+		{"retention below the floor", map[string]string{"ANSP_TIMESERIES_RETENTION_DAYS": "29"}, []string{"ANSP_TIMESERIES_RETENTION_DAYS"}},
+		{"compression never", map[string]string{"ANSP_TIMESERIES_COMPRESS_AFTER_DAYS": "0"}, []string{"ANSP_TIMESERIES_COMPRESS_AFTER_DAYS"}},
+		{"compression at the retention", map[string]string{"ANSP_TIMESERIES_RETENTION_DAYS": "30", "ANSP_TIMESERIES_COMPRESS_AFTER_DAYS": "30"}, []string{"ANSP_TIMESERIES_COMPRESS_AFTER_DAYS"}},
 		{"two at once", map[string]string{"ANSP_MTLS_MODE": "x", "ANSP_COUNTRY": "x"}, []string{"ANSP_MTLS_MODE", "ANSP_COUNTRY"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -232,5 +235,24 @@ func TestEnvExampleMatchesCatalogue(t *testing.T) {
 	}
 	if want := Catalogue(); !slices.Equal(got, want) {
 		t.Fatalf("deploy/.env.example\n got  %v\n want %v", got, want)
+	}
+}
+
+// The timeseries policies default to spec 05 section 4's (pending GCAA)
+// and a deployment's values are read as given.
+func TestTimeseriesPolicies(t *testing.T) {
+	c, err := LoadFrom(env(nil), noFiles)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.TimeseriesRetentionDays != 90 || c.TimeseriesCompressAfterDays != 7 {
+		t.Fatalf("defaults: retention %d, compression %d; want 90 and 7", c.TimeseriesRetentionDays, c.TimeseriesCompressAfterDays)
+	}
+	c, err = LoadFrom(env(map[string]string{"ANSP_TIMESERIES_RETENTION_DAYS": "45", "ANSP_TIMESERIES_COMPRESS_AFTER_DAYS": "1"}), noFiles)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.TimeseriesRetentionDays != 45 || c.TimeseriesCompressAfterDays != 1 {
+		t.Fatalf("set: retention %d, compression %d; want 45 and 1", c.TimeseriesRetentionDays, c.TimeseriesCompressAfterDays)
 	}
 }
