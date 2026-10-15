@@ -99,3 +99,63 @@ func TestIntegrationUserSummary(t *testing.T) {
 		t.Fatalf("supervisor: %d %s", code, raw)
 	}
 }
+
+// The requests awaiting a decision against the database: a request
+// sent is listed and counted for the supervisor (the viewer and the
+// admin refused 403, no session 401), and leaves both once declined.
+func TestIntegrationRestrictionRequestSummary(t *testing.T) {
+	s := newCoordStack(t, false)
+	type summary struct {
+		Received         int64   `json:"received"`
+		OldestReceivedAt *string `json:"oldest_received_at"`
+		Truncated        bool    `json:"truncated"`
+	}
+	type list struct {
+		Requests []struct {
+			ID         string `json:"id"`
+			Source     string `json:"source"`
+			ReceivedAt string `json:"received_at"`
+		} `json:"requests"`
+		Truncated bool `json:"truncated"`
+	}
+	var sum summary
+	if err := json.Unmarshal(s.checkSummaryAccess(t, summaryCase{path: "/v1/restriction-requests/summary", allowed: "watch_supervisor"}), &sum); err != nil ||
+		sum.Received != 0 || sum.OldestReceivedAt != nil {
+		t.Fatalf("none: %+v %v", sum, err)
+	}
+	body := map[string]any{"client_ref": "summary-1", "uspace_airspace_id": "GEOTU01",
+		"geometry": map[string]any{"type": "Point", "coordinates": []float64{44.8, 41.71}}, "radius_m": 500,
+		"lower_m": 0, "lower_ref": "WGS84", "upper_m": 120, "upper_ref": "WGS84",
+		"starts_at": "2026-10-02T13:00:00.000Z", "ends_at": "2026-10-02T15:00:00.000Z", "reason_text": "Synthetic request (test)"}
+	code, raw := s.c.do(http.MethodPost, "/v1/restriction-requests", s.viewer, nil, body)
+	var q struct {
+		ID         string `json:"id"`
+		ReceivedAt string `json:"received_at"`
+	}
+	if code != http.StatusCreated || json.Unmarshal(raw, &q) != nil {
+		t.Fatalf("request: %d %s", code, raw)
+	}
+	if err := json.Unmarshal(s.checkSummaryAccess(t, summaryCase{path: "/v1/restriction-requests/summary", allowed: "watch_supervisor"}), &sum); err != nil ||
+		sum.Received != 1 || sum.OldestReceivedAt == nil || *sum.OldestReceivedAt != q.ReceivedAt || sum.Truncated {
+		t.Fatalf("one: %+v %v", sum, err)
+	}
+	var l list
+	if err := json.Unmarshal(s.checkSummaryAccess(t, summaryCase{path: "/v1/restriction-requests", allowed: "watch_supervisor"}), &l); err != nil ||
+		len(l.Requests) != 1 || l.Requests[0].ID != q.ID || l.Requests[0].Source != "console" || l.Truncated {
+		t.Fatalf("list: %+v %v", l, err)
+	}
+	if code, raw := s.c.do(http.MethodGet, "/v1/restriction-requests?limit=0", s.watch, nil, nil); code != http.StatusBadRequest {
+		t.Fatalf("limit 0: %d %s", code, raw)
+	}
+	if code, raw := s.c.do(http.MethodPost, "/v1/restriction-requests/"+q.ID+"/decline", s.watch, nil, map[string]string{"reason": "test"}); code != http.StatusOK {
+		t.Fatalf("decline: %d %s", code, raw)
+	}
+	code, raw = s.c.do(http.MethodGet, "/v1/restriction-requests/summary", s.watch, nil, nil)
+	if err := json.Unmarshal(raw, &sum); code != http.StatusOK || err != nil || sum.Received != 0 || sum.OldestReceivedAt != nil {
+		t.Fatalf("after the decline: %d %s", code, raw)
+	}
+	code, raw = s.c.do(http.MethodGet, "/v1/restriction-requests", s.watch, nil, nil)
+	if err := json.Unmarshal(raw, &l); code != http.StatusOK || err != nil || len(l.Requests) != 0 {
+		t.Fatalf("list after the decline: %d %s", code, raw)
+	}
+}

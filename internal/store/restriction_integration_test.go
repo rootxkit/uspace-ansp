@@ -303,3 +303,52 @@ func TestIntegrationRestrictionTickAndKeys(t *testing.T) {
 		t.Fatalf("across the antimeridian: %d %v", len(list), err)
 	}
 }
+
+// The requests awaiting a decision as ansp_app, over the (state,
+// received_at) index: listed oldest first without their payload, counted
+// with the oldest one's time on the database clock; a decided request
+// leaves both; past the limit the list says more and the count
+// truncated; none waiting is zero with no oldest.
+func TestIntegrationPendingRequests(t *testing.T) {
+	ctx := ctxT(t)
+	svc, _, _, dsn := restrictionService(t)
+	repo := svc.Repo
+	c, err := repo.PendingRequestCounts(ctx, restriction.MaxPendingRequestsCounted)
+	if err != nil || c.Received != 0 || c.OldestReceivedAt != nil || c.Truncated || c.CountedAt.IsZero() {
+		t.Fatalf("none: %+v %v", c, err)
+	}
+	authority := restriction.Actor{Type: "client", ID: "authority-01", Role: "authority-01"}
+	payload := []byte(`{"client_ref":"x","uspace_airspace_id":"GEOTU01","geometry":{"type":"Point","coordinates":[44.8,41.71]},"radius_m":500,"lower_m":0,"lower_ref":"WGS84","upper_m":120,"upper_ref":"WGS84","starts_at":"2026-10-02T13:00:00.000Z","ends_at":"2026-10-02T15:00:00.000Z","reason_text":"Synthetic"}`)
+	var ids []string
+	for _, ref := range []string{"r1", "r2", "r3"} {
+		q, _, err := svc.CreateRequest(ctx, authority, "authority-01", restriction.SourceAuthority, ref, payload)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, q.ID)
+		time.Sleep(5 * time.Millisecond)
+	}
+	before := scalar[time.Time](t, dsn, `SELECT clock_timestamp()`)
+	list, more, err := repo.PendingRequests(ctx, 10)
+	if err != nil || more || len(list) != 3 || list[0].ID != ids[0] || list[2].ID != ids[2] || list[0].Payload != nil || list[0].Source != "authority" {
+		t.Fatalf("list: %+v %v %v", list, more, err)
+	}
+	c, err = repo.PendingRequestCounts(ctx, restriction.MaxPendingRequestsCounted)
+	if err != nil || c.Received != 3 || c.OldestReceivedAt == nil || !c.OldestReceivedAt.Equal(list[0].ReceivedAt) || c.Truncated || c.CountedAt.Before(before) {
+		t.Fatalf("counts: %+v %v", c, err)
+	}
+	if c, err = repo.PendingRequestCounts(ctx, 2); err != nil || c.Received != 2 || !c.Truncated {
+		t.Fatalf("past the limit: %+v %v", c, err)
+	}
+	if list, more, err = repo.PendingRequests(ctx, 2); err != nil || len(list) != 2 || !more {
+		t.Fatalf("list past the limit: %+v %v %v", list, more, err)
+	}
+	if _, err := svc.Decline(ctx, supervisor, ids[0], "not needed"); err != nil {
+		t.Fatal(err)
+	}
+	list, _, _ = repo.PendingRequests(ctx, 10)
+	c, _ = repo.PendingRequestCounts(ctx, 3)
+	if len(list) != 2 || list[0].ID != ids[1] || c.Received != 2 || c.Truncated || !c.OldestReceivedAt.Equal(list[0].ReceivedAt) {
+		t.Fatalf("after a decision: %+v %+v", list, c)
+	}
+}

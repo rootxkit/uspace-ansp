@@ -27,7 +27,7 @@ import { useConsole, useLoad } from "./context";
 import { awaitingCount, groupOf, ordered } from "./inbox";
 import { useInbox } from "./InboxProvider";
 import { adapterCounts, openAlarms, recentRestrictions, restrictionCounts, switchesOff } from "./overview";
-import { UsersTile } from "./OverviewTiles";
+import { RequestsTile, UsersTile } from "./OverviewTiles";
 import { mayAdminister, maySupervise } from "./roles";
 import { ConsolePageHeader, Empty, Loading, ProblemNotice, StateBadge, Time, timesShown } from "./ui";
 import { useRestrictions } from "./useRestrictions";
@@ -181,6 +181,7 @@ export function OverviewPage() {
             hint={live.cisVersion === null ? t("ansp.status.cis_none") : t("ansp.overview.kpi.cis_version", { version: live.cisVersion })}
           />
         </div>
+        {maySupervise(role) && <RequestsTile />}
         {mayAdminister(role) && <UsersTile />}
       </KpiRow>
 

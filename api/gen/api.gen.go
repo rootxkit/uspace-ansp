@@ -1153,6 +1153,39 @@ func (e RestrictionRequestState) Valid() bool {
 	}
 }
 
+// Defines values for RestrictionRequestItemSource.
+const (
+	RestrictionRequestItemSourceAuthority RestrictionRequestItemSource = "authority"
+	RestrictionRequestItemSourceConsole   RestrictionRequestItemSource = "console"
+)
+
+// Valid indicates whether the value is a known member of the RestrictionRequestItemSource enum.
+func (e RestrictionRequestItemSource) Valid() bool {
+	switch e {
+	case RestrictionRequestItemSourceAuthority:
+		return true
+	case RestrictionRequestItemSourceConsole:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for RestrictionRequestItemState.
+const (
+	RestrictionRequestItemStateReceived RestrictionRequestItemState = "received"
+)
+
+// Valid indicates whether the value is a known member of the RestrictionRequestItemState enum.
+func (e RestrictionRequestItemState) Valid() bool {
+	switch e {
+	case RestrictionRequestItemStateReceived:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for RestrictionState.
 const (
 	RestrictionStateActive    RestrictionState = "active"
@@ -2881,6 +2914,46 @@ type RestrictionRequestCreate struct {
 	UspaceAirspaceId *string `json:"uspace_airspace_id,omitempty"`
 }
 
+// RestrictionRequestItem A request awaiting a decision, as the list names it; GET /v1/restriction-requests/{id} has the rest.
+type RestrictionRequestItem struct {
+	// Id Crockford base32, 26 characters (04 §2).
+	Id ULID `json:"id"`
+
+	// ReceivedAt RFC 3339 UTC with Z, millisecond precision (02 §1).
+	ReceivedAt Timestamp `json:"received_at"`
+
+	// Requester The client id of the requesting system, or the console account id.
+	Requester string                       `json:"requester"`
+	Source    RestrictionRequestItemSource `json:"source"`
+	State     RestrictionRequestItemState  `json:"state"`
+}
+
+// RestrictionRequestItemSource defines model for RestrictionRequestItem.Source.
+type RestrictionRequestItemSource string
+
+// RestrictionRequestItemState defines model for RestrictionRequestItem.State.
+type RestrictionRequestItemState string
+
+// RestrictionRequestList defines model for RestrictionRequestList.
+type RestrictionRequestList struct {
+	Requests  []RestrictionRequestItem `json:"requests"`
+	Truncated bool                     `json:"truncated"`
+}
+
+// RestrictionRequestSummary The requests awaiting a decision, counted (no requester, no
+// area). counted_at is the database clock; at most
+// MaxPendingRequestsCounted (10000) are counted and truncated says
+// there were more.
+type RestrictionRequestSummary struct {
+	// CountedAt RFC 3339 UTC with Z, millisecond precision (02 §1).
+	CountedAt Timestamp `json:"counted_at"`
+
+	// OldestReceivedAt When the longest-waiting request was received; null when none waits.
+	OldestReceivedAt *time.Time `json:"oldest_received_at"`
+	Received         int        `json:"received"`
+	Truncated        bool       `json:"truncated"`
+}
+
 // RestrictionState planned, active, ended or cancelled (02 F2, ATS.TR.237(b)).
 type RestrictionState string
 
@@ -3354,6 +3427,12 @@ type GetCircleOutlineParams struct {
 
 	// RadiusM The radius in metres.
 	RadiusM float64 `form:"radius_m" json:"radius_m"`
+}
+
+// ListRestrictionRequestsParams defines parameters for ListRestrictionRequests.
+type ListRestrictionRequestsParams struct {
+	// Limit At most this many items (default 100); truncated says when more existed.
+	Limit *Limit `form:"limit,omitempty" json:"limit,omitempty"`
 }
 
 // ListRestrictionsParams defines parameters for ListRestrictions.
@@ -4510,6 +4589,19 @@ type ClientInterface interface {
 	// Corresponds with PUT /v1/policy (the `PutPolicy` operationId).
 	PutPolicy(ctx context.Context, body PutPolicyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// ListRestrictionRequests The restriction requests awaiting a decision
+	//
+	// The received requests (02 F11) not yet accepted or declined,
+	// oldest first, for the watch supervisor who decides them (docs/
+	// PLAN.md section 15 row 45). Each item names the request, its
+	// source, its requester and when it was received; its area and
+	// window are read with GET /v1/restriction-requests/{id}. At most
+	// limit items; truncated says when more were waiting. One read
+	// over the (state, received_at) index.
+	//
+	// Corresponds with GET /v1/restriction-requests (the `ListRestrictionRequests` operationId).
+	ListRestrictionRequests(ctx context.Context, params *ListRestrictionRequestsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// CreateRestrictionRequestWithBody Request a restriction
 	//
 	// A request from the authority (or a console user) for a
@@ -4537,6 +4629,17 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /v1/restriction-requests (the `CreateRestrictionRequest` operationId).
 	CreateRestrictionRequest(ctx context.Context, body CreateRestrictionRequestJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetRestrictionRequestSummary How many restriction requests await a decision
+	//
+	// The received requests not yet decided, counted for the
+	// overview's tile with the oldest one's received_at: counts only,
+	// no requester and no area. One bounded read over the (state,
+	// received_at) index on the database clock (counted_at); truncated
+	// says more were waiting than were counted.
+	//
+	// Corresponds with GET /v1/restriction-requests/summary (the `GetRestrictionRequestSummary` operationId).
+	GetRestrictionRequestSummary(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetRestrictionRequest The state of a restriction request
 	//
@@ -5653,6 +5756,29 @@ func (c *Client) PutPolicy(ctx context.Context, body PutPolicyJSONRequestBody, r
 	return c.Client.Do(req)
 }
 
+// ListRestrictionRequests The restriction requests awaiting a decision
+//
+// The received requests (02 F11) not yet accepted or declined,
+// oldest first, for the watch supervisor who decides them (docs/
+// PLAN.md section 15 row 45). Each item names the request, its
+// source, its requester and when it was received; its area and
+// window are read with GET /v1/restriction-requests/{id}. At most
+// limit items; truncated says when more were waiting. One read
+// over the (state, received_at) index.
+//
+// Corresponds with GET /v1/restriction-requests (the `ListRestrictionRequests` operationId).
+func (c *Client) ListRestrictionRequests(ctx context.Context, params *ListRestrictionRequestsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListRestrictionRequestsRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // CreateRestrictionRequestWithBody Request a restriction
 //
 // A request from the authority (or a console user) for a
@@ -5691,6 +5817,27 @@ func (c *Client) CreateRestrictionRequestWithBody(ctx context.Context, contentTy
 // Corresponds with POST /v1/restriction-requests (the `CreateRestrictionRequest` operationId).
 func (c *Client) CreateRestrictionRequest(ctx context.Context, body CreateRestrictionRequestJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewCreateRestrictionRequestRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetRestrictionRequestSummary How many restriction requests await a decision
+//
+// The received requests not yet decided, counted for the
+// overview's tile with the oldest one's received_at: counts only,
+// no requester and no area. One bounded read over the (state,
+// received_at) index on the database clock (counted_at); truncated
+// says more were waiting than were counted.
+//
+// Corresponds with GET /v1/restriction-requests/summary (the `GetRestrictionRequestSummary` operationId).
+func (c *Client) GetRestrictionRequestSummary(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetRestrictionRequestSummaryRequest(c.Server)
 	if err != nil {
 		return nil, err
 	}
@@ -7412,6 +7559,60 @@ func NewPutPolicyRequestWithBody(server string, contentType string, body io.Read
 	return req, nil
 }
 
+// NewListRestrictionRequestsRequest constructs an http.Request for the ListRestrictionRequests method
+func NewListRestrictionRequestsRequest(server string, params *ListRestrictionRequestsParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/restriction-requests")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Limit != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "limit", *params.Limit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewCreateRestrictionRequestRequest calls the generic CreateRestrictionRequest builder with application/json body
 func NewCreateRestrictionRequestRequest(server string, body CreateRestrictionRequestJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -7448,6 +7649,33 @@ func NewCreateRestrictionRequestRequestWithBody(server string, contentType strin
 	}
 
 	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewGetRestrictionRequestSummaryRequest constructs an http.Request for the GetRestrictionRequestSummary method
+func NewGetRestrictionRequestSummaryRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/restriction-requests/summary")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
 
 	return req, nil
 }
@@ -8856,6 +9084,21 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with PUT /v1/policy (the `PutPolicy` operationId).
 	PutPolicyWithResponse(ctx context.Context, body PutPolicyJSONRequestBody, reqEditors ...RequestEditorFn) (*PutPolicyResponse, error)
 
+	// ListRestrictionRequestsWithResponse The restriction requests awaiting a decision
+	//
+	// The received requests (02 F11) not yet accepted or declined,
+	// oldest first, for the watch supervisor who decides them (docs/
+	// PLAN.md section 15 row 45). Each item names the request, its
+	// source, its requester and when it was received; its area and
+	// window are read with GET /v1/restriction-requests/{id}. At most
+	// limit items; truncated says when more were waiting. One read
+	// over the (state, received_at) index.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/restriction-requests (the `ListRestrictionRequests` operationId).
+	ListRestrictionRequestsWithResponse(ctx context.Context, params *ListRestrictionRequestsParams, reqEditors ...RequestEditorFn) (*ListRestrictionRequestsResponse, error)
+
 	// CreateRestrictionRequestWithBodyWithResponse Request a restriction
 	//
 	// A request from the authority (or a console user) for a
@@ -8883,6 +9126,19 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /v1/restriction-requests (the `CreateRestrictionRequest` operationId).
 	CreateRestrictionRequestWithResponse(ctx context.Context, body CreateRestrictionRequestJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateRestrictionRequestResponse, error)
+
+	// GetRestrictionRequestSummaryWithResponse How many restriction requests await a decision
+	//
+	// The received requests not yet decided, counted for the
+	// overview's tile with the oldest one's received_at: counts only,
+	// no requester and no area. One bounded read over the (state,
+	// received_at) index on the database clock (counted_at); truncated
+	// says more were waiting than were counted.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/restriction-requests/summary (the `GetRestrictionRequestSummary` operationId).
+	GetRestrictionRequestSummaryWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetRestrictionRequestSummaryResponse, error)
 
 	// GetRestrictionRequestWithResponse The state of a restriction request
 	//
@@ -11294,6 +11550,89 @@ func (r PutPolicyResponse) ContentType() string {
 	return ""
 }
 
+// ListRestrictionRequestsResponse401Headers the declared response headers of an HTTP 401 response for ListRestrictionRequests
+type ListRestrictionRequestsResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+// ListRestrictionRequestsResponse503Headers the declared response headers of an HTTP 503 response for ListRestrictionRequests
+type ListRestrictionRequestsResponse503Headers struct {
+	RetryAfter int
+}
+
+type ListRestrictionRequestsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *RestrictionRequestList
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *BadRequest
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *Unauthorized
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *Forbidden
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *Unavailable
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *ListRestrictionRequestsResponse401Headers
+	// Headers503 the parsed response headers for an HTTP 503 response
+	Headers503 *ListRestrictionRequestsResponse503Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListRestrictionRequestsResponse) GetJSON200() *RestrictionRequestList {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r ListRestrictionRequestsResponse) GetApplicationproblemJSON400() *BadRequest {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r ListRestrictionRequestsResponse) GetApplicationproblemJSON401() *Unauthorized {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r ListRestrictionRequestsResponse) GetApplicationproblemJSON403() *Forbidden {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r ListRestrictionRequestsResponse) GetApplicationproblemJSON503() *Unavailable {
+	return r.ApplicationproblemJSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r ListRestrictionRequestsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListRestrictionRequestsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListRestrictionRequestsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListRestrictionRequestsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 // CreateRestrictionRequestResponse401Headers the declared response headers of an HTTP 401 response for CreateRestrictionRequest
 type CreateRestrictionRequestResponse401Headers struct {
 	WWWAuthenticate *string
@@ -11392,6 +11731,82 @@ func (r CreateRestrictionRequestResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r CreateRestrictionRequestResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// GetRestrictionRequestSummaryResponse401Headers the declared response headers of an HTTP 401 response for GetRestrictionRequestSummary
+type GetRestrictionRequestSummaryResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+// GetRestrictionRequestSummaryResponse503Headers the declared response headers of an HTTP 503 response for GetRestrictionRequestSummary
+type GetRestrictionRequestSummaryResponse503Headers struct {
+	RetryAfter int
+}
+
+type GetRestrictionRequestSummaryResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *RestrictionRequestSummary
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *Unauthorized
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *Forbidden
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *Unavailable
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *GetRestrictionRequestSummaryResponse401Headers
+	// Headers503 the parsed response headers for an HTTP 503 response
+	Headers503 *GetRestrictionRequestSummaryResponse503Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetRestrictionRequestSummaryResponse) GetJSON200() *RestrictionRequestSummary {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r GetRestrictionRequestSummaryResponse) GetApplicationproblemJSON401() *Unauthorized {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r GetRestrictionRequestSummaryResponse) GetApplicationproblemJSON403() *Forbidden {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r GetRestrictionRequestSummaryResponse) GetApplicationproblemJSON503() *Unavailable {
+	return r.ApplicationproblemJSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r GetRestrictionRequestSummaryResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetRestrictionRequestSummaryResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetRestrictionRequestSummaryResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetRestrictionRequestSummaryResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -13841,6 +14256,27 @@ func (c *ClientWithResponses) PutPolicyWithResponse(ctx context.Context, body Pu
 	return ParsePutPolicyResponse(rsp)
 }
 
+// ListRestrictionRequestsWithResponse The restriction requests awaiting a decision
+//
+// The received requests (02 F11) not yet accepted or declined,
+// oldest first, for the watch supervisor who decides them (docs/
+// PLAN.md section 15 row 45). Each item names the request, its
+// source, its requester and when it was received; its area and
+// window are read with GET /v1/restriction-requests/{id}. At most
+// limit items; truncated says when more were waiting. One read
+// over the (state, received_at) index.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/restriction-requests (the `ListRestrictionRequests` operationId).
+func (c *ClientWithResponses) ListRestrictionRequestsWithResponse(ctx context.Context, params *ListRestrictionRequestsParams, reqEditors ...RequestEditorFn) (*ListRestrictionRequestsResponse, error) {
+	rsp, err := c.ListRestrictionRequests(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListRestrictionRequestsResponse(rsp)
+}
+
 // CreateRestrictionRequestWithBodyWithResponse Request a restriction
 //
 // A request from the authority (or a console user) for a
@@ -13879,6 +14315,25 @@ func (c *ClientWithResponses) CreateRestrictionRequestWithResponse(ctx context.C
 		return nil, err
 	}
 	return ParseCreateRestrictionRequestResponse(rsp)
+}
+
+// GetRestrictionRequestSummaryWithResponse How many restriction requests await a decision
+//
+// The received requests not yet decided, counted for the
+// overview's tile with the oldest one's received_at: counts only,
+// no requester and no area. One bounded read over the (state,
+// received_at) index on the database clock (counted_at); truncated
+// says more were waiting than were counted.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/restriction-requests/summary (the `GetRestrictionRequestSummary` operationId).
+func (c *ClientWithResponses) GetRestrictionRequestSummaryWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetRestrictionRequestSummaryResponse, error) {
+	rsp, err := c.GetRestrictionRequestSummary(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetRestrictionRequestSummaryResponse(rsp)
 }
 
 // GetRestrictionRequestWithResponse The state of a restriction request
@@ -16281,6 +16736,83 @@ func ParsePutPolicyResponse(rsp *http.Response) (*PutPolicyResponse, error) {
 	return response, nil
 }
 
+// ParseListRestrictionRequestsResponse parses an HTTP response from a ListRestrictionRequestsWithResponse call
+func ParseListRestrictionRequestsResponse(rsp *http.Response) (*ListRestrictionRequestsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListRestrictionRequestsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest RestrictionRequestList
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers ListRestrictionRequestsResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	case rsp.StatusCode == 503:
+		var headers ListRestrictionRequestsResponse503Headers
+		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.RetryAfter = value
+		}
+		response.Headers503 = &headers
+	}
+
+	return response, nil
+}
+
 // ParseCreateRestrictionRequestResponse parses an HTTP response from a CreateRestrictionRequestWithResponse call
 func ParseCreateRestrictionRequestResponse(rsp *http.Response) (*CreateRestrictionRequestResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -16366,6 +16898,76 @@ func ParseCreateRestrictionRequestResponse(rsp *http.Response) (*CreateRestricti
 		response.Headers401 = &headers
 	case rsp.StatusCode == 503:
 		var headers CreateRestrictionRequestResponse503Headers
+		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.RetryAfter = value
+		}
+		response.Headers503 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseGetRestrictionRequestSummaryResponse parses an HTTP response from a GetRestrictionRequestSummaryWithResponse call
+func ParseGetRestrictionRequestSummaryResponse(rsp *http.Response) (*GetRestrictionRequestSummaryResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetRestrictionRequestSummaryResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest RestrictionRequestSummary
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers GetRestrictionRequestSummaryResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	case rsp.StatusCode == 503:
+		var headers GetRestrictionRequestSummaryResponse503Headers
 		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
 			var value int
 			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "integer", Format: ""}); err != nil {
@@ -18072,9 +18674,15 @@ type ServerInterface interface {
 	// PutPolicy Change the thresholds
 	// (PUT /v1/policy)
 	PutPolicy(w http.ResponseWriter, r *http.Request)
+	// ListRestrictionRequests The restriction requests awaiting a decision
+	// (GET /v1/restriction-requests)
+	ListRestrictionRequests(w http.ResponseWriter, r *http.Request, params ListRestrictionRequestsParams)
 	// CreateRestrictionRequest Request a restriction
 	// (POST /v1/restriction-requests)
 	CreateRestrictionRequest(w http.ResponseWriter, r *http.Request)
+	// GetRestrictionRequestSummary How many restriction requests await a decision
+	// (GET /v1/restriction-requests/summary)
+	GetRestrictionRequestSummary(w http.ResponseWriter, r *http.Request)
 	// GetRestrictionRequest The state of a restriction request
 	// (GET /v1/restriction-requests/{id})
 	GetRestrictionRequest(w http.ResponseWriter, r *http.Request, id RequestID)
@@ -18805,11 +19413,58 @@ func (siw *ServerInterfaceWrapper) PutPolicy(w http.ResponseWriter, r *http.Requ
 	handler.ServeHTTP(w, r)
 }
 
+// ListRestrictionRequests operation middleware
+func (siw *ServerInterfaceWrapper) ListRestrictionRequests(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListRestrictionRequestsParams
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "limit", r.URL.Query(), &params.Limit, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "limit"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "limit", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListRestrictionRequests(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // CreateRestrictionRequest operation middleware
 func (siw *ServerInterfaceWrapper) CreateRestrictionRequest(w http.ResponseWriter, r *http.Request) {
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.CreateRestrictionRequest(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetRestrictionRequestSummary operation middleware
+func (siw *ServerInterfaceWrapper) GetRestrictionRequestSummary(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetRestrictionRequestSummary(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -19522,7 +20177,9 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/outlines/circle", wrapper.GetCircleOutline)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/delivery-alarms", wrapper.ListDeliveryAlarms)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/delivery-alarms/{id}/acknowledge", wrapper.AcknowledgeDeliveryAlarm)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/restriction-requests", wrapper.ListRestrictionRequests)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/restriction-requests", wrapper.CreateRestrictionRequest)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/restriction-requests/summary", wrapper.GetRestrictionRequestSummary)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/restriction-requests/{id}", wrapper.GetRestrictionRequest)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/restriction-requests/{id}/accept", wrapper.AcceptRestrictionRequest)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/restriction-requests/{id}/decline", wrapper.DeclineRestrictionRequest)
@@ -21875,6 +22532,96 @@ func (response PutPolicy503ApplicationProblemPlusJSONResponse) VisitPutPolicyRes
 	return err
 }
 
+type ListRestrictionRequestsRequestObject struct {
+	Params ListRestrictionRequestsParams
+}
+
+type ListRestrictionRequestsResponseObject interface {
+	VisitListRestrictionRequestsResponse(w http.ResponseWriter) error
+}
+
+type ListRestrictionRequests200JSONResponse RestrictionRequestList
+
+func (response ListRestrictionRequests200JSONResponse) VisitListRestrictionRequestsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListRestrictionRequests400ApplicationProblemPlusJSONResponse struct {
+	BadRequestApplicationProblemPlusJSONResponse
+}
+
+func (response ListRestrictionRequests400ApplicationProblemPlusJSONResponse) VisitListRestrictionRequestsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListRestrictionRequests401ApplicationProblemPlusJSONResponse struct {
+	UnauthorizedApplicationProblemPlusJSONResponse
+}
+
+func (response ListRestrictionRequests401ApplicationProblemPlusJSONResponse) VisitListRestrictionRequestsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	if response.Headers.WWWAuthenticate != nil {
+		w.Header().Set("WWW-Authenticate", fmt.Sprint(*response.Headers.WWWAuthenticate))
+	}
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListRestrictionRequests403ApplicationProblemPlusJSONResponse struct {
+	ForbiddenApplicationProblemPlusJSONResponse
+}
+
+func (response ListRestrictionRequests403ApplicationProblemPlusJSONResponse) VisitListRestrictionRequestsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListRestrictionRequests503ApplicationProblemPlusJSONResponse struct {
+	UnavailableApplicationProblemPlusJSONResponse
+}
+
+func (response ListRestrictionRequests503ApplicationProblemPlusJSONResponse) VisitListRestrictionRequestsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type CreateRestrictionRequestRequestObject struct {
 	Body *CreateRestrictionRequestJSONRequestBody
 }
@@ -21999,6 +22746,79 @@ type CreateRestrictionRequest503ApplicationProblemPlusJSONResponse struct {
 }
 
 func (response CreateRestrictionRequest503ApplicationProblemPlusJSONResponse) VisitCreateRestrictionRequestResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetRestrictionRequestSummaryRequestObject struct {
+}
+
+type GetRestrictionRequestSummaryResponseObject interface {
+	VisitGetRestrictionRequestSummaryResponse(w http.ResponseWriter) error
+}
+
+type GetRestrictionRequestSummary200JSONResponse RestrictionRequestSummary
+
+func (response GetRestrictionRequestSummary200JSONResponse) VisitGetRestrictionRequestSummaryResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetRestrictionRequestSummary401ApplicationProblemPlusJSONResponse struct {
+	UnauthorizedApplicationProblemPlusJSONResponse
+}
+
+func (response GetRestrictionRequestSummary401ApplicationProblemPlusJSONResponse) VisitGetRestrictionRequestSummaryResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	if response.Headers.WWWAuthenticate != nil {
+		w.Header().Set("WWW-Authenticate", fmt.Sprint(*response.Headers.WWWAuthenticate))
+	}
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetRestrictionRequestSummary403ApplicationProblemPlusJSONResponse struct {
+	ForbiddenApplicationProblemPlusJSONResponse
+}
+
+func (response GetRestrictionRequestSummary403ApplicationProblemPlusJSONResponse) VisitGetRestrictionRequestSummaryResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetRestrictionRequestSummary503ApplicationProblemPlusJSONResponse struct {
+	UnavailableApplicationProblemPlusJSONResponse
+}
+
+func (response GetRestrictionRequestSummary503ApplicationProblemPlusJSONResponse) VisitGetRestrictionRequestSummaryResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
@@ -24122,9 +24942,15 @@ type StrictServerInterface interface {
 	// PutPolicy Change the thresholds
 	// (PUT /v1/policy)
 	PutPolicy(ctx context.Context, request PutPolicyRequestObject) (PutPolicyResponseObject, error)
+	// ListRestrictionRequests The restriction requests awaiting a decision
+	// (GET /v1/restriction-requests)
+	ListRestrictionRequests(ctx context.Context, request ListRestrictionRequestsRequestObject) (ListRestrictionRequestsResponseObject, error)
 	// CreateRestrictionRequest Request a restriction
 	// (POST /v1/restriction-requests)
 	CreateRestrictionRequest(ctx context.Context, request CreateRestrictionRequestRequestObject) (CreateRestrictionRequestResponseObject, error)
+	// GetRestrictionRequestSummary How many restriction requests await a decision
+	// (GET /v1/restriction-requests/summary)
+	GetRestrictionRequestSummary(ctx context.Context, request GetRestrictionRequestSummaryRequestObject) (GetRestrictionRequestSummaryResponseObject, error)
 	// GetRestrictionRequest The state of a restriction request
 	// (GET /v1/restriction-requests/{id})
 	GetRestrictionRequest(ctx context.Context, request GetRestrictionRequestRequestObject) (GetRestrictionRequestResponseObject, error)
@@ -24931,6 +25757,32 @@ func (sh *strictHandler) PutPolicy(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// ListRestrictionRequests operation middleware
+func (sh *strictHandler) ListRestrictionRequests(w http.ResponseWriter, r *http.Request, params ListRestrictionRequestsParams) {
+	var request ListRestrictionRequestsRequestObject
+
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ListRestrictionRequests(ctx, request.(ListRestrictionRequestsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ListRestrictionRequests")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ListRestrictionRequestsResponseObject); ok {
+		if err := validResponse.VisitListRestrictionRequestsResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
 // CreateRestrictionRequest operation middleware
 func (sh *strictHandler) CreateRestrictionRequest(w http.ResponseWriter, r *http.Request) {
 	var request CreateRestrictionRequestRequestObject
@@ -24955,6 +25807,30 @@ func (sh *strictHandler) CreateRestrictionRequest(w http.ResponseWriter, r *http
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(CreateRestrictionRequestResponseObject); ok {
 		if err := validResponse.VisitCreateRestrictionRequestResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetRestrictionRequestSummary operation middleware
+func (sh *strictHandler) GetRestrictionRequestSummary(w http.ResponseWriter, r *http.Request) {
+	var request GetRestrictionRequestSummaryRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetRestrictionRequestSummary(ctx, request.(GetRestrictionRequestSummaryRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetRestrictionRequestSummary")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetRestrictionRequestSummaryResponseObject); ok {
+		if err := validResponse.VisitGetRestrictionRequestSummaryResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

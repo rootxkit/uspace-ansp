@@ -54,6 +54,12 @@ type Repo interface {
 	// state, at most limit, in one read; more says others exist.
 	CurrentVersions(ctx context.Context, state State, limit int) ([]Version, bool, error)
 	Request(ctx context.Context, id string) (Request, error)
+	// PendingRequests is the received requests, oldest first, at most
+	// limit, without their payload; more says others exist.
+	PendingRequests(ctx context.Context, limit int) ([]Request, bool, error)
+	// PendingRequestCounts counts at most limit received requests on the
+	// database's clock.
+	PendingRequestCounts(ctx context.Context, limit int) (RequestCounts, error)
 	// DueActivations and DueExpiries are judged on the database's clock.
 	DueActivations(ctx context.Context, limit int) ([]string, error)
 	DueExpiries(ctx context.Context, limit int) ([]string, error)
@@ -131,6 +137,19 @@ const (
 // MaxOpenRequests bounds the received (undecided) requests one requester
 // may hold (E-10); past it a request is refused 429.
 const MaxOpenRequests = 100
+
+// MaxPendingRequestsListed bounds GET /v1/restriction-requests (the
+// contract's Limit) and DefaultPendingRequestsListed is its page without
+// limit.
+const (
+	MaxPendingRequestsListed     = 1000
+	DefaultPendingRequestsListed = 100
+)
+
+// MaxPendingRequestsCounted bounds the rows GET
+// /v1/restriction-requests/summary reads (E-10); past it the summary says
+// truncated.
+const MaxPendingRequestsCounted = 10000
 
 // MaxTickBatch bounds the activations, expiries or republished versions
 // one tick handles; the rest wait for the next.
@@ -836,6 +855,18 @@ func (s *Service) CreateRequest(ctx context.Context, actor Actor, requester, sou
 // Request is one restriction request.
 func (s *Service) Request(ctx context.Context, id string) (Request, error) {
 	return s.Repo.Request(ctx, id)
+}
+
+// PendingRequests is the requests awaiting a decision, oldest first, at
+// most limit (1 to MaxPendingRequestsListed); more says others wait.
+func (s *Service) PendingRequests(ctx context.Context, limit int) ([]Request, bool, error) {
+	return s.Repo.PendingRequests(ctx, min(max(limit, 1), MaxPendingRequestsListed))
+}
+
+// PendingRequestCounts counts the requests awaiting a decision, at most
+// MaxPendingRequestsCounted, on the database's clock.
+func (s *Service) PendingRequestCounts(ctx context.Context) (RequestCounts, error) {
+	return s.Repo.PendingRequestCounts(ctx, MaxPendingRequestsCounted)
 }
 
 // Accept accepts a received request and plans the restriction it asks

@@ -1721,6 +1721,54 @@ components:
           type: string
         restriction_id:
           $ref: "#/components/schemas/ULID"
+    RestrictionRequestItem:
+      type: object
+      description: A request awaiting a decision, as the list names it; GET /v1/restriction-requests/{id} has the rest.
+      required: [id, requester, source, received_at, state]
+      properties:
+        id:
+          $ref: "#/components/schemas/ULID"
+        requester:
+          type: string
+          description: The client id of the requesting system, or the console account id.
+        source:
+          type: string
+          enum: [authority, console]
+        received_at:
+          $ref: "#/components/schemas/Timestamp"
+        state:
+          type: string
+          enum: [received]
+    RestrictionRequestList:
+      type: object
+      required: [requests, truncated]
+      properties:
+        requests:
+          type: array
+          items:
+            $ref: "#/components/schemas/RestrictionRequestItem"
+        truncated:
+          type: boolean
+    RestrictionRequestSummary:
+      type: object
+      description: |
+        The requests awaiting a decision, counted (no requester, no
+        area). counted_at is the database clock; at most
+        MaxPendingRequestsCounted (10000) are counted and truncated says
+        there were more.
+      required: [counted_at, received, oldest_received_at, truncated]
+      properties:
+        counted_at:
+          $ref: "#/components/schemas/Timestamp"
+        received:
+          type: integer
+          minimum: 0
+        oldest_received_at:
+          description: When the longest-waiting request was received; null when none waits.
+          type: [string, "null"]
+          format: date-time
+        truncated:
+          type: boolean
     AcceptRequest:
       type: object
       properties:
@@ -3510,6 +3558,48 @@ paths:
           $ref: "#/components/responses/Unavailable"
 
   /v1/restriction-requests:
+    get:
+      operationId: listRestrictionRequests
+      tags: [restriction-requests]
+      summary: The restriction requests awaiting a decision
+      x-process: api
+      x-spec: 02 F11
+      x-auth: session:watch_supervisor
+      description: |
+        The received requests (02 F11) not yet accepted or declined,
+        oldest first, for the watch supervisor who decides them (docs/
+        PLAN.md section 15 row 45). Each item names the request, its
+        source, its requester and when it was received; its area and
+        window are read with GET /v1/restriction-requests/{id}. At most
+        limit items; truncated says when more were waiting. One read
+        over the (state, received_at) index.
+      security:
+        - consoleSession: []
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: The requests awaiting a decision, oldest first.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RestrictionRequestList"
+              example:
+                requests:
+                  - id: 01K6P1R2S3T4V5W6X7Y8Z9A0BC
+                    requester: authority-01
+                    source: authority
+                    received_at: "2026-10-02T11:00:00.000Z"
+                    state: received
+                truncated: false
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "503":
+          $ref: "#/components/responses/Unavailable"
     post:
       operationId: createRestrictionRequest
       tags: [restriction-requests]
@@ -3559,6 +3649,41 @@ paths:
           $ref: "#/components/responses/Conflict"
         "413":
           $ref: "#/components/responses/TooLarge"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+
+  /v1/restriction-requests/summary:
+    get:
+      operationId: getRestrictionRequestSummary
+      tags: [restriction-requests]
+      summary: How many restriction requests await a decision
+      x-process: api
+      x-spec: 02 F11
+      x-auth: session:watch_supervisor
+      description: |
+        The received requests not yet decided, counted for the
+        overview's tile with the oldest one's received_at: counts only,
+        no requester and no area. One bounded read over the (state,
+        received_at) index on the database clock (counted_at); truncated
+        says more were waiting than were counted.
+      security:
+        - consoleSession: []
+      responses:
+        "200":
+          description: The count.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RestrictionRequestSummary"
+              example:
+                counted_at: "2026-10-02T12:10:00.000Z"
+                received: 2
+                oldest_received_at: "2026-10-02T11:00:00.000Z"
+                truncated: false
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "503":
           $ref: "#/components/responses/Unavailable"
 

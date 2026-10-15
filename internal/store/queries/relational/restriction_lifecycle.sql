@@ -169,6 +169,33 @@ FROM s;
 -- name: RestrictionRequestByClientRef :one
 SELECT * FROM restriction_requests WHERE requester = sqlc.arg(requester) AND client_ref = sqlc.arg(client_ref);
 
+-- name: PendingRestrictionRequests :many
+-- The requests awaiting a decision, oldest first, without their payload
+-- (GET /v1/restriction-requests): a range of restriction_requests_state_idx.
+SELECT id, requester, source, received_at, state FROM restriction_requests
+WHERE state = 'received'
+ORDER BY received_at, id
+LIMIT sqlc.arg(page_size)::int;
+
+-- name: PendingRestrictionRequestCounts :one
+-- The requests awaiting a decision counted for the overview, on the
+-- database clock: at most max_rows rows of restriction_requests_state_idx
+-- are read, and truncated says more exist (a bounded OFFSET on the same
+-- range). oldest_received_at is the first of them; with none waiting it
+-- is counted_at, and the caller states it as null (received = 0).
+SELECT
+    clock_timestamp()::timestamptz AS counted_at,
+    count(*)::bigint               AS received,
+    coalesce(min(b.received_at), clock_timestamp())::timestamptz AS oldest_received_at,
+    EXISTS (
+        SELECT 1 FROM restriction_requests WHERE state = 'received'
+        ORDER BY received_at OFFSET sqlc.arg(max_rows)::int LIMIT 1
+    ) AS truncated
+FROM (
+    SELECT received_at FROM restriction_requests WHERE state = 'received'
+    ORDER BY received_at LIMIT sqlc.arg(max_rows)::int
+) b;
+
 -- name: CountOpenRestrictionRequests :one
 SELECT count(*)::bigint AS n FROM restriction_requests WHERE requester = sqlc.arg(requester) AND state = 'received';
 

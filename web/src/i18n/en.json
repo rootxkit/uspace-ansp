@@ -220,7 +220,7 @@
   "ansp.act.cancel_body": "{identifier} was never activated and is withdrawn. The API publishes the cancellation to the CISP; nothing was written to the DSS. Your reason is recorded.",
   "ansp.act.cancel_done": "Cancellation sent for {identifier}.",
   "ansp.requests.title": "Restriction requests",
-  "ansp.requests.no_list": "The API has no list of requests yet: open a request by the id its requester gave.",
+  "ansp.requests.no_list": "The list of requests awaiting a decision is a watch supervisor's: open a request by the id its requester gave.",
   "ansp.requests.id": "Request id",
   "ansp.requests.open": "Open",
   "ansp.requests.request": "Request {id}",
@@ -540,7 +540,7 @@
   "ansp.audit.description": "The audit log's entries for one entity, with their hash chain; exported as JSON.",
   "ansp.policy.description": "The thresholds and margins in force, who set them and when, and their history.",
   "ansp.policy.current_title": "In force",
-  "ansp.requests.description": "A restriction request opened by its id, shown on the map, and accepted or declined with a reason.",
+  "ansp.requests.description": "The requests awaiting a decision and any request opened by its id, shown on the map, and accepted or declined with a reason.",
   "ansp.detail.title": "Restriction",
   "ansp.editor.description": "Draw or type the area, set the limits and the window; the API judges the plan before anything is sent.",
   "ansp.overview.title": "Overview",
@@ -594,5 +594,14 @@
   "ansp.overview.kpi.unread": "Could not be read",
   "ansp.overview.kpi.users": "Active console accounts",
   "ansp.overview.kpi.users_hint": "{disabled} disabled, {admins} admins, {total} in all",
-  "ansp.overview.kpi.users_hint_truncated": "{disabled} disabled, {admins} admins among the first {total} counted"
+  "ansp.overview.kpi.users_hint_truncated": "{disabled} disabled, {admins} admins among the first {total} counted",
+  "ansp.requests.pending": "Awaiting a decision",
+  "ansp.requests.pending_description": "Oldest first, as the API lists them; open one to accept or decline it.",
+  "ansp.requests.none_waiting": "No restriction request awaits a decision.",
+  "ansp.requests.pending_truncated": "The API listed the oldest only; more are waiting.",
+  "ansp.overview.kpi.requests": "Restriction requests awaiting a decision",
+  "ansp.overview.kpi.requests_waiting": "Awaiting a supervisor",
+  "ansp.overview.kpi.requests_none": "None waiting",
+  "ansp.overview.kpi.requests_oldest": "Oldest received {since}",
+  "ansp.overview.kpi.at_least": "{count}+"
 }

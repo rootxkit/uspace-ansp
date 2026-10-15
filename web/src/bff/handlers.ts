@@ -55,7 +55,7 @@ export const API_LOGOUT_PATH = "/v1/auth/logout";
  * one of them is 405 before any upstream call, and a longer or shorter
  * path is not on the list. The API's x-auth decides who reads each.
  */
-export const SUMMARY_READS: readonly RegExp[] = [/^\/v1\/users\/summary$/];
+export const SUMMARY_READS: readonly RegExp[] = [/^\/v1\/users\/summary$/, /^\/v1\/restriction-requests\/summary$/];
 
 /**
  * What the proxy may reach: the console's operations and nothing else.
@@ -63,7 +63,10 @@ export const SUMMARY_READS: readonly RegExp[] = [/^\/v1\/users\/summary$/];
  * go through their own routes.
  */
 export const PROXY_ALLOW_PATHS: RegExp[] = [
-  /^\/v1\/(restrictions|restriction-requests|delivery-alarms|adapters|sources)(\/|$)/,
+  /^\/v1\/(restrictions|delivery-alarms|adapters|sources)(\/|$)/,
+  // The requests: the list, one by its id, and its accept and decline;
+  // the summary is on SUMMARY_READS.
+  /^\/v1\/restriction-requests(\/[0-9A-HJKMNP-TV-Z]{26}(\/(accept|decline))?)?$/,
   /^\/v1\/coordination\/inbox(\/|$)/,
   /^\/v1\/(occurrences|policy|audit)$/,
   /^\/v1\/outlines\/circle$/,

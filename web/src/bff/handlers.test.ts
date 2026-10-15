@@ -269,7 +269,8 @@ describe("proxy", () => {
     "/v1/delivery-alarms",
     "/v1/adapters",
     "/v1/sources",
-    "/v1/restriction-requests/q1",
+    "/v1/restriction-requests/01K6P0R0000000000000000001",
+    "/v1/restriction-requests",
     "/v1/coordination/inbox",
     "/v1/coordination/inbox/01K6P0N0000000000000000001/acknowledge",
     "/v1/occurrences",
@@ -330,7 +331,20 @@ describe("proxy", () => {
     expect(api.calls[0]?.headers.get("authorization")).toBe("Bearer tok123");
   });
 
-  it.each(["/v1/users", "/v1/policy/1", "/v1/auditX", "/v1/occurrences/01K6P0", "/v1/coordination/notices", "/v1/coordination/inboxX", "/v1/manned-traffic/snapshot", "/v1/auth/login", "/v1/auth/mfa", "/v1/auth/logout", "/metrics", "/v1/restrictionsX"])(
+  it.each(["accept", "decline"])("forwards POST /v1/restriction-requests/{id}/%s with the CSRF pair", async (act) => {
+    const api = mockApi(() => Response.json({ ok: true }));
+    const res = await bffWith(api.fetch).proxy(
+      req(`/_bff/api/v1/restriction-requests/01K6P0R0000000000000000001/${act}`, {
+        method: "POST",
+        headers: { cookie, "x-csrf-token": "csrf456", "content-type": "application/json" },
+        body: JSON.stringify({ reason: "test" }),
+      }),
+    );
+    expect(res.status).toBe(200);
+    expect(api.calls[0]?.url).toBe(`${API}/v1/restriction-requests/01K6P0R0000000000000000001/${act}`);
+  });
+
+  it.each(["/v1/users", "/v1/policy/1", "/v1/auditX", "/v1/occurrences/01K6P0", "/v1/coordination/notices", "/v1/coordination/inboxX", "/v1/manned-traffic/snapshot", "/v1/auth/login", "/v1/auth/mfa", "/v1/auth/logout", "/metrics", "/v1/restrictionsX", "/v1/restriction-requests/q1", "/v1/restriction-requests/01K6P0R0000000000000000001/other", "/v1/restriction-requestsX"])(
     "refuses %s, which is not on the console's list",
     async (p) => {
       const api = mockApi(() => Response.json({ ok: true }));
@@ -345,7 +359,7 @@ describe("proxy", () => {
 
 describe("summaries", () => {
   const cookie = "uspace_session=tok123; uspace_csrf=csrf456";
-  const SUMMARIES = ["/v1/users/summary"];
+  const SUMMARIES = ["/v1/users/summary", "/v1/restriction-requests/summary"];
 
   it.each(SUMMARIES)("forwards GET %s with the bearer, and passes the API's 401 and 403 on", async (p) => {
     for (const status of [200, 401, 403]) {

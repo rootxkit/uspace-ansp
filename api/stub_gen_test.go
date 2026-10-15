@@ -175,11 +175,25 @@ func (s exampleStub) PutPolicy(_ context.Context, request gen.PutPolicyRequestOb
 
 func (c canned) VisitPutPolicyResponse(w http.ResponseWriter) error { return c.visit(w) }
 
+func (s exampleStub) ListRestrictionRequests(_ context.Context, request gen.ListRestrictionRequestsRequestObject) (gen.ListRestrictionRequestsResponseObject, error) {
+	return s.answer("listRestrictionRequests", request), nil
+}
+
+func (c canned) VisitListRestrictionRequestsResponse(w http.ResponseWriter) error { return c.visit(w) }
+
 func (s exampleStub) CreateRestrictionRequest(_ context.Context, request gen.CreateRestrictionRequestRequestObject) (gen.CreateRestrictionRequestResponseObject, error) {
 	return s.answer("createRestrictionRequest", request), nil
 }
 
 func (c canned) VisitCreateRestrictionRequestResponse(w http.ResponseWriter) error { return c.visit(w) }
+
+func (s exampleStub) GetRestrictionRequestSummary(_ context.Context, request gen.GetRestrictionRequestSummaryRequestObject) (gen.GetRestrictionRequestSummaryResponseObject, error) {
+	return s.answer("getRestrictionRequestSummary", request), nil
+}
+
+func (c canned) VisitGetRestrictionRequestSummaryResponse(w http.ResponseWriter) error {
+	return c.visit(w)
+}
 
 func (s exampleStub) GetRestrictionRequest(_ context.Context, request gen.GetRestrictionRequestRequestObject) (gen.GetRestrictionRequestResponseObject, error) {
 	return s.answer("getRestrictionRequest", request), nil

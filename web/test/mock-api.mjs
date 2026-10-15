@@ -717,6 +717,23 @@ async function api(req, res, url) {
     a.ack_reason = body.reason;
     return json(res, 200, a);
   }
+  // The requests awaiting a decision (watch supervisor): the list without
+  // payloads, oldest first, and their count with the oldest one's time.
+  const waiting = () => state.requests.filter((q) => q.state === "received").sort((a, b) => a.received_at.localeCompare(b.received_at));
+  if (path === "/v1/restriction-requests" && req.method === "GET") {
+    if (supervisorOnly()) return;
+    const limit = Number(url.searchParams.get("limit") ?? "100");
+    const all = waiting();
+    return json(res, 200, {
+      requests: all.slice(0, limit).map((q) => ({ id: q.id, requester: q.requester, source: q.source, received_at: q.received_at, state: q.state })),
+      truncated: all.length > limit,
+    });
+  }
+  if (path === "/v1/restriction-requests/summary" && req.method === "GET") {
+    if (supervisorOnly()) return;
+    const all = waiting();
+    return json(res, 200, { counted_at: iso(), received: all.length, oldest_received_at: all[0]?.received_at ?? null, truncated: false });
+  }
   m = /^\/v1\/restriction-requests\/([0-9A-Z]{26})$/.exec(path);
   if (m && req.method === "GET") {
     const q = state.requests.find((x) => x.id === m[1]);

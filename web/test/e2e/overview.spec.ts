@@ -63,6 +63,10 @@ test("the overview is the page after sign-in and its figures follow the API", as
   await expect(page.locator('[data-testid="overview-sources"] [data-adapter="sbs-1"]')).toContainText("Disabled");
   await expect(page.locator('[data-testid="overview-sources"] [data-adapter="json-1"]')).toContainText("Silent");
   await expect(page.getByTestId("kpi-cis")).toHaveAttribute("data-value", /^\d+$/);
+  const requests = page.getByTestId("kpi-requests");
+  await expect(requests).toHaveAttribute("data-value", "1");
+  await expect(requests).toContainText("Awaiting a supervisor");
+  await expect(requests).toContainText("Oldest received");
   // The accounts are an admin's: no tile, and the API refuses the summary.
   await expect(page.getByTestId("kpi-users")).toHaveCount(0);
   expect(await bffStatus(page, "/v1/users/summary")).toBe(403);
@@ -137,9 +141,36 @@ test("the admin's overview counts the console accounts; nobody else is shown or 
   expect((await request.get("/_bff/api/v1/users/summary")).status()).toBe(401);
 });
 
-test("a viewer's overview has no accounts tile and the API refuses it the summary", async ({ page }) => {
+test("a viewer's overview has no accounts or requests tile and the API refuses it both summaries", async ({ page }) => {
   await signIn(page, VIEWER);
   await expect(page.getByTestId("kpi-active")).toHaveAttribute("data-value", "0");
   await expect(page.getByTestId("kpi-users")).toHaveCount(0);
+  await expect(page.getByTestId("kpi-requests")).toHaveCount(0);
   expect(await bffStatus(page, "/v1/users/summary")).toBe(403);
+  expect(await bffStatus(page, "/v1/restriction-requests/summary")).toBe(403);
+  expect(await bffStatus(page, "/v1/restriction-requests")).toBe(403);
+  // Its requests page opens a request by its id and says why there is no list.
+  await page.getByRole("navigation", { name: "Main navigation" }).getByRole("link", { name: "Restriction requests" }).click();
+  await expect(page.getByTestId("requests-no-list")).toBeVisible();
+  await expect(page.getByTestId("requests-pending")).toHaveCount(0);
+});
+
+test("the supervisor's requests tile counts the requests awaiting a decision and follows a decision", async ({ page, request }) => {
+  await signIn(page);
+  const tile = page.getByTestId("kpi-requests");
+  await expect(tile).toHaveAttribute("data-value", "1");
+  expect(await bffStatus(page, "/v1/restriction-requests/summary")).toBe(200);
+  expect(await bffStatus(page, "/v1/restriction-requests/summary", "DELETE")).toBe(405);
+  expect((await request.get("/_bff/api/v1/restriction-requests/summary")).status()).toBe(401);
+  await page.getByRole("navigation", { name: "Main navigation" }).getByRole("link", { name: "Restriction requests" }).click();
+  await page.locator('[data-testid="requests-pending"] [data-request="01K6P0R0000000000000000001"]').getByRole("link").click();
+  await expect(page.getByTestId("request")).toHaveAttribute("data-state", "received");
+  await page.getByTestId("request-decline").click();
+  await page.getByRole("alertdialog").getByLabel("Reason").fill("Outside the event's hours (synthetic)");
+  await page.getByRole("alertdialog").getByRole("button", { name: "Confirm" }).click();
+  await expect(page.getByTestId("request")).toHaveAttribute("data-state", "declined");
+  await expect(page.getByTestId("requests-none-waiting")).toBeVisible();
+  await page.getByRole("navigation", { name: "Main navigation" }).getByRole("link", { name: "Overview" }).click();
+  await expect(tile).toHaveAttribute("data-value", "0");
+  await expect(tile).toContainText("None waiting");
 });

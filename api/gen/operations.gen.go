@@ -50,7 +50,9 @@ var Operations = []Operation{
 	{ID: "getCircleOutline", Method: "GET", Path: "/v1/outlines/circle", Pattern: "GET /v1/outlines/circle", Tag: "outlines", Process: "api", Spec: "02 F2 (the restriction editor's map), uspace-ui DrawLayer", Auth: "session", WebSocket: false},
 	{ID: "getPolicy", Method: "GET", Path: "/v1/policy", Pattern: "GET /v1/policy", Tag: "policy", Process: "api", Spec: "INV-03", Auth: "session:admin", WebSocket: false},
 	{ID: "putPolicy", Method: "PUT", Path: "/v1/policy", Pattern: "PUT /v1/policy", Tag: "policy", Process: "api", Spec: "INV-03", Auth: "session:admin", WebSocket: false},
+	{ID: "listRestrictionRequests", Method: "GET", Path: "/v1/restriction-requests", Pattern: "GET /v1/restriction-requests", Tag: "restriction-requests", Process: "api", Spec: "02 F11", Auth: "session:watch_supervisor", WebSocket: false},
 	{ID: "createRestrictionRequest", Method: "POST", Path: "/v1/restriction-requests", Pattern: "POST /v1/restriction-requests", Tag: "restriction-requests", Process: "api", Spec: "02 F11", Auth: "token:ansp.requests or session", WebSocket: false},
+	{ID: "getRestrictionRequestSummary", Method: "GET", Path: "/v1/restriction-requests/summary", Pattern: "GET /v1/restriction-requests/summary", Tag: "restriction-requests", Process: "api", Spec: "02 F11", Auth: "session:watch_supervisor", WebSocket: false},
 	{ID: "getRestrictionRequest", Method: "GET", Path: "/v1/restriction-requests/{id}", Pattern: "GET /v1/restriction-requests/{id}", Tag: "restriction-requests", Process: "api", Spec: "02 F11", Auth: "token:ansp.requests or session", WebSocket: false},
 	{ID: "acceptRestrictionRequest", Method: "POST", Path: "/v1/restriction-requests/{id}/accept", Pattern: "POST /v1/restriction-requests/{id}/accept", Tag: "restriction-requests", Process: "api", Spec: "02 F11", Auth: "session:watch_supervisor", WebSocket: false},
 	{ID: "declineRestrictionRequest", Method: "POST", Path: "/v1/restriction-requests/{id}/decline", Pattern: "POST /v1/restriction-requests/{id}/decline", Tag: "restriction-requests", Process: "api", Spec: "02 F11", Auth: "session:watch_supervisor", WebSocket: false},
@@ -217,9 +219,19 @@ func (Unimplemented) PutPolicy(context.Context, PutPolicyRequestObject) (PutPoli
 	return nil, &NotImplementedError{Operation: "putPolicy"}
 }
 
+// ListRestrictionRequests answers GET /v1/restriction-requests with a *NotImplementedError.
+func (Unimplemented) ListRestrictionRequests(context.Context, ListRestrictionRequestsRequestObject) (ListRestrictionRequestsResponseObject, error) {
+	return nil, &NotImplementedError{Operation: "listRestrictionRequests"}
+}
+
 // CreateRestrictionRequest answers POST /v1/restriction-requests with a *NotImplementedError.
 func (Unimplemented) CreateRestrictionRequest(context.Context, CreateRestrictionRequestRequestObject) (CreateRestrictionRequestResponseObject, error) {
 	return nil, &NotImplementedError{Operation: "createRestrictionRequest"}
+}
+
+// GetRestrictionRequestSummary answers GET /v1/restriction-requests/summary with a *NotImplementedError.
+func (Unimplemented) GetRestrictionRequestSummary(context.Context, GetRestrictionRequestSummaryRequestObject) (GetRestrictionRequestSummaryResponseObject, error) {
+	return nil, &NotImplementedError{Operation: "getRestrictionRequestSummary"}
 }
 
 // GetRestrictionRequest answers GET /v1/restriction-requests/{id} with a *NotImplementedError.

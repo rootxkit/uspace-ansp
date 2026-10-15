@@ -432,6 +432,53 @@ func (s apiServer) GetRestrictionRequest(w http.ResponseWriter, r *http.Request,
 	writeJSON(w, http.StatusOK, toRequestJSON(q))
 }
 
+// ListRestrictionRequests serves GET /v1/restriction-requests
+// (watch_supervisor): the requests awaiting a decision, oldest first,
+// without their payload.
+func (s apiServer) ListRestrictionRequests(w http.ResponseWriter, r *http.Request, params gen.ListRestrictionRequestsParams) {
+	rs, _, ok := s.restrictions(w, r)
+	if !ok {
+		return
+	}
+	limit := restriction.DefaultPendingRequestsListed
+	if params.Limit != nil {
+		limit = *params.Limit
+		if limit < 1 || limit > restriction.MaxPendingRequestsListed {
+			apierr.WriteError(w, r, apierr.Invalid(core.Fieldf("limit", "is not between 1 and %d", restriction.MaxPendingRequestsListed)))
+			return
+		}
+	}
+	list, more, err := rs.svc.PendingRequests(r.Context(), limit)
+	if err != nil {
+		refusal(w, r, err)
+		return
+	}
+	out := requestListJSON{Requests: make([]requestItemJSON, 0, len(list)), Truncated: more}
+	for i := range list {
+		q := &list[i]
+		out.Requests = append(out.Requests, requestItemJSON{ID: q.ID, Requester: q.Requester, Source: q.Source,
+			ReceivedAt: restriction.Stamp(q.ReceivedAt), State: q.State})
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// GetRestrictionRequestSummary serves GET
+// /v1/restriction-requests/summary (watch_supervisor): the requests
+// awaiting a decision counted on the database's clock, no requester.
+func (s apiServer) GetRestrictionRequestSummary(w http.ResponseWriter, r *http.Request) {
+	rs, _, ok := s.restrictions(w, r)
+	if !ok {
+		return
+	}
+	c, err := rs.svc.PendingRequestCounts(r.Context())
+	if err != nil {
+		refusal(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, requestSummaryJSON{CountedAt: restriction.Stamp(c.CountedAt), Received: c.Received,
+		OldestReceivedAt: stampPtr(c.OldestReceivedAt), Truncated: c.Truncated})
+}
+
 // AcceptRestrictionRequest serves POST /v1/restriction-requests/{id}/accept.
 func (s apiServer) AcceptRestrictionRequest(w http.ResponseWriter, r *http.Request, id gen.RequestID) {
 	rs, actor, ok := s.restrictions(w, r)
@@ -624,6 +671,28 @@ type requestJSON struct {
 	DecidedAt      *string         `json:"decided_at,omitempty"`
 	DecisionReason *string         `json:"decision_reason,omitempty"`
 	RestrictionID  *string         `json:"restriction_id,omitempty"`
+}
+
+// requestItemJSON is one RestrictionRequestItem of the list.
+type requestItemJSON struct {
+	ID         string `json:"id"`
+	Requester  string `json:"requester"`
+	Source     string `json:"source"`
+	ReceivedAt string `json:"received_at"`
+	State      string `json:"state"`
+}
+
+type requestListJSON struct {
+	Requests  []requestItemJSON `json:"requests"`
+	Truncated bool              `json:"truncated"`
+}
+
+// requestSummaryJSON is the RestrictionRequestSummary: counts only.
+type requestSummaryJSON struct {
+	CountedAt        string  `json:"counted_at"`
+	Received         int64   `json:"received"`
+	OldestReceivedAt *string `json:"oldest_received_at"`
+	Truncated        bool    `json:"truncated"`
 }
 
 func toRequestJSON(q restriction.Request) requestJSON {

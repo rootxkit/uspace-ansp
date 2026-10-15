@@ -110,6 +110,13 @@ complete.
 
 ### Added
 
+- `GET /v1/restriction-requests` and `GET /v1/restriction-requests/summary`
+  (watch_supervisor, additive; PLAN section 15 row 45 decided): the
+  requests awaiting a decision, oldest first without their payload, and
+  their count with the oldest one's `received_at`, each one bounded read
+  over `restriction_requests_state_idx` on the database clock. The
+  requests page lists them for a supervisor; the overview counts them.
+  The BFF's request entry is now exact (list, `{id}`, accept, decline).
 - `GET /v1/users/summary` (admin, additive; in `auth.AccessTable`): the
   console accounts counted by status and role in one bounded read on
   the database clock, no username or id. The overview shows an admin

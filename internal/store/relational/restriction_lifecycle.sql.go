@@ -474,6 +474,88 @@ func (q *Queries) NextRestrictionIdentifier(ctx context.Context) (NextRestrictio
 	return i, err
 }
 
+const pendingRestrictionRequestCounts = `-- name: PendingRestrictionRequestCounts :one
+SELECT
+    clock_timestamp()::timestamptz AS counted_at,
+    count(*)::bigint               AS received,
+    coalesce(min(b.received_at), clock_timestamp())::timestamptz AS oldest_received_at,
+    EXISTS (
+        SELECT 1 FROM restriction_requests WHERE state = 'received'
+        ORDER BY received_at OFFSET $1::int LIMIT 1
+    ) AS truncated
+FROM (
+    SELECT received_at FROM restriction_requests WHERE state = 'received'
+    ORDER BY received_at LIMIT $1::int
+) b
+`
+
+type PendingRestrictionRequestCountsRow struct {
+	CountedAt        time.Time
+	Received         int64
+	OldestReceivedAt time.Time
+	Truncated        bool
+}
+
+// The requests awaiting a decision counted for the overview, on the
+// database clock: at most max_rows rows of restriction_requests_state_idx
+// are read, and truncated says more exist (a bounded OFFSET on the same
+// range). oldest_received_at is the first of them; with none waiting it
+// is counted_at, and the caller states it as null (received = 0).
+func (q *Queries) PendingRestrictionRequestCounts(ctx context.Context, maxRows int32) (PendingRestrictionRequestCountsRow, error) {
+	row := q.db.QueryRow(ctx, pendingRestrictionRequestCounts, maxRows)
+	var i PendingRestrictionRequestCountsRow
+	err := row.Scan(
+		&i.CountedAt,
+		&i.Received,
+		&i.OldestReceivedAt,
+		&i.Truncated,
+	)
+	return i, err
+}
+
+const pendingRestrictionRequests = `-- name: PendingRestrictionRequests :many
+SELECT id, requester, source, received_at, state FROM restriction_requests
+WHERE state = 'received'
+ORDER BY received_at, id
+LIMIT $1::int
+`
+
+type PendingRestrictionRequestsRow struct {
+	ID         string
+	Requester  string
+	Source     string
+	ReceivedAt time.Time
+	State      string
+}
+
+// The requests awaiting a decision, oldest first, without their payload
+// (GET /v1/restriction-requests): a range of restriction_requests_state_idx.
+func (q *Queries) PendingRestrictionRequests(ctx context.Context, pageSize int32) ([]PendingRestrictionRequestsRow, error) {
+	rows, err := q.db.Query(ctx, pendingRestrictionRequests, pageSize)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []PendingRestrictionRequestsRow{}
+	for rows.Next() {
+		var i PendingRestrictionRequestsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Requester,
+			&i.Source,
+			&i.ReceivedAt,
+			&i.State,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const planRestriction = `-- name: PlanRestriction :exec
 INSERT INTO restrictions (
     id, ansp_ref, identifier, uspace_airspace_id, zone_type, geom, radius_m,
