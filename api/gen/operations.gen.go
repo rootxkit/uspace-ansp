@@ -46,11 +46,15 @@ var Operations = []Operation{
 	{ID: "acknowledgeDeliveryAlarm", Method: "POST", Path: "/v1/delivery-alarms/{id}/acknowledge", Pattern: "POST /v1/delivery-alarms/{id}/acknowledge", Tag: "restrictions", Process: "api", Spec: "02 F2 failure rule", Auth: "session:watch_supervisor", WebSocket: false},
 	{ID: "getMannedTrafficSnapshot", Method: "GET", Path: "/v1/manned-traffic/snapshot", Pattern: "GET /v1/manned-traffic/snapshot", Tag: "manned-traffic", Process: "manned-feed", Spec: "02 F4", Auth: "token:ansp.traffic+mtls or session", WebSocket: false},
 	{ID: "streamMannedTraffic", Method: "GET", Path: "/v1/manned-traffic/stream", Pattern: "GET /v1/manned-traffic/stream", Tag: "manned-traffic", Process: "manned-feed", Spec: "02 F4, 04 §3.1 track/manned/v1", Auth: "token:ansp.traffic+mtls or session", WebSocket: true},
+	{ID: "getMannedTrafficSummary", Method: "GET", Path: "/v1/manned-traffic/summary", Pattern: "GET /v1/manned-traffic/summary", Tag: "manned-traffic", Process: "manned-feed", Spec: "02 F4", Auth: "session", WebSocket: false},
 	{ID: "createOccurrence", Method: "POST", Path: "/v1/occurrences", Pattern: "POST /v1/occurrences", Tag: "occurrences", Process: "api", Spec: "01 N4, 376/2014 Art. 4(8), 02 F7", Auth: "session:watch_supervisor", WebSocket: false},
+	{ID: "getOccurrenceSummary", Method: "GET", Path: "/v1/occurrences/summary", Pattern: "GET /v1/occurrences/summary", Tag: "occurrences", Process: "api", Spec: "01 N4, 376/2014 Art. 4(8), 02 F7", Auth: "session:watch_supervisor", WebSocket: false},
 	{ID: "getCircleOutline", Method: "GET", Path: "/v1/outlines/circle", Pattern: "GET /v1/outlines/circle", Tag: "outlines", Process: "api", Spec: "02 F2 (the restriction editor's map), uspace-ui DrawLayer", Auth: "session", WebSocket: false},
 	{ID: "getPolicy", Method: "GET", Path: "/v1/policy", Pattern: "GET /v1/policy", Tag: "policy", Process: "api", Spec: "INV-03", Auth: "session:admin", WebSocket: false},
 	{ID: "putPolicy", Method: "PUT", Path: "/v1/policy", Pattern: "PUT /v1/policy", Tag: "policy", Process: "api", Spec: "INV-03", Auth: "session:admin", WebSocket: false},
+	{ID: "listRestrictionRequests", Method: "GET", Path: "/v1/restriction-requests", Pattern: "GET /v1/restriction-requests", Tag: "restriction-requests", Process: "api", Spec: "02 F11", Auth: "session:watch_supervisor", WebSocket: false},
 	{ID: "createRestrictionRequest", Method: "POST", Path: "/v1/restriction-requests", Pattern: "POST /v1/restriction-requests", Tag: "restriction-requests", Process: "api", Spec: "02 F11", Auth: "token:ansp.requests or session", WebSocket: false},
+	{ID: "getRestrictionRequestSummary", Method: "GET", Path: "/v1/restriction-requests/summary", Pattern: "GET /v1/restriction-requests/summary", Tag: "restriction-requests", Process: "api", Spec: "02 F11", Auth: "session:watch_supervisor", WebSocket: false},
 	{ID: "getRestrictionRequest", Method: "GET", Path: "/v1/restriction-requests/{id}", Pattern: "GET /v1/restriction-requests/{id}", Tag: "restriction-requests", Process: "api", Spec: "02 F11", Auth: "token:ansp.requests or session", WebSocket: false},
 	{ID: "acceptRestrictionRequest", Method: "POST", Path: "/v1/restriction-requests/{id}/accept", Pattern: "POST /v1/restriction-requests/{id}/accept", Tag: "restriction-requests", Process: "api", Spec: "02 F11", Auth: "session:watch_supervisor", WebSocket: false},
 	{ID: "declineRestrictionRequest", Method: "POST", Path: "/v1/restriction-requests/{id}/decline", Pattern: "POST /v1/restriction-requests/{id}/decline", Tag: "restriction-requests", Process: "api", Spec: "02 F11", Auth: "session:watch_supervisor", WebSocket: false},
@@ -69,6 +73,7 @@ var Operations = []Operation{
 	{ID: "setSourceControl", Method: "PUT", Path: "/v1/sources/{type}/{instance}", Pattern: "PUT /v1/sources/{type}/{instance}", Tag: "sources", Process: "api", Spec: "04 §3.6, U-15", Auth: "session:admin", WebSocket: false},
 	{ID: "listUsers", Method: "GET", Path: "/v1/users", Pattern: "GET /v1/users", Tag: "auth", Process: "api", Spec: "01 §4 users, 06 §3", Auth: "session:admin", WebSocket: false},
 	{ID: "createUser", Method: "POST", Path: "/v1/users", Pattern: "POST /v1/users", Tag: "auth", Process: "api", Spec: "01 §4 users, 06 §3", Auth: "session:admin", WebSocket: false},
+	{ID: "getUserSummary", Method: "GET", Path: "/v1/users/summary", Pattern: "GET /v1/users/summary", Tag: "auth", Process: "api", Spec: "01 §4 users, 06 §3", Auth: "session:admin", WebSocket: false},
 	{ID: "disableUser", Method: "POST", Path: "/v1/users/{id}/disable", Pattern: "POST /v1/users/{id}/disable", Tag: "auth", Process: "api", Spec: "01 §4 users, 06 §3", Auth: "session:admin", WebSocket: false},
 	{ID: "resetUserMfa", Method: "POST", Path: "/v1/users/{id}/reset-mfa", Pattern: "POST /v1/users/{id}/reset-mfa", Tag: "auth", Process: "api", Spec: "01 §4 users, 06 §3", Auth: "session:admin", WebSocket: false},
 }
@@ -196,9 +201,19 @@ func (Unimplemented) StreamMannedTraffic(context.Context, StreamMannedTrafficReq
 	return nil, &NotImplementedError{Operation: "streamMannedTraffic"}
 }
 
+// GetMannedTrafficSummary answers GET /v1/manned-traffic/summary with a *NotImplementedError.
+func (Unimplemented) GetMannedTrafficSummary(context.Context, GetMannedTrafficSummaryRequestObject) (GetMannedTrafficSummaryResponseObject, error) {
+	return nil, &NotImplementedError{Operation: "getMannedTrafficSummary"}
+}
+
 // CreateOccurrence answers POST /v1/occurrences with a *NotImplementedError.
 func (Unimplemented) CreateOccurrence(context.Context, CreateOccurrenceRequestObject) (CreateOccurrenceResponseObject, error) {
 	return nil, &NotImplementedError{Operation: "createOccurrence"}
+}
+
+// GetOccurrenceSummary answers GET /v1/occurrences/summary with a *NotImplementedError.
+func (Unimplemented) GetOccurrenceSummary(context.Context, GetOccurrenceSummaryRequestObject) (GetOccurrenceSummaryResponseObject, error) {
+	return nil, &NotImplementedError{Operation: "getOccurrenceSummary"}
 }
 
 // GetCircleOutline answers GET /v1/outlines/circle with a *NotImplementedError.
@@ -216,9 +231,19 @@ func (Unimplemented) PutPolicy(context.Context, PutPolicyRequestObject) (PutPoli
 	return nil, &NotImplementedError{Operation: "putPolicy"}
 }
 
+// ListRestrictionRequests answers GET /v1/restriction-requests with a *NotImplementedError.
+func (Unimplemented) ListRestrictionRequests(context.Context, ListRestrictionRequestsRequestObject) (ListRestrictionRequestsResponseObject, error) {
+	return nil, &NotImplementedError{Operation: "listRestrictionRequests"}
+}
+
 // CreateRestrictionRequest answers POST /v1/restriction-requests with a *NotImplementedError.
 func (Unimplemented) CreateRestrictionRequest(context.Context, CreateRestrictionRequestRequestObject) (CreateRestrictionRequestResponseObject, error) {
 	return nil, &NotImplementedError{Operation: "createRestrictionRequest"}
+}
+
+// GetRestrictionRequestSummary answers GET /v1/restriction-requests/summary with a *NotImplementedError.
+func (Unimplemented) GetRestrictionRequestSummary(context.Context, GetRestrictionRequestSummaryRequestObject) (GetRestrictionRequestSummaryResponseObject, error) {
+	return nil, &NotImplementedError{Operation: "getRestrictionRequestSummary"}
 }
 
 // GetRestrictionRequest answers GET /v1/restriction-requests/{id} with a *NotImplementedError.
@@ -309,6 +334,11 @@ func (Unimplemented) ListUsers(context.Context, ListUsersRequestObject) (ListUse
 // CreateUser answers POST /v1/users with a *NotImplementedError.
 func (Unimplemented) CreateUser(context.Context, CreateUserRequestObject) (CreateUserResponseObject, error) {
 	return nil, &NotImplementedError{Operation: "createUser"}
+}
+
+// GetUserSummary answers GET /v1/users/summary with a *NotImplementedError.
+func (Unimplemented) GetUserSummary(context.Context, GetUserSummaryRequestObject) (GetUserSummaryResponseObject, error) {
+	return nil, &NotImplementedError{Operation: "getUserSummary"}
 }
 
 // DisableUser answers POST /v1/users/{id}/disable with a *NotImplementedError.

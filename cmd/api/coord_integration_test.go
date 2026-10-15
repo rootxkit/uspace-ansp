@@ -62,6 +62,7 @@ type coordStack struct {
 	authority *peer
 	watch     string
 	viewer    string
+	admin     string
 	logs      *syncBuffer
 	coordMsgs chan *nats.Msg
 	// offset moves the inbox's clock; listed and projected are the CIS
@@ -207,6 +208,7 @@ func newCoordStack(t *testing.T, runTicker bool) *coordStack {
 	}
 	s.watch = s.c.signIn("watch1", "a long password for watch1")
 	s.viewer = s.c.signIn("view1", "a long password for view1")
+	s.admin = admin
 	return s
 }
 

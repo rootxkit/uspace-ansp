@@ -517,3 +517,26 @@ func TestCheckIdempotencyKey(t *testing.T) {
 		}
 	}
 }
+
+// The summary counts the newest MaxOccurrencesCounted reports by the
+// state of their delivery, stamped on the database clock, and names no
+// report; the store's failure is the summary's.
+func TestOccurrenceSummary(t *testing.T) {
+	f := newOccFixture(t)
+	at := time.Date(2026, 10, 3, 12, 0, 0, 123_000_000, time.UTC)
+	f.repo.counts = OccurrenceCounts{CountedAt: at, Total: 6, Queued: 1, Sent: 2, Failed: 1, Abandoned: 1, Cancelled: 1, Truncated: true}
+	got, err := f.occ.Summary(context.Background())
+	want := OccurrenceSummary{CountedAt: "2026-10-03T12:00:00.123Z", Total: 6,
+		ByState: OccurrenceStateCounts{Queued: 1, Sent: 2, Failed: 1, Abandoned: 1, Cancelled: 1}, Truncated: true}
+	if err != nil || got != want || f.repo.countLimit != MaxOccurrencesCounted {
+		t.Fatalf("%+v %v limit %d, want %+v", got, err, f.repo.countLimit, want)
+	}
+	raw, _ := json.Marshal(got)
+	if strings.Contains(string(raw), "report_ref") || strings.Contains(string(raw), "narrative") {
+		t.Fatalf("the summary names a report: %s", raw)
+	}
+	f.repo.failCounts = errors.New("database down")
+	if _, err := f.occ.Summary(context.Background()); err == nil {
+		t.Fatal("a store failure was answered")
+	}
+}

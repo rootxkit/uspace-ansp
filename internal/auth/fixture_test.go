@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -246,6 +247,36 @@ func (m *memStore) Users(_ context.Context, limit int) ([]User, error) {
 		return 1
 	})
 	return out[:min(limit, len(out))], nil
+}
+
+func (m *memStore) UserCounts(_ context.Context, limit int) (UserCounts, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := m.failing("users"); err != nil {
+		return UserCounts{}, err
+	}
+	us := slices.Collect(maps.Values(m.data.users))
+	slices.SortFunc(us, func(a, b User) int { return strings.Compare(a.ID, b.ID) })
+	c := UserCounts{CountedAt: m.clock.Now(), Truncated: len(us) > limit}
+	for i := range us[:min(limit, len(us))] {
+		u := &us[i]
+		c.Total++
+		switch u.Status {
+		case StatusActive:
+			c.Active++
+		case StatusDisabled:
+			c.Disabled++
+		}
+		switch u.Role {
+		case RoleWatchSupervisor:
+			c.WatchSupervisor++
+		case RoleViewer:
+			c.Viewer++
+		case RoleAdmin:
+			c.Admin++
+		}
+	}
+	return c, nil
 }
 
 func (m *memStore) RecordClientsSeen(_ context.Context, seen []ClientSeen) error {

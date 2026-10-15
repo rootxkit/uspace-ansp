@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -577,6 +578,54 @@ func TestRestrictionRequests(t *testing.T) {
 	}
 	if _, _, err := g.svc.CreateRequest(ctx, authority, "authority-02", SourceAuthority, "one-more", payload); err != nil {
 		t.Fatalf("another requester: %v", err)
+	}
+}
+
+// The requests awaiting a decision: listed oldest first without their
+// payload and counted with the oldest one's time; a decided one leaves
+// both; past the limit the list says more and the count truncated; with
+// none waiting the count is zero with no oldest (the twin of presence).
+func TestPendingRequests(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	authority := Actor{Type: "client", ID: "authority-01", Role: "authority-01"}
+	payload := []byte(`{"client_ref":"x","uspace_airspace_id":"GEOTU01","geometry":{"type":"Point","coordinates":[44.8,41.71]},"radius_m":500,"lower_m":0,"lower_ref":"AMSL","upper_m":120,"upper_ref":"AMSL","starts_at":"2026-10-02T13:00:00.000Z","ends_at":"2026-10-02T15:00:00.000Z","reason_text":"Synthetic"}`)
+	c, err := f.svc.PendingRequestCounts(ctx)
+	if err != nil || c.Received != 0 || c.OldestReceivedAt != nil || c.Truncated || !c.CountedAt.Equal(t0) {
+		t.Fatalf("none: %+v %v", c, err)
+	}
+	var ids []string
+	for i := range 3 {
+		q, _, err := f.svc.CreateRequest(ctx, authority, "authority-01", SourceAuthority, fmt.Sprintf("ref-%d", i), payload)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, q.ID)
+		f.repo.advance(time.Minute)
+	}
+	list, more, err := f.svc.PendingRequests(ctx, 10)
+	if err != nil || more || len(list) != 3 || list[0].ID != ids[0] || list[2].ID != ids[2] || list[0].Payload != nil {
+		t.Fatalf("list: %+v %v %v", list, more, err)
+	}
+	c, err = f.svc.PendingRequestCounts(ctx)
+	if err != nil || c.Received != 3 || c.OldestReceivedAt == nil || !c.OldestReceivedAt.Equal(list[0].ReceivedAt) || c.Truncated {
+		t.Fatalf("counts: %+v %v", c, err)
+	}
+	if _, err := f.svc.Decline(ctx, supervisor, ids[0], "not needed"); err != nil {
+		t.Fatal(err)
+	}
+	if list, more, _ = f.svc.PendingRequests(ctx, 1); len(list) != 1 || list[0].ID != ids[1] || !more {
+		t.Fatalf("past the limit: %+v %v", list, more)
+	}
+	// A limit outside 1 to MaxPendingRequestsListed is held to the bounds.
+	if list, _, _ = f.svc.PendingRequests(ctx, 0); len(list) != 1 {
+		t.Fatalf("limit 0: %d", len(list))
+	}
+	if list, _, _ = f.svc.PendingRequests(ctx, MaxPendingRequestsListed+5); len(list) != 2 {
+		t.Fatalf("limit past the bound: %d", len(list))
+	}
+	if c, _ = f.svc.PendingRequestCounts(ctx); c.Received != 2 || !c.OldestReceivedAt.Equal(list[0].ReceivedAt) {
+		t.Fatalf("after a decision: %+v", c)
 	}
 }
 

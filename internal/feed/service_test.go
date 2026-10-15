@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -112,6 +113,7 @@ func newFixture(t *testing.T, cfg Config, cis picture.CIS) *fixture {
 		}
 	}
 	mux.HandleFunc("GET /v1/manned-traffic/snapshot", inject(f.svc.ServeSnapshot))
+	mux.HandleFunc("GET /v1/manned-traffic/summary", inject(f.svc.ServeSummary))
 	mux.HandleFunc("GET /v1/manned-traffic/stream", inject(f.svc.ServeStream))
 	f.srv = httptest.NewServer(mux)
 	t.Cleanup(f.srv.Close)
@@ -524,6 +526,49 @@ func TestSnapshotOfAnEmptyPictureSaysWhy(t *testing.T) {
 		t.Fatalf("bad box %d", code)
 	}
 	if code, _, _ := get("", ""); code != http.StatusUnauthorized {
+		t.Fatalf("no caller %d", code)
+	}
+}
+
+// TestSummaryCountsThePictureAndSaysWhyItIsEmpty: an empty picture is
+// zero with adapters_silent and the relevance line; with aircraft the
+// counts are the picture's by state, backlog-only left out, none named;
+// no caller 401.
+func TestSummaryCountsThePictureAndSaysWhyItIsEmpty(t *testing.T) {
+	f := newFixture(t, Config{}, picture.NoCIS{})
+	get := func(principal string) (int, MannedSummary, string) {
+		r, _ := http.NewRequest(http.MethodGet, f.srv.URL+"/v1/manned-traffic/summary", nil)
+		r.Header.Set("X-Test-Principal", principal)
+		resp, err := http.DefaultClient.Do(r)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		raw, _ := io.ReadAll(resp.Body)
+		var s MannedSummary
+		_ = json.Unmarshal(raw, &s)
+		return resp.StatusCode, s, string(raw)
+	}
+	code, s, _ := get("session:user-1")
+	if code != http.StatusOK || s.Total != 0 || !contains(s.Degraded, DegradedAdaptersSilent) || s.Relevance != picture.StatusNoProjection ||
+		s.MaxAircraft != picture.DefaultLimits().MaxAircraft || s.PolicyVersion != "3" || s.CountedAt != manned.FormatTime(t0) {
+		t.Fatalf("empty %d %+v", code, s)
+	}
+	f.adapters.Observe("adsb-tbs", statusMsg("adsb-tbs", AdapterLive, true, t0), t0)
+	f.svc.Ingest(sample("4ca7b5", "adsb-tbs", 41.72, 44.80, t0))
+	f.svc.Ingest(sample("4ca7b6", "adsb-tbs", 41.73, 44.81, t0))
+	backlog := sample("4ca7b7", "adsb-tbs", 41.74, 44.82, t0)
+	backlog.Times.Backlog = true
+	f.svc.Ingest(backlog)
+	code, s, raw := get("session:user-1")
+	want := MannedStateCounts{Live: 2}
+	if code != http.StatusOK || s.Total != 2 || s.ByState != want || s.Relevant != 2 || contains(s.Degraded, DegradedAdaptersSilent) {
+		t.Fatalf("two %d %s", code, raw)
+	}
+	if strings.Contains(raw, "4ca7b5") {
+		t.Fatalf("the summary names an aircraft: %s", raw)
+	}
+	if code, _, _ := get(""); code != http.StatusUnauthorized {
 		t.Fatalf("no caller %d", code)
 	}
 }

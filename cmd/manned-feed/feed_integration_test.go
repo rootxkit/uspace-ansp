@@ -99,7 +99,7 @@ type feedProcess struct {
 	b    *bus.Bus
 }
 
-func startFeed(t *testing.T) *feedProcess {
+func startFeed(t *testing.T, extraEnv ...string) *feedProcess {
 	t.Helper()
 	natsURL := os.Getenv("ANSP_NATS_URL")
 	if natsURL == "" {
@@ -121,6 +121,7 @@ func startFeed(t *testing.T) *feedProcess {
 	p := &feedProcess{addr: freeAddr(t), ts: ts, out: &syncBuffer{}, iss: newIssuer(t), b: b}
 	env := []string{"ANSP_PROCESS=" + process, "ANSP_HTTP_ADDR=" + p.addr, "ANSP_MTLS_MODE=off", "ANSP_NATS_URL=" + natsURL,
 		"ANSP_TIMESERIES_DSN=" + ts, "ANSP_TOKEN_ISSUERS=" + issuerName + "=" + p.iss.url, "ANSP_AUDIENCES=" + audience}
+	env = append(env, extraEnv...)
 	runCtx, stop := context.WithCancel(context.Background())
 	done := make(chan int, 1)
 	go func() { done <- run(runCtx, nil, env, p.out) }()

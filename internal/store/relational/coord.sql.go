@@ -703,6 +703,59 @@ func (q *Queries) OccurrenceByIdempotency(ctx context.Context, arg OccurrenceByI
 	return i, err
 }
 
+const occurrenceDeliveryCounts = `-- name: OccurrenceDeliveryCounts :one
+SELECT
+    clock_timestamp()::timestamptz                          AS counted_at,
+    count(*)::bigint                                        AS total,
+    count(*) FILTER (WHERE d.state = 'queued')::bigint      AS queued,
+    count(*) FILTER (WHERE d.state = 'sent')::bigint        AS sent,
+    count(*) FILTER (WHERE d.state = 'failed')::bigint      AS failed,
+    count(*) FILTER (WHERE d.state = 'abandoned')::bigint   AS abandoned,
+    count(*) FILTER (WHERE d.state = 'cancelled')::bigint   AS cancelled,
+    EXISTS (
+        SELECT 1 FROM occurrence_reports
+        ORDER BY became_aware_at DESC OFFSET $1::int LIMIT 1
+    ) AS truncated
+FROM (
+    SELECT delivery_id FROM occurrence_reports
+    ORDER BY became_aware_at DESC LIMIT $1::int
+) o
+JOIN deliveries d ON d.id = o.delivery_id
+`
+
+type OccurrenceDeliveryCountsRow struct {
+	CountedAt time.Time
+	Total     int64
+	Queued    int64
+	Sent      int64
+	Failed    int64
+	Abandoned int64
+	Cancelled int64
+	Truncated bool
+}
+
+// The occurrence reports counted by the state of their delivery, for
+// GET /v1/occurrences/summary, on the database clock: the newest
+// max_rows reports by became_aware_at (occurrence_reports_aware_idx,
+// read backwards), each joined to its delivery by its primary key, and
+// truncated when an older one exists (a bounded OFFSET on the same
+// index). Counts only: nothing of a report leaves the query.
+func (q *Queries) OccurrenceDeliveryCounts(ctx context.Context, maxRows int32) (OccurrenceDeliveryCountsRow, error) {
+	row := q.db.QueryRow(ctx, occurrenceDeliveryCounts, maxRows)
+	var i OccurrenceDeliveryCountsRow
+	err := row.Scan(
+		&i.CountedAt,
+		&i.Total,
+		&i.Queued,
+		&i.Sent,
+		&i.Failed,
+		&i.Abandoned,
+		&i.Cancelled,
+		&i.Truncated,
+	)
+	return i, err
+}
+
 const undeliveredOccurrences = `-- name: UndeliveredOccurrences :many
 SELECT o.id, o.report_ref, o.delivery_id, o.became_aware_at, o.deadline_at, d.state AS delivery_state
 FROM occurrence_reports o JOIN deliveries d ON d.id = o.delivery_id

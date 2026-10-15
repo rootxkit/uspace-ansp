@@ -119,6 +119,31 @@ SELECT * FROM occurrence_reports WHERE idempotency_actor = sqlc.arg(actor) AND i
 -- name: OccurrenceByDelivery :one
 SELECT * FROM occurrence_reports WHERE delivery_id = sqlc.arg(delivery_id);
 
+-- name: OccurrenceDeliveryCounts :one
+-- The occurrence reports counted by the state of their delivery, for
+-- GET /v1/occurrences/summary, on the database clock: the newest
+-- max_rows reports by became_aware_at (occurrence_reports_aware_idx,
+-- read backwards), each joined to its delivery by its primary key, and
+-- truncated when an older one exists (a bounded OFFSET on the same
+-- index). Counts only: nothing of a report leaves the query.
+SELECT
+    clock_timestamp()::timestamptz                          AS counted_at,
+    count(*)::bigint                                        AS total,
+    count(*) FILTER (WHERE d.state = 'queued')::bigint      AS queued,
+    count(*) FILTER (WHERE d.state = 'sent')::bigint        AS sent,
+    count(*) FILTER (WHERE d.state = 'failed')::bigint      AS failed,
+    count(*) FILTER (WHERE d.state = 'abandoned')::bigint   AS abandoned,
+    count(*) FILTER (WHERE d.state = 'cancelled')::bigint   AS cancelled,
+    EXISTS (
+        SELECT 1 FROM occurrence_reports
+        ORDER BY became_aware_at DESC OFFSET sqlc.arg(max_rows)::int LIMIT 1
+    ) AS truncated
+FROM (
+    SELECT delivery_id FROM occurrence_reports
+    ORDER BY became_aware_at DESC LIMIT sqlc.arg(max_rows)::int
+) o
+JOIN deliveries d ON d.id = o.delivery_id;
+
 -- name: UndeliveredOccurrences :many
 -- Reports whose delivery is not sent alarm_after_s after became_aware_at
 -- (at now) and have no occurrence_undelivered alarm yet.

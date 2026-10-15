@@ -117,6 +117,12 @@ func (s apiServer) ListUsers(w http.ResponseWriter, r *http.Request) {
 	s.signIn(w, r, (*auth.Handlers).Users)
 }
 
+// GetUserSummary serves GET /v1/users/summary (WP-11): the accounts
+// counted for the overview, admin only.
+func (s apiServer) GetUserSummary(w http.ResponseWriter, r *http.Request) {
+	s.signIn(w, r, (*auth.Handlers).UserSummary)
+}
+
 // CreateUser serves POST /v1/users (WP-2).
 func (s apiServer) CreateUser(w http.ResponseWriter, r *http.Request) {
 	s.signIn(w, r, (*auth.Handlers).AddUser)

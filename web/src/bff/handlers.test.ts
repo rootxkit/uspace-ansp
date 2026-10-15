@@ -269,7 +269,8 @@ describe("proxy", () => {
     "/v1/delivery-alarms",
     "/v1/adapters",
     "/v1/sources",
-    "/v1/restriction-requests/q1",
+    "/v1/restriction-requests/01K6P0R0000000000000000001",
+    "/v1/restriction-requests",
     "/v1/coordination/inbox",
     "/v1/coordination/inbox/01K6P0N0000000000000000001/acknowledge",
     "/v1/occurrences",
@@ -330,7 +331,20 @@ describe("proxy", () => {
     expect(api.calls[0]?.headers.get("authorization")).toBe("Bearer tok123");
   });
 
-  it.each(["/v1/users", "/v1/policy/1", "/v1/auditX", "/v1/occurrences/01K6P0", "/v1/coordination/notices", "/v1/coordination/inboxX", "/v1/manned-traffic/snapshot", "/v1/auth/login", "/v1/auth/mfa", "/v1/auth/logout", "/metrics", "/v1/restrictionsX"])(
+  it.each(["accept", "decline"])("forwards POST /v1/restriction-requests/{id}/%s with the CSRF pair", async (act) => {
+    const api = mockApi(() => Response.json({ ok: true }));
+    const res = await bffWith(api.fetch).proxy(
+      req(`/_bff/api/v1/restriction-requests/01K6P0R0000000000000000001/${act}`, {
+        method: "POST",
+        headers: { cookie, "x-csrf-token": "csrf456", "content-type": "application/json" },
+        body: JSON.stringify({ reason: "test" }),
+      }),
+    );
+    expect(res.status).toBe(200);
+    expect(api.calls[0]?.url).toBe(`${API}/v1/restriction-requests/01K6P0R0000000000000000001/${act}`);
+  });
+
+  it.each(["/v1/users", "/v1/policy/1", "/v1/auditX", "/v1/occurrences/01K6P0", "/v1/coordination/notices", "/v1/coordination/inboxX", "/v1/manned-traffic/snapshot", "/v1/auth/login", "/v1/auth/mfa", "/v1/auth/logout", "/metrics", "/v1/restrictionsX", "/v1/restriction-requests/q1", "/v1/restriction-requests/01K6P0R0000000000000000001/other", "/v1/restriction-requestsX"])(
     "refuses %s, which is not on the console's list",
     async (p) => {
       const api = mockApi(() => Response.json({ ok: true }));
@@ -341,6 +355,101 @@ describe("proxy", () => {
       expect(api.calls).toHaveLength(0);
     },
   );
+});
+
+describe("summaries", () => {
+  const cookie = "uspace_session=tok123; uspace_csrf=csrf456";
+  const SUMMARIES = ["/v1/users/summary", "/v1/restriction-requests/summary", "/v1/occurrences/summary"];
+
+  it.each(SUMMARIES)("forwards GET %s with the bearer, and passes the API's 401 and 403 on", async (p) => {
+    for (const status of [200, 401, 403]) {
+      const api = mockApi(() => Response.json(status === 200 ? { total: 1 } : { status }, { status }));
+      const res = await bffWith(api.fetch).proxy(req(`/_bff/api${p}`, { method: "GET", headers: { cookie } }));
+      expect(res.status).toBe(status);
+      expect(api.calls).toHaveLength(1);
+      expect(api.calls[0]?.method).toBe("GET");
+      expect(api.calls[0]?.url).toBe(`${API}${p}`);
+      expect(api.calls[0]?.headers.get("authorization")).toBe("Bearer tok123");
+    }
+  });
+
+  it.each(SUMMARIES)("forwards GET %s without a session too, so the API answers 401", async (p) => {
+    const api = mockApi(() => Response.json({ status: 401 }, { status: 401 }));
+    const res = await bffWith(api.fetch).proxy(req(`/_bff/api${p}`, { method: "GET" }));
+    expect(res.status).toBe(401);
+    expect(api.calls[0]?.headers.get("authorization")).toBeNull();
+  });
+
+  it.each(SUMMARIES.flatMap((p) => ["POST", "PUT", "PATCH", "DELETE", "HEAD"].map((m) => [m, p] as const)))(
+    "refuses %s %s 405 without calling the API, CSRF pair and all",
+    async (method, p) => {
+      const api = mockApi(() => Response.json({ ok: true }));
+      const res = await bffWith(api.fetch).proxy(
+        req(`/_bff/api${p}`, { method, headers: { cookie, "x-csrf-token": "csrf456" }, ...(method === "HEAD" ? {} : { body: "{}" }) }),
+      );
+      expect(res.status).toBe(405);
+      expect(res.headers.get("allow")).toBe("GET");
+      expect(api.calls).toHaveLength(0);
+    },
+  );
+
+  it.each(SUMMARIES.flatMap((p) => [`${p}/x`, `${p}X`, p.replace(/\/summary$/, "/summar")]))("refuses %s, which is not the exact path", async (p) => {
+    const api = mockApi(() => Response.json({ ok: true }));
+    const res = await bffWith(api.fetch).proxy(req(`/_bff/api${p}`, { method: "GET", headers: { cookie } }));
+    expect(res.status).toBe(404);
+    expect(api.calls).toHaveLength(0);
+  });
+});
+
+describe("the feed's summary", () => {
+  const cookie = "uspace_session=tok123; uspace_csrf=csrf456";
+  const FEED = "http://feed.internal:8080";
+  // Without a second argument the feed is FEED; with one, that value (undefined: unset).
+  const bffFeed = (f: typeof fetch, ...base: [string | undefined] | []) => {
+    const feedBase = base.length === 0 ? FEED : base[0];
+    return createBff({ apiBase: API, ...(feedBase === undefined ? {} : { feedBase }), sessionMaxAgeS: 43200, timeoutMs: 2000, mfaChallengeSecret: MFA_SECRET, trustedProxyHops: 1, fetch: f });
+  };
+
+  it("forwards GET /v1/manned-traffic/summary to manned-feed with the bearer, and the feed's 401 and 403 on", async () => {
+    for (const status of [200, 401, 403]) {
+      const up = mockApi(() => Response.json(status === 200 ? { total: 2 } : { status }, { status }));
+      const res = await bffFeed(up.fetch).proxy(req("/_bff/api/v1/manned-traffic/summary", { method: "GET", headers: { cookie } }));
+      expect(res.status).toBe(status);
+      expect(up.calls).toHaveLength(1);
+      expect(up.calls[0]?.url).toBe(`${FEED}/v1/manned-traffic/summary`);
+      expect(up.calls[0]?.headers.get("authorization")).toBe("Bearer tok123");
+    }
+  });
+
+  it("never sends another path to manned-feed, nor the summary to the API", async () => {
+    const up = mockApi(() => Response.json({ ok: true }));
+    const bff = bffFeed(up.fetch);
+    for (const p of ["/v1/manned-traffic/snapshot", "/v1/manned-traffic/summary/x", "/v1/manned-traffic/summaryX", "/v1/manned-traffic/stream"]) {
+      const res = await bff.proxy(req(`/_bff/api${p}`, { method: "GET", headers: { cookie } }));
+      expect(res.status).toBe(404);
+    }
+    expect(up.calls).toHaveLength(0);
+    await bff.proxy(req("/_bff/api/v1/auth/me", { method: "GET", headers: { cookie } }));
+    expect(up.calls[0]?.url).toBe(`${API}/v1/auth/me`);
+  });
+
+  it.each(["POST", "PUT", "DELETE", "HEAD"])("refuses %s on the summary 405 without calling manned-feed", async (method) => {
+    const up = mockApi(() => Response.json({ ok: true }));
+    const res = await bffFeed(up.fetch).proxy(req("/_bff/api/v1/manned-traffic/summary", { method, headers: { cookie, "x-csrf-token": "csrf456" } }));
+    expect(res.status).toBe(405);
+    expect(res.headers.get("allow")).toBe("GET");
+    expect(up.calls).toHaveLength(0);
+  });
+
+  it.each([undefined, "", "not a url", "ftp://feed.internal"])("answers 503 naming WEB_FEED_INTERNAL_URL when it is %s, and still serves the API", async (base) => {
+    const up = mockApi(() => Response.json({ ok: true }));
+    const bff = bffFeed(up.fetch, base);
+    const res = await bff.proxy(req("/_bff/api/v1/manned-traffic/summary", { method: "GET", headers: { cookie } }));
+    expect(res.status).toBe(503);
+    expect(await res.text()).toContain("WEB_FEED_INTERNAL_URL");
+    expect(up.calls).toHaveLength(0);
+    expect((await bff.proxy(req("/_bff/api/v1/auth/me", { method: "GET", headers: { cookie } }))).status).toBe(200);
+  });
 });
 
 describe("Idempotency-Key", () => {

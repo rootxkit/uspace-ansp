@@ -2,12 +2,16 @@ package auth
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"slices"
 	"strings"
 	"testing"
+
+	coreauth "github.com/rootxkit/uspace-core/auth"
 
 	"github.com/rootxkit/uspace-ansp/internal/apierr"
 )
@@ -31,7 +35,7 @@ func (w *world) server(t testing.TB) http.Handler {
 	rt := NewRoutes(http.NewServeMux(), "api", w.guard, 1<<20, authOps(), RealIP(proxies))
 	h := &Handlers{Accounts: w.accounts, Keys: w.keys}
 	for pattern, serve := range map[string]http.HandlerFunc{
-		OpLogin: h.Login, OpMFA: h.VerifyMFA, OpLogout: h.Logout, OpMe: h.Me, OpUsers: h.Users,
+		OpLogin: h.Login, OpMFA: h.VerifyMFA, OpLogout: h.Logout, OpMe: h.Me, OpUsers: h.Users, OpUserSummary: h.UserSummary,
 		OpAddUser: h.AddUser, OpResetMFA: h.ResetMFA, OpDisable: h.Disable, OpJWKS: h.Keys.ServeHTTP,
 	} {
 		rt.Handle(pattern, serve)
@@ -224,6 +228,67 @@ func TestHTTPRefusals(t *testing.T) {
 	w.store.fail["users"] = errDown
 	if rec := do(t, h, http.MethodGet, "/v1/users", "", nil); rec.Code != http.StatusUnauthorized {
 		t.Fatal(rec.Code)
+	}
+}
+
+// GET /v1/users/summary: an admin gets the accounts counted by status
+// and role on the store's clock, and nothing that names an account; a
+// viewer and a supervisor are refused 403, no token 401 (fail closed,
+// admin only); past MaxUsersCounted the counts say truncated; the store
+// down is 500 without its text.
+func TestHTTPUserSummary(t *testing.T) {
+	w := newWorld(t)
+	h := w.server(t)
+	w.addUser(t, "admin1", pw, RoleAdmin)
+	w.addUser(t, "viewer1", pw, RoleViewer)
+	sup := w.addUser(t, "super1", pw, RoleWatchSupervisor)
+	w.addUser(t, "super2", pw, RoleWatchSupervisor)
+	admin, _ := w.signIn(t, "admin1", pw)
+	viewer, _ := w.signIn(t, "viewer1", pw)
+	super, _ := w.signIn(t, "super2", pw)
+	if _, err := w.accounts.Disable(context.Background(), Principal{Session: true, Role: RoleAdmin, Claims: coreauth.Claims{Subject: "admin"}}, sup.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := do(t, h, http.MethodGet, "/v1/users/summary", admin.Token, nil)
+	var got UserSummary
+	must(t, json.Unmarshal(rec.Body.Bytes(), &got))
+	want := UserSummary{CountedAt: w.clock.Now().UTC().Format(summaryTime), Total: 4,
+		ByStatus: UserStatusCounts{Active: 3, Disabled: 1}, ByRole: UserRoleCounts{WatchSupervisor: 2, Viewer: 1, Admin: 1}}
+	if rec.Code != http.StatusOK || got != want || rec.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("admin: %d %s, want %+v", rec.Code, rec.Body.String(), want)
+	}
+	for _, name := range []string{"admin1", "viewer1", "super1", "super2", sup.ID} {
+		if strings.Contains(rec.Body.String(), name) {
+			t.Fatalf("the summary names an account (%s): %s", name, rec.Body.String())
+		}
+	}
+	for who, tok := range map[string]string{"viewer": viewer.Token, "supervisor": super.Token} {
+		rec := do(t, h, http.MethodGet, "/v1/users/summary", tok, nil)
+		if p := problemOf(t, rec); rec.Code != http.StatusForbidden || p.Slug() != SlugForbidden {
+			t.Fatalf("%s: %d %s", who, rec.Code, rec.Body.String())
+		}
+	}
+	if rec := do(t, h, http.MethodGet, "/v1/users/summary", "", nil); rec.Code != http.StatusUnauthorized {
+		t.Fatalf("no token: %d", rec.Code)
+	}
+
+	// Past the bound: MaxUsersCounted are counted and truncated is set.
+	w.store.mu.Lock()
+	for i := range MaxUsersCounted {
+		id := fmt.Sprintf("ffffffff-0000-4000-8000-%012d", i)
+		w.store.data.users[id] = User{ID: id, Username: fmt.Sprintf("bulk%04d", i), Role: RoleViewer, Status: StatusActive}
+	}
+	w.store.mu.Unlock()
+	rec = do(t, h, http.MethodGet, "/v1/users/summary", admin.Token, nil)
+	must(t, json.Unmarshal(rec.Body.Bytes(), &got))
+	if rec.Code != http.StatusOK || got.Total != MaxUsersCounted || !got.Truncated {
+		t.Fatalf("past the bound: %d %s", rec.Code, rec.Body.String())
+	}
+
+	w.store.fail["users"] = errDown
+	if rec := do(t, h, http.MethodGet, "/v1/users/summary", admin.Token, nil); rec.Code != http.StatusInternalServerError || strings.Contains(rec.Body.String(), "connection") {
+		t.Fatalf("store down: %d %s", rec.Code, rec.Body.String())
 	}
 }
 

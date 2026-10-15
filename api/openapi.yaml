@@ -1721,6 +1721,54 @@ components:
           type: string
         restriction_id:
           $ref: "#/components/schemas/ULID"
+    RestrictionRequestItem:
+      type: object
+      description: A request awaiting a decision, as the list names it; GET /v1/restriction-requests/{id} has the rest.
+      required: [id, requester, source, received_at, state]
+      properties:
+        id:
+          $ref: "#/components/schemas/ULID"
+        requester:
+          type: string
+          description: The client id of the requesting system, or the console account id.
+        source:
+          type: string
+          enum: [authority, console]
+        received_at:
+          $ref: "#/components/schemas/Timestamp"
+        state:
+          type: string
+          enum: [received]
+    RestrictionRequestList:
+      type: object
+      required: [requests, truncated]
+      properties:
+        requests:
+          type: array
+          items:
+            $ref: "#/components/schemas/RestrictionRequestItem"
+        truncated:
+          type: boolean
+    RestrictionRequestSummary:
+      type: object
+      description: |
+        The requests awaiting a decision, counted (no requester, no
+        area). counted_at is the database clock; at most
+        MaxPendingRequestsCounted (10000) are counted and truncated says
+        there were more.
+      required: [counted_at, received, oldest_received_at, truncated]
+      properties:
+        counted_at:
+          $ref: "#/components/schemas/Timestamp"
+        received:
+          type: integer
+          minimum: 0
+        oldest_received_at:
+          description: When the longest-waiting request was received; null when none waits.
+          type: [string, "null"]
+          format: date-time
+        truncated:
+          type: boolean
     AcceptRequest:
       type: object
       properties:
@@ -2045,6 +2093,43 @@ components:
         deadline_at:
           $ref: "#/components/schemas/Timestamp"
 
+    OccurrenceSummary:
+      type: object
+      description: |
+        The occurrence reports counted by the state of their delivery to
+        the authority (deliveries.state): counts only. counted_at is the
+        database clock; truncated says more reports existed than the
+        newest MaxOccurrencesCounted counted.
+      required: [counted_at, total, by_state, truncated]
+      properties:
+        counted_at:
+          $ref: "#/components/schemas/Timestamp"
+        total:
+          type: integer
+          minimum: 0
+        by_state:
+          type: object
+          additionalProperties: false
+          required: [queued, sent, failed, abandoned, cancelled]
+          properties:
+            queued:
+              type: integer
+              minimum: 0
+            sent:
+              type: integer
+              minimum: 0
+            failed:
+              type: integer
+              minimum: 0
+            abandoned:
+              type: integer
+              minimum: 0
+            cancelled:
+              type: integer
+              minimum: 0
+        truncated:
+          type: boolean
+
     AuditEvent:
       type: object
       required: [id, ts, actor_type, actor_id, purpose, entity_type, entity_id, event_type, payload, prev_hash, hash]
@@ -2176,6 +2261,47 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/User"
+    UserSummary:
+      type: object
+      description: |
+        The console accounts counted, never listed: no username, no id,
+        no time of a sign-in (01 §4). counted_at is the database clock.
+        At most MaxUsersCounted (1000, the bound of GET /v1/users)
+        accounts are counted; truncated says there were more.
+      required: [counted_at, total, by_status, by_role, truncated]
+      properties:
+        counted_at:
+          $ref: "#/components/schemas/Timestamp"
+        total:
+          type: integer
+          minimum: 0
+        by_status:
+          type: object
+          additionalProperties: false
+          required: [active, disabled]
+          properties:
+            active:
+              type: integer
+              minimum: 0
+            disabled:
+              type: integer
+              minimum: 0
+        by_role:
+          type: object
+          additionalProperties: false
+          required: [watch_supervisor, viewer, admin]
+          properties:
+            watch_supervisor:
+              type: integer
+              minimum: 0
+            viewer:
+              type: integer
+              minimum: 0
+            admin:
+              type: integer
+              minimum: 0
+        truncated:
+          type: boolean
     UserCreate:
       type: object
       required: [username, password, role]
@@ -2756,6 +2882,52 @@ components:
               minimum: 0
             policy_version:
               type: string
+    MannedSummary:
+      type: object
+      description: |
+        The manned picture counted (GET /v1/manned-traffic/summary): no
+        icao24, callsign or position. total is live + stale +
+        source_disabled; relevant is of those. max_aircraft is the
+        picture's bound (past it the aircraft heard longest ago is
+        evicted, counted picture_evicted_capacity).
+      required: [counted_at, total, by_state, relevant, max_aircraft, relevance, degraded, policy_version]
+      properties:
+        counted_at:
+          $ref: "#/components/schemas/Timestamp"
+        total:
+          type: integer
+          minimum: 0
+        by_state:
+          type: object
+          additionalProperties: false
+          required: [live, stale, source_disabled]
+          properties:
+            live:
+              type: integer
+              minimum: 0
+            stale:
+              type: integer
+              minimum: 0
+            source_disabled:
+              type: integer
+              minimum: 0
+        relevant:
+          type: integer
+          minimum: 0
+        max_aircraft:
+          type: integer
+          minimum: 1
+        relevance:
+          type: string
+          description: The relevance filter's status line (SC-22), as console/status/v1 carries it.
+        degraded:
+          type: array
+          uniqueItems: true
+          items:
+            type: string
+            pattern: "^[a-z][a-z0-9_]*$"
+        policy_version:
+          type: string
     MannedStreamFrame:
       description: One server frame of GET /v1/manned-traffic/stream, dispatched on schema.
       oneOf:
@@ -3469,6 +3641,48 @@ paths:
           $ref: "#/components/responses/Unavailable"
 
   /v1/restriction-requests:
+    get:
+      operationId: listRestrictionRequests
+      tags: [restriction-requests]
+      summary: The restriction requests awaiting a decision
+      x-process: api
+      x-spec: 02 F11
+      x-auth: session:watch_supervisor
+      description: |
+        The received requests (02 F11) not yet accepted or declined,
+        oldest first, for the watch supervisor who decides them (docs/
+        PLAN.md section 15 row 45). Each item names the request, its
+        source, its requester and when it was received; its area and
+        window are read with GET /v1/restriction-requests/{id}. At most
+        limit items; truncated says when more were waiting. One read
+        over the (state, received_at) index.
+      security:
+        - consoleSession: []
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: The requests awaiting a decision, oldest first.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RestrictionRequestList"
+              example:
+                requests:
+                  - id: 01K6P1R2S3T4V5W6X7Y8Z9A0BC
+                    requester: authority-01
+                    source: authority
+                    received_at: "2026-10-02T11:00:00.000Z"
+                    state: received
+                truncated: false
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "503":
+          $ref: "#/components/responses/Unavailable"
     post:
       operationId: createRestrictionRequest
       tags: [restriction-requests]
@@ -3518,6 +3732,41 @@ paths:
           $ref: "#/components/responses/Conflict"
         "413":
           $ref: "#/components/responses/TooLarge"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+
+  /v1/restriction-requests/summary:
+    get:
+      operationId: getRestrictionRequestSummary
+      tags: [restriction-requests]
+      summary: How many restriction requests await a decision
+      x-process: api
+      x-spec: 02 F11
+      x-auth: session:watch_supervisor
+      description: |
+        The received requests not yet decided, counted for the
+        overview's tile with the oldest one's received_at: counts only,
+        no requester and no area. One bounded read over the (state,
+        received_at) index on the database clock (counted_at); truncated
+        says more were waiting than were counted.
+      security:
+        - consoleSession: []
+      responses:
+        "200":
+          description: The count.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RestrictionRequestSummary"
+              example:
+                counted_at: "2026-10-02T12:10:00.000Z"
+                received: 2
+                oldest_received_at: "2026-10-02T11:00:00.000Z"
+                truncated: false
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "503":
           $ref: "#/components/responses/Unavailable"
 
@@ -3918,6 +4167,50 @@ paths:
         "503":
           $ref: "#/components/responses/Unavailable"
 
+  /v1/manned-traffic/summary:
+    get:
+      operationId: getMannedTrafficSummary
+      tags: [manned-traffic]
+      summary: How many manned aircraft the picture holds
+      x-process: manned-feed
+      x-spec: 02 F4
+      x-auth: session
+      description: |
+        The live manned picture of manned-feed counted for the console's
+        overview, from the picture itself (not from a stream): every
+        aircraft shown, by state (live, stale, source_disabled), and how
+        many of them are relevant to U-space. An aircraft known only from
+        backlog samples is not shown and not counted (T-04). Counts only,
+        no icao24 or callsign; the picture is bounded by max_aircraft.
+        degraded says why the count may be low or empty (adapters_silent,
+        cis_projection_stale, nats) and relevance how relevance was
+        judged (SC-22). counted_at is manned-feed's clock.
+      security:
+        - consoleSession: []
+      responses:
+        "200":
+          description: The counts.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MannedSummary"
+              example:
+                counted_at: "2026-10-02T12:00:00.000Z"
+                total: 12
+                by_state:
+                  live: 10
+                  stale: 1
+                  source_disabled: 1
+                relevant: 7
+                max_aircraft: 5000
+                relevance: "relevance: CIS version 42, 3 volumes, age 12 s"
+                degraded: []
+                policy_version: "1"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
   /v1/manned-traffic/stream:
     get:
       operationId: streamMannedTraffic
@@ -4259,6 +4552,48 @@ paths:
         "503":
           $ref: "#/components/responses/Unavailable"
 
+  /v1/occurrences/summary:
+    get:
+      operationId: getOccurrenceSummary
+      tags: [occurrences]
+      summary: The occurrence reports by delivery state
+      x-process: api
+      x-spec: 01 N4, 376/2014 Art. 4(8), 02 F7
+      x-auth: session:watch_supervisor
+      description: |
+        The occurrence reports submitted to the authority, counted by the
+        state of their outbox delivery (queued, sent, failed, abandoned,
+        cancelled), for the overview's tile: counts only, no report_ref,
+        narrative, reporter or aircraft. The newest
+        MaxOccurrencesCounted (10000) reports by became_aware_at are
+        counted in one bounded read over occurrence_reports_aware_idx on
+        the database clock (counted_at); truncated says there were more.
+      security:
+        - consoleSession: []
+      responses:
+        "200":
+          description: The counts.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OccurrenceSummary"
+              example:
+                counted_at: "2026-10-02T12:10:00.000Z"
+                total: 3
+                by_state:
+                  queued: 1
+                  sent: 2
+                  failed: 0
+                  abandoned: 0
+                  cancelled: 0
+                truncated: false
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+
   /v1/audit:
     get:
       operationId: listAudit
@@ -4546,6 +4881,46 @@ paths:
           $ref: "#/components/responses/Conflict"
         "413":
           $ref: "#/components/responses/TooLarge"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+
+  /v1/users/summary:
+    get:
+      operationId: getUserSummary
+      tags: [auth]
+      summary: How many console accounts there are
+      x-process: api
+      x-spec: 01 §4 users, 06 §3
+      x-auth: session:admin
+      description: |
+        The console accounts counted by status and by role, for the
+        overview's tile (01 §4): counts only, no username or id. One
+        bounded read on the database clock (counted_at); truncated says
+        there were more accounts than were counted.
+      security:
+        - consoleSession: []
+      responses:
+        "200":
+          description: The counts.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserSummary"
+              example:
+                counted_at: "2026-10-02T12:10:00.000Z"
+                total: 4
+                by_status:
+                  active: 3
+                  disabled: 1
+                by_role:
+                  watch_supervisor: 2
+                  viewer: 1
+                  admin: 1
+                truncated: false
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "503":
           $ref: "#/components/responses/Unavailable"
 

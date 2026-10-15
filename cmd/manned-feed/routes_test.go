@@ -4,6 +4,8 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/rsa"
+	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
@@ -12,6 +14,7 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+	"github.com/getkin/kin-openapi/openapi3"
 	coreauth "github.com/rootxkit/uspace-core/auth"
 
 	"github.com/rootxkit/uspace-ansp/api/gen"
@@ -178,5 +181,50 @@ func TestMTLSRequiredBindsTheSubjectFromTrustedProxiesOnly(t *testing.T) {
 	h.Set(auth.HeaderClientCertSubject, "CN=ussp-01,O=GEO-TEST")
 	if code, _ := dial(t, untrusted, h); code != http.StatusForbidden {
 		t.Fatalf("the header from an untrusted peer was believed: %d", code)
+	}
+}
+
+// TestSummaryIsAConsoleSessionsOnly: GET /v1/manned-traffic/summary
+// answers a console session 200 in the contract's shape, a machine
+// token 403 even with ansp.traffic (a USSP is served the snapshot and
+// the stream, not the console's count), and no credential 401.
+func TestSummaryIsAConsoleSessionsOnly(t *testing.T) {
+	srv, tok := feedRoutes(t, config.MTLSOff, nil, nil)
+	get := func(token string) (int, []byte) {
+		r, _ := http.NewRequest(http.MethodGet, srv.URL+"/v1/manned-traffic/summary", nil)
+		if token != "" {
+			r.Header.Set("Authorization", "Bearer "+token)
+		}
+		resp, err := http.DefaultClient.Do(r)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		raw, _ := io.ReadAll(resp.Body)
+		return resp.StatusCode, raw
+	}
+	code, raw := get(tok)
+	if code != http.StatusOK {
+		t.Fatalf("session: %d %s", code, raw)
+	}
+	loader := openapi3.NewLoader()
+	loader.IsExternalRefsAllowed = true
+	doc, err := loader.LoadFromFile("../../api/openapi.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var v any
+	if err := json.Unmarshal(raw, &v); err != nil {
+		t.Fatal(err)
+	}
+	schema := doc.Paths.Value("/v1/manned-traffic/summary").Get.Responses.Status(http.StatusOK).Value.Content.Get("application/json").Schema.Value
+	if err := schema.VisitJSON(v); err != nil {
+		t.Fatalf("the answer breaks the contract: %v\n%s", err, raw)
+	}
+	if code, raw := get("scopes:ansp.traffic"); code != http.StatusForbidden {
+		t.Fatalf("machine token: %d %s", code, raw)
+	}
+	if code, _ := get(""); code != http.StatusUnauthorized {
+		t.Fatalf("no credential: %d", code)
 	}
 }

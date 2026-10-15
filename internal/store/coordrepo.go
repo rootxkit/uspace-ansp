@@ -128,6 +128,22 @@ func (r CoordRepo) Undelivered(ctx context.Context, now time.Time, after time.Du
 	return out, err
 }
 
+// OccurrenceCounts counts the newest limit reports by the state of their
+// delivery, on the database clock, in one statement.
+func (r CoordRepo) OccurrenceCounts(ctx context.Context, limit int) (coord.OccurrenceCounts, error) {
+	var out coord.OccurrenceCounts
+	err := r.do(ctx, func(ctx context.Context, q *relational.Queries) error {
+		row, err := q.OccurrenceDeliveryCounts(ctx, i32(min(max(limit, 0), coord.MaxOccurrencesCounted)))
+		if err != nil {
+			return err
+		}
+		out = coord.OccurrenceCounts{CountedAt: row.CountedAt.UTC(), Total: row.Total, Queued: row.Queued, Sent: row.Sent,
+			Failed: row.Failed, Abandoned: row.Abandoned, Cancelled: row.Cancelled, Truncated: row.Truncated}
+		return nil
+	})
+	return out, err
+}
+
 // DeliveredAlarms is the open occurrence_undelivered alarms whose report
 // is now delivered.
 func (r CoordRepo) DeliveredAlarms(ctx context.Context, limit int) ([]coord.AlarmRef, error) {

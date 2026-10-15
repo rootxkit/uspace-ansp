@@ -1,9 +1,10 @@
 "use client";
 
 // /<locale>/requests: restriction requests (02 F11) from the authority or
-// a console user. api/openapi.yaml has no list of requests (GET
-// /v1/restriction-requests/{id} only; docs/PLAN.md section 15 row 45), so
-// a request is opened by its id, which the requester gives with it. The
+// a console user. A watch supervisor is shown the requests awaiting a
+// decision, oldest first (GET /v1/restriction-requests, theirs only;
+// docs/PLAN.md section 15 row 45); anyone opens a request by its id,
+// which the requester gives with it. The
 // request is shown as the editor would hold it, pre-filled and drawn on
 // the map: its area, limits, window and reason as asked. Accepting plans
 // exactly that restriction (the API's accept takes the zone type and a
@@ -24,7 +25,39 @@ import { ZONE_TYPES } from "./plan";
 /** A request id as api/openapi.yaml takes it (a ULID). Shape only. */
 export const REQUEST_ID = /^[0-9A-HJKMNP-TV-Z]{26}$/;
 
-function RequestView({ id }: { id: string }) {
+/** The requests awaiting a decision, oldest first, each opened by its id (watch supervisor). */
+function PendingList() {
+  const t = useT();
+  const { lang } = useLang();
+  const pending = useLoad(async (c) => (await c.GET("/v1/restriction-requests")).data ?? null, "requests:pending");
+  const list = pending.data;
+  return (
+    <div data-testid="requests-pending">
+      <Section titleKey="ansp.requests.pending" descriptionKey="ansp.requests.pending_description">
+        {pending.failure !== null && <ProblemNotice failure={pending.failure} />}
+        {list === null && pending.failure === null && <Loading />}
+        {list !== null && list.requests.length === 0 && <Empty textKey="ansp.requests.none_waiting" testId="requests-none-waiting" />}
+        {list !== null && list.requests.length > 0 && (
+          <ul className="m-0 flex list-none flex-col p-0">
+            {list.requests.map((q) => (
+              <li key={q.id} className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 border-b border-border py-2 text-sm last:border-b-0" data-request={q.id}>
+                <Link href={`/${lang}/requests?id=${q.id}`} className="font-mono underline underline-offset-2">
+                  {q.id}
+                </Link>
+                <span className="text-xs text-muted-foreground">
+                  {t(`ansp.requests.source.${q.source}`, { requester: q.requester })} · <Time iso={q.received_at} />
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+        {list?.truncated === true && <p className="m-0 pt-2 text-xs text-muted-foreground">{t("ansp.requests.pending_truncated")}</p>}
+      </Section>
+    </div>
+  );
+}
+
+function RequestView({ id, onDecided }: { id: string; onDecided: () => void }) {
   const t = useT();
   const { lang } = useLang();
   const { client, role } = useConsole();
@@ -114,7 +147,10 @@ function RequestView({ id }: { id: string }) {
                 vars={vars}
                 doneKey="ansp.requests.accepted"
                 act={(reason) => client.POST("/v1/restriction-requests/{id}/accept", { params: { path: { id } }, body: { zone_type: zoneType, reason } })}
-                onDone={req.reload}
+                onDone={() => {
+                  req.reload();
+                  onDecided();
+                }}
                 testId="request-accept"
               />
             </div>
@@ -126,7 +162,10 @@ function RequestView({ id }: { id: string }) {
               destructive
               doneKey="ansp.requests.declined"
               act={(reason) => client.POST("/v1/restriction-requests/{id}/decline", { params: { path: { id } }, body: { reason } })}
-              onDone={req.reload}
+              onDone={() => {
+                req.reload();
+                onDecided();
+              }}
               testId="request-decline"
             />
           </div>
@@ -148,7 +187,10 @@ export function RequestsPage() {
   const t = useT();
   const { lang } = useLang();
   const router = useRouter();
+  const { role } = useConsole();
   const params = useSearchParams();
+  // Bumped by a decision: the list is read again.
+  const [decided, setDecided] = useState(0);
   const id = params.get("id");
   const [typed, setTyped] = useState(id ?? "");
   const valid = REQUEST_ID.test(typed.trim());
@@ -159,7 +201,7 @@ export function RequestsPage() {
   return (
     <div className="flex flex-col gap-6">
       <ConsolePageHeader titleKey="ansp.requests.title" descriptionKey="ansp.requests.description" />
-      <Empty textKey="ansp.requests.no_list" testId="requests-no-list" />
+      {maySupervise(role) ? <PendingList key={decided} /> : <Empty textKey="ansp.requests.no_list" testId="requests-no-list" />}
       <form onSubmit={open} className="flex flex-wrap items-end gap-3 rounded-lg border border-border bg-card p-4 shadow-panel">
         <div className="flex flex-col gap-1">
           <Label htmlFor="request-id">{t("ansp.requests.id")}</Label>
@@ -169,7 +211,7 @@ export function RequestsPage() {
           {t("ansp.requests.open")}
         </Button>
       </form>
-      {id !== null && REQUEST_ID.test(id) && <RequestView key={id} id={id} />}
+      {id !== null && REQUEST_ID.test(id) && <RequestView key={id} id={id} onDecided={() => setDecided((n) => n + 1)} />}
     </div>
   );
 }

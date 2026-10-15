@@ -206,6 +206,19 @@ type Request struct {
 	RestrictionID  *string
 }
 
+// RequestCounts is the requests awaiting a decision, counted: no
+// requester and no area.
+type RequestCounts struct {
+	// CountedAt is the database's clock at the count.
+	CountedAt time.Time
+	Received  int64
+	// OldestReceivedAt is when the longest-waiting request was received;
+	// nil when none waits.
+	OldestReceivedAt *time.Time
+	// Truncated: more than the limit wait; Received is the limit.
+	Truncated bool
+}
+
 // The request states and sources.
 const (
 	RequestReceived = "received"

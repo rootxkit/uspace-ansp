@@ -408,6 +408,21 @@ func (s *Service) Snapshot(bbox *geodesy.BBox, all bool) MannedSnapshot {
 	return out
 }
 
+// Summary is the answer of GET /v1/manned-traffic/summary at now: the
+// picture counted by state from the picture itself (Picture.Counts), the
+// backlog-only entries left out as the stream leaves them out, with what
+// is degraded and the relevance line, so an empty count says why.
+func (s *Service) Summary() MannedSummary {
+	now := s.d.Clock()
+	c := s.d.Picture.Counts()
+	return MannedSummary{
+		CountedAt: manned.FormatTime(now), Total: c.Live + c.Stale + c.SourceDisabled,
+		ByState:  MannedStateCounts{Live: c.Live, Stale: c.Stale, SourceDisabled: c.SourceDisabled},
+		Relevant: c.Relevant, MaxAircraft: s.d.Picture.Limits().MaxAircraft, Relevance: s.d.Picture.RelevanceStatus(),
+		Degraded: s.Degraded(now), PolicyVersion: policyVersion(s.policy()),
+	}
+}
+
 // client is one open stream.
 type client struct {
 	id       string

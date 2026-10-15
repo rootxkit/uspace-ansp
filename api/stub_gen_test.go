@@ -151,11 +151,23 @@ func (s exampleStub) StreamMannedTraffic(_ context.Context, request gen.StreamMa
 
 func (c canned) VisitStreamMannedTrafficResponse(w http.ResponseWriter) error { return c.visit(w) }
 
+func (s exampleStub) GetMannedTrafficSummary(_ context.Context, request gen.GetMannedTrafficSummaryRequestObject) (gen.GetMannedTrafficSummaryResponseObject, error) {
+	return s.answer("getMannedTrafficSummary", request), nil
+}
+
+func (c canned) VisitGetMannedTrafficSummaryResponse(w http.ResponseWriter) error { return c.visit(w) }
+
 func (s exampleStub) CreateOccurrence(_ context.Context, request gen.CreateOccurrenceRequestObject) (gen.CreateOccurrenceResponseObject, error) {
 	return s.answer("createOccurrence", request), nil
 }
 
 func (c canned) VisitCreateOccurrenceResponse(w http.ResponseWriter) error { return c.visit(w) }
+
+func (s exampleStub) GetOccurrenceSummary(_ context.Context, request gen.GetOccurrenceSummaryRequestObject) (gen.GetOccurrenceSummaryResponseObject, error) {
+	return s.answer("getOccurrenceSummary", request), nil
+}
+
+func (c canned) VisitGetOccurrenceSummaryResponse(w http.ResponseWriter) error { return c.visit(w) }
 
 func (s exampleStub) GetCircleOutline(_ context.Context, request gen.GetCircleOutlineRequestObject) (gen.GetCircleOutlineResponseObject, error) {
 	return s.answer("getCircleOutline", request), nil
@@ -175,11 +187,25 @@ func (s exampleStub) PutPolicy(_ context.Context, request gen.PutPolicyRequestOb
 
 func (c canned) VisitPutPolicyResponse(w http.ResponseWriter) error { return c.visit(w) }
 
+func (s exampleStub) ListRestrictionRequests(_ context.Context, request gen.ListRestrictionRequestsRequestObject) (gen.ListRestrictionRequestsResponseObject, error) {
+	return s.answer("listRestrictionRequests", request), nil
+}
+
+func (c canned) VisitListRestrictionRequestsResponse(w http.ResponseWriter) error { return c.visit(w) }
+
 func (s exampleStub) CreateRestrictionRequest(_ context.Context, request gen.CreateRestrictionRequestRequestObject) (gen.CreateRestrictionRequestResponseObject, error) {
 	return s.answer("createRestrictionRequest", request), nil
 }
 
 func (c canned) VisitCreateRestrictionRequestResponse(w http.ResponseWriter) error { return c.visit(w) }
+
+func (s exampleStub) GetRestrictionRequestSummary(_ context.Context, request gen.GetRestrictionRequestSummaryRequestObject) (gen.GetRestrictionRequestSummaryResponseObject, error) {
+	return s.answer("getRestrictionRequestSummary", request), nil
+}
+
+func (c canned) VisitGetRestrictionRequestSummaryResponse(w http.ResponseWriter) error {
+	return c.visit(w)
+}
 
 func (s exampleStub) GetRestrictionRequest(_ context.Context, request gen.GetRestrictionRequestRequestObject) (gen.GetRestrictionRequestResponseObject, error) {
 	return s.answer("getRestrictionRequest", request), nil
@@ -290,6 +316,12 @@ func (s exampleStub) CreateUser(_ context.Context, request gen.CreateUserRequest
 }
 
 func (c canned) VisitCreateUserResponse(w http.ResponseWriter) error { return c.visit(w) }
+
+func (s exampleStub) GetUserSummary(_ context.Context, request gen.GetUserSummaryRequestObject) (gen.GetUserSummaryResponseObject, error) {
+	return s.answer("getUserSummary", request), nil
+}
+
+func (c canned) VisitGetUserSummaryResponse(w http.ResponseWriter) error { return c.visit(w) }
 
 func (s exampleStub) DisableUser(_ context.Context, request gen.DisableUserRequestObject) (gen.DisableUserResponseObject, error) {
 	return s.answer("disableUser", request), nil

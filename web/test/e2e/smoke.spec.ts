@@ -260,7 +260,9 @@ test("a viewer reads restrictions and adapters but is offered no act; disabled i
 test("a request is opened by its id, shown pre-filled on the map, and accepted with a reason", async ({ page, request }) => {
   await signIn(page, SUPER, true);
   await page.getByRole("link", { name: "Restriction requests" }).click();
-  await expect(page.getByTestId("requests-no-list")).toBeVisible();
+  // A supervisor is listed the requests awaiting a decision.
+  await expect(page.getByTestId("requests-no-list")).toHaveCount(0);
+  await expect(page.locator('[data-testid="requests-pending"] [data-request="01K6P0R0000000000000000001"]')).toContainText("the authority (authority-01)");
   await page.getByTestId("request-id").fill("01K6P0R0000000000000000001");
   await page.getByTestId("request-open").click();
   const req = page.getByTestId("request");
@@ -271,6 +273,7 @@ test("a request is opened by its id, shown pre-filled on the map, and accepted w
   await page.getByRole("alertdialog").getByLabel("Reason").fill("Requested by the authority for the event (synthetic)");
   await page.getByRole("alertdialog").getByRole("button", { name: "Confirm" }).click();
   await expect(req).toHaveAttribute("data-state", "accepted");
+  await expect(page.getByTestId("requests-none-waiting")).toBeVisible();
   await page.getByTestId("request-restriction").click();
   await expect(page.getByTestId("restriction-detail")).toHaveAttribute("data-state", "planned");
   const accepts = (await recorded(request)).filter((c) => c.path.endsWith("/accept"));

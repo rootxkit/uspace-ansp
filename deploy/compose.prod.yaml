@@ -295,10 +295,14 @@ services:
       - ${ANSP_SECRETS_DIR}/web.env
     environment:
       WEB_API_INTERNAL_URL: http://ansp-api:8080
+      # The live picture's count (GET /v1/manned-traffic/summary) is
+      # manned-feed's; the BFF reaches it there for that one path.
+      WEB_FEED_INTERNAL_URL: http://ansp-manned-feed:8080
       # Caddy, one hop in front of Next.js, appends to X-Forwarded-For.
       WEB_TRUSTED_PROXY_HOPS: "1"
     depends_on:
       api: {condition: service_started}
+      manned-feed: {condition: service_started}
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:3000/"]
       interval: 10s

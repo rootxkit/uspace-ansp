@@ -7,9 +7,11 @@
 // the source switches, read again every READ_PERIOD_MS), then the map of
 // the restrictions in force or planned, the open alarms, the notices
 // awaiting a person, the newest restrictions and the surveillance
-// sources. Each figure says what it counts and an unknown one is a dash,
-// never a zero; the API's failures are shown beside them (E-02). Nothing
-// here is judged: a tone repeats a state the API stated.
+// sources. The tiles of src/console/OverviewTiles.tsx read the API's
+// summaries, each for the role that may read it. Each figure says what
+// it counts and an unknown one is a dash, never a zero; the API's
+// failures are shown beside them (E-02). Nothing here is judged: a tone
+// repeats a state the API stated.
 import Link from "next/link";
 import { useEffect, useMemo } from "react";
 import { useLang, useT } from "@rootxkit/uspace-ui/i18n";
@@ -25,7 +27,8 @@ import { useConsole, useLoad } from "./context";
 import { awaitingCount, groupOf, ordered } from "./inbox";
 import { useInbox } from "./InboxProvider";
 import { adapterCounts, openAlarms, recentRestrictions, restrictionCounts, switchesOff } from "./overview";
-import { maySupervise } from "./roles";
+import { MannedTile, OccurrencesTile, RequestsTile, UsersTile } from "./OverviewTiles";
+import { mayAdminister, maySupervise } from "./roles";
 import { ConsolePageHeader, Empty, Loading, ProblemNotice, StateBadge, Time, timesShown } from "./ui";
 import { useRestrictions } from "./useRestrictions";
 
@@ -178,6 +181,10 @@ export function OverviewPage() {
             hint={live.cisVersion === null ? t("ansp.status.cis_none") : t("ansp.overview.kpi.cis_version", { version: live.cisVersion })}
           />
         </div>
+        <MannedTile />
+        {maySupervise(role) && <RequestsTile />}
+        {maySupervise(role) && <OccurrencesTile />}
+        {mayAdminister(role) && <UsersTile />}
       </KpiRow>
 
       {live.failure !== null && <ProblemNotice failure={live.failure} />}

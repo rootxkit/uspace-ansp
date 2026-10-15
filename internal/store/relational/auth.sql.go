@@ -674,6 +674,51 @@ func (q *Queries) UserByUsername(ctx context.Context, username string) (User, er
 	return i, err
 }
 
+const userCounts = `-- name: UserCounts :one
+SELECT
+    clock_timestamp()::timestamptz                                 AS counted_at,
+    count(*)::bigint                                               AS total,
+    count(*) FILTER (WHERE b.status = 'active')::bigint            AS active,
+    count(*) FILTER (WHERE b.status = 'disabled')::bigint          AS disabled,
+    count(*) FILTER (WHERE b.role = 'watch_supervisor')::bigint    AS watch_supervisor,
+    count(*) FILTER (WHERE b.role = 'viewer')::bigint              AS viewer,
+    count(*) FILTER (WHERE b.role = 'admin')::bigint               AS admin,
+    EXISTS (SELECT 1 FROM users ORDER BY id OFFSET $1::int LIMIT 1) AS truncated
+FROM (SELECT role, status FROM users ORDER BY id LIMIT $1::int) b
+`
+
+type UserCountsRow struct {
+	CountedAt       time.Time
+	Total           int64
+	Active          int64
+	Disabled        int64
+	WatchSupervisor int64
+	Viewer          int64
+	Admin           int64
+	Truncated       bool
+}
+
+// The accounts counted by status and role for GET /v1/users/summary, on
+// the database clock: at most max_rows rows are read (the users table is
+// small, but every count here is bounded), and truncated says that more
+// exist (an OFFSET over the primary key, also bounded). Counts only; no
+// username or id leaves the query.
+func (q *Queries) UserCounts(ctx context.Context, maxRows int32) (UserCountsRow, error) {
+	row := q.db.QueryRow(ctx, userCounts, maxRows)
+	var i UserCountsRow
+	err := row.Scan(
+		&i.CountedAt,
+		&i.Total,
+		&i.Active,
+		&i.Disabled,
+		&i.WatchSupervisor,
+		&i.Viewer,
+		&i.Admin,
+		&i.Truncated,
+	)
+	return i, err
+}
+
 const userForUpdate = `-- name: UserForUpdate :one
 SELECT id, username, password_hash, role, status, oidc_subject, created_at, created_by, updated_at, updated_by, last_login_at FROM users WHERE id = $1 FOR UPDATE
 `

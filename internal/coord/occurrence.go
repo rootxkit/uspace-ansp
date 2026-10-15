@@ -24,6 +24,10 @@ import (
 // section 3.3 field list, OccurrenceMessage.
 const SchemaOccurrence = "occurrence/v1"
 
+// MaxOccurrencesCounted bounds GET /v1/occurrences/summary: the newest
+// reports it counts (E-10); past it the summary says truncated.
+const MaxOccurrencesCounted = 10000
+
 // Bounds of an occurrence report (E-10), the OccurrenceCreate schema's.
 const (
 	MaxOccurrenceBytes   = 256 << 10
@@ -282,6 +286,40 @@ type Queued struct {
 	ReportRef  string `json:"report_ref"`
 	State      string `json:"state"`
 	DeadlineAt string `json:"deadline_at"`
+}
+
+// OccurrenceSummary is the answer of GET /v1/occurrences/summary
+// (api/openapi.yaml OccurrenceSummary).
+type OccurrenceSummary struct {
+	CountedAt string                `json:"counted_at"`
+	Total     int64                 `json:"total"`
+	ByState   OccurrenceStateCounts `json:"by_state"`
+	Truncated bool                  `json:"truncated"`
+}
+
+// OccurrenceStateCounts are the reports by delivery state.
+type OccurrenceStateCounts struct {
+	Queued    int64 `json:"queued"`
+	Sent      int64 `json:"sent"`
+	Failed    int64 `json:"failed"`
+	Abandoned int64 `json:"abandoned"`
+	Cancelled int64 `json:"cancelled"`
+}
+
+// Summary counts the newest MaxOccurrencesCounted reports by the state
+// of their delivery, on the database clock: no report_ref, narrative or
+// reporter.
+func (o *Occurrences) Summary(ctx context.Context) (OccurrenceSummary, error) {
+	c, err := o.Repo.OccurrenceCounts(ctx, MaxOccurrencesCounted)
+	if err != nil {
+		return OccurrenceSummary{}, err
+	}
+	return OccurrenceSummary{
+		CountedAt: restriction.Stamp(c.CountedAt),
+		Total:     c.Total,
+		ByState:   OccurrenceStateCounts{Queued: c.Queued, Sent: c.Sent, Failed: c.Failed, Abandoned: c.Abandoned, Cancelled: c.Cancelled},
+		Truncated: c.Truncated,
+	}, nil
 }
 
 // Create stores the report of actor, sealed, with its delivery job and

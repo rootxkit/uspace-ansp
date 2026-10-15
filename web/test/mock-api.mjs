@@ -9,7 +9,8 @@
 // them, /v1/manned-traffic/stream as manned-feed does), and passes every
 // other request to Next.js with the X-Forwarded-*
 // headers Caddy sets, so the browser sees one origin, as in a deployment.
-// The BFF reaches the API here too (WEB_API_INTERNAL_URL).
+// The BFF reaches the API here too (WEB_API_INTERNAL_URL), and manned-feed
+// for the picture's summary (WEB_FEED_INTERNAL_URL).
 //
 //   MOCK_PORT=3000 MOCK_UPSTREAM=http://127.0.0.1:3100 node test/mock-api.mjs
 //
@@ -34,6 +35,10 @@
 //                                         and its source/status/v1 in sources[])
 //   POST /__mock/notice {...}             a coordination notice received (or changed); one frame
 //   POST /__mock/escalate {ack_id}        the inbox ticker's escalation of a notice; one frame
+//   POST /__mock/occurrence {state}       the outbox's outcome for the newest report queued
+//                                         (sent, failed, abandoned, cancelled)
+//   POST /__mock/account {username, status}
+//                                         an account disabled or active again (the users summary)
 //
 // Accounts (test data, not credentials of anything): super1 (watch
 // supervisor; no authenticator until its first sign-in, so the enrolment
@@ -119,6 +124,8 @@ function reset() {
     },
     audit: [],
     occurrences: 0,
+    // The delivery state of each report queued, as the outbox holds it.
+    occurrenceStates: [],
     challenges: new Map(),
     sessions: new Map(),
     restrictions: [],
@@ -255,7 +262,7 @@ function issueSession(account) {
 }
 
 function user(a) {
-  return { id: a.id, username: a.username, role: a.role, status: "active", created_at: "2026-09-30T08:00:00.000Z", last_login_at: null };
+  return { id: a.id, username: a.username, role: a.role, status: a.status ?? "active", created_at: "2026-09-30T08:00:00.000Z", last_login_at: null };
 }
 
 // ---- restrictions -------------------------------------------------------
@@ -715,6 +722,23 @@ async function api(req, res, url) {
     a.ack_reason = body.reason;
     return json(res, 200, a);
   }
+  // The requests awaiting a decision (watch supervisor): the list without
+  // payloads, oldest first, and their count with the oldest one's time.
+  const waiting = () => state.requests.filter((q) => q.state === "received").sort((a, b) => a.received_at.localeCompare(b.received_at));
+  if (path === "/v1/restriction-requests" && req.method === "GET") {
+    if (supervisorOnly()) return;
+    const limit = Number(url.searchParams.get("limit") ?? "100");
+    const all = waiting();
+    return json(res, 200, {
+      requests: all.slice(0, limit).map((q) => ({ id: q.id, requester: q.requester, source: q.source, received_at: q.received_at, state: q.state })),
+      truncated: all.length > limit,
+    });
+  }
+  if (path === "/v1/restriction-requests/summary" && req.method === "GET") {
+    if (supervisorOnly()) return;
+    const all = waiting();
+    return json(res, 200, { counted_at: iso(), received: all.length, oldest_received_at: all[0]?.received_at ?? null, truncated: false });
+  }
   m = /^\/v1\/restriction-requests\/([0-9A-Z]{26})$/.exec(path);
   if (m && req.method === "GET") {
     const q = state.requests.find((x) => x.id === m[1]);
@@ -845,6 +869,47 @@ async function api(req, res, url) {
     audit(session.account, "ansp_policy", String(state.policy.policy_version), "policy_updated", "threshold change (INV-03)", state.policy);
     return json(res, 200, state.policy);
   }
+  // GET /v1/manned-traffic/summary (manned-feed, any session; the BFF
+  // reaches it through WEB_FEED_INTERNAL_URL, here this server too): the
+  // aircraft held counted by state, none named.
+  if (path === "/v1/manned-traffic/summary" && req.method === "GET") {
+    const by = { live: 0, stale: 0, source_disabled: 0 };
+    let relevant = 0;
+    for (const a of state.aircraft.values()) {
+      by[a.state] += 1;
+      if (a.relevant) relevant += 1;
+    }
+    return json(res, 200, {
+      counted_at: iso(),
+      total: by.live + by.stale + by.source_disabled,
+      by_state: by,
+      relevant,
+      max_aircraft: 5000,
+      relevance: "evaluated against CIS version 42 (synthetic)",
+      degraded: state.adapters.some((a) => a.state === "live") ? [] : ["adapters_silent"],
+      policy_version: "1",
+    });
+  }
+  // GET /v1/users/summary (admin): the accounts counted, no name.
+  if (path === "/v1/users/summary" && req.method === "GET") {
+    if (adminOnly()) return;
+    const accounts = Object.values(state.accounts);
+    const count = (pred) => accounts.filter(pred).length;
+    return json(res, 200, {
+      counted_at: iso(),
+      total: accounts.length,
+      by_status: { active: count((a) => a.status !== "disabled"), disabled: count((a) => a.status === "disabled") },
+      by_role: { watch_supervisor: count((a) => a.role === SUPERVISOR), viewer: count((a) => a.role === "viewer"), admin: count((a) => a.role === ADMIN) },
+      truncated: false,
+    });
+  }
+  // GET /v1/occurrences/summary (watch supervisor): the reports by delivery state.
+  if (path === "/v1/occurrences/summary" && req.method === "GET") {
+    if (supervisorOnly()) return;
+    const by = { queued: 0, sent: 0, failed: 0, abandoned: 0, cancelled: 0 };
+    for (const st of state.occurrenceStates) by[st] += 1;
+    return json(res, 200, { counted_at: iso(), total: state.occurrenceStates.length, by_state: by, truncated: false });
+  }
   if (path === "/v1/audit" && req.method === "GET") {
     if (adminOnly()) return;
     const entity = url.searchParams.get("entity");
@@ -855,6 +920,7 @@ async function api(req, res, url) {
   if (path === "/v1/occurrences" && req.method === "POST") {
     if (supervisorOnly()) return;
     state.occurrences += 1;
+    state.occurrenceStates.push("queued");
     const deadline = iso(Date.parse(body.became_aware_at) + 72 * 3_600_000);
     return json(res, 202, { id: ulid("01K6PO"), report_ref: `ANSP-OCC-2026-${String(state.occurrences).padStart(4, "0")}`, state: "queued", deadline_at: deadline });
   }
@@ -960,6 +1026,18 @@ async function control(req, res, path) {
     state.notices = [...state.notices.filter((x) => x.ack_id !== n.ack_id), n];
     broadcast(noticeFrame(n), "coordination");
     return json(res, 200, n);
+  }
+  if (path === "/__mock/occurrence") {
+    const i = state.occurrenceStates.lastIndexOf("queued");
+    if (i < 0) return json(res, 409, { error: "no report queued" });
+    state.occurrenceStates[i] = input.state;
+    return json(res, 200, { states: state.occurrenceStates });
+  }
+  if (path === "/__mock/account") {
+    const a = state.accounts[input.username];
+    if (a === undefined) return json(res, 404, { error: "unknown account" });
+    a.status = input.status;
+    return json(res, 200, user(a));
   }
   if (path === "/__mock/escalate") {
     const n = state.notices.find((x) => x.ack_id === input.ack_id);

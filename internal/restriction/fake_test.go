@@ -178,6 +178,48 @@ func (m *memRepo) Request(_ context.Context, id string) (Request, error) {
 	return q, nil
 }
 
+func (m *memRepo) pending() []Request {
+	var out []Request
+	for id := range m.reqs {
+		if q := m.reqs[id]; q.State == RequestReceived {
+			out = append(out, q)
+		}
+	}
+	slices.SortFunc(out, func(a, b Request) int {
+		if c := a.ReceivedAt.Compare(b.ReceivedAt); c != 0 {
+			return c
+		}
+		return strings.Compare(a.ID, b.ID)
+	})
+	return out
+}
+
+func (m *memRepo) PendingRequests(_ context.Context, limit int) ([]Request, bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.reads++
+	all := m.pending()
+	more := len(all) > limit
+	all = all[:min(limit, len(all))]
+	for i := range all {
+		all[i].Payload = nil
+	}
+	return all, more, nil
+}
+
+func (m *memRepo) PendingRequestCounts(_ context.Context, limit int) (RequestCounts, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.reads++
+	all := m.pending()
+	c := RequestCounts{CountedAt: m.now, Received: int64(min(limit, len(all))), Truncated: len(all) > limit}
+	if len(all) > 0 {
+		at := all[0].ReceivedAt
+		c.OldestReceivedAt = &at
+	}
+	return c, nil
+}
+
 func (m *memRepo) DueActivations(_ context.Context, limit int) ([]string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

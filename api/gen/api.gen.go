@@ -1153,6 +1153,39 @@ func (e RestrictionRequestState) Valid() bool {
 	}
 }
 
+// Defines values for RestrictionRequestItemSource.
+const (
+	RestrictionRequestItemSourceAuthority RestrictionRequestItemSource = "authority"
+	RestrictionRequestItemSourceConsole   RestrictionRequestItemSource = "console"
+)
+
+// Valid indicates whether the value is a known member of the RestrictionRequestItemSource enum.
+func (e RestrictionRequestItemSource) Valid() bool {
+	switch e {
+	case RestrictionRequestItemSourceAuthority:
+		return true
+	case RestrictionRequestItemSourceConsole:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for RestrictionRequestItemState.
+const (
+	RestrictionRequestItemStateReceived RestrictionRequestItemState = "received"
+)
+
+// Valid indicates whether the value is a known member of the RestrictionRequestItemState enum.
+func (e RestrictionRequestItemState) Valid() bool {
+	switch e {
+	case RestrictionRequestItemStateReceived:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for RestrictionState.
 const (
 	RestrictionStateActive    RestrictionState = "active"
@@ -2294,6 +2327,30 @@ type MannedStreamFrame struct {
 	union json.RawMessage
 }
 
+// MannedSummary The manned picture counted (GET /v1/manned-traffic/summary): no
+// icao24, callsign or position. total is live + stale +
+// source_disabled; relevant is of those. max_aircraft is the
+// picture's bound (past it the aircraft heard longest ago is
+// evicted, counted picture_evicted_capacity).
+type MannedSummary struct {
+	ByState struct {
+		Live           int `json:"live"`
+		SourceDisabled int `json:"source_disabled"`
+		Stale          int `json:"stale"`
+	} `json:"by_state"`
+
+	// CountedAt RFC 3339 UTC with Z, millisecond precision (02 §1).
+	CountedAt     Timestamp `json:"counted_at"`
+	Degraded      []string  `json:"degraded"`
+	MaxAircraft   int       `json:"max_aircraft"`
+	PolicyVersion string    `json:"policy_version"`
+
+	// Relevance The relevance filter's status line (SC-22), as console/status/v1 carries it.
+	Relevance string `json:"relevance"`
+	Relevant  int    `json:"relevant"`
+	Total     int    `json:"total"`
+}
+
 // MannedTrack The body of track/manned/v1 (04 §3.1, schemas/track/manned/v1.json
 // owned here): one manned aircraft as handed to U-space under
 // ATS.OR.127(a). alt_pressure_m is pressure altitude (ISA 1013.25
@@ -2475,6 +2532,25 @@ type OccurrenceQueued struct {
 
 // OccurrenceQueuedState defines model for OccurrenceQueued.State.
 type OccurrenceQueuedState string
+
+// OccurrenceSummary The occurrence reports counted by the state of their delivery to
+// the authority (deliveries.state): counts only. counted_at is the
+// database clock; truncated says more reports existed than the
+// newest MaxOccurrencesCounted counted.
+type OccurrenceSummary struct {
+	ByState struct {
+		Abandoned int `json:"abandoned"`
+		Cancelled int `json:"cancelled"`
+		Failed    int `json:"failed"`
+		Queued    int `json:"queued"`
+		Sent      int `json:"sent"`
+	} `json:"by_state"`
+
+	// CountedAt RFC 3339 UTC with Z, millisecond precision (02 §1).
+	CountedAt Timestamp `json:"counted_at"`
+	Total     int       `json:"total"`
+	Truncated bool      `json:"truncated"`
+}
 
 // Policy defines model for Policy.
 type Policy struct {
@@ -2881,6 +2957,46 @@ type RestrictionRequestCreate struct {
 	UspaceAirspaceId *string `json:"uspace_airspace_id,omitempty"`
 }
 
+// RestrictionRequestItem A request awaiting a decision, as the list names it; GET /v1/restriction-requests/{id} has the rest.
+type RestrictionRequestItem struct {
+	// Id Crockford base32, 26 characters (04 §2).
+	Id ULID `json:"id"`
+
+	// ReceivedAt RFC 3339 UTC with Z, millisecond precision (02 §1).
+	ReceivedAt Timestamp `json:"received_at"`
+
+	// Requester The client id of the requesting system, or the console account id.
+	Requester string                       `json:"requester"`
+	Source    RestrictionRequestItemSource `json:"source"`
+	State     RestrictionRequestItemState  `json:"state"`
+}
+
+// RestrictionRequestItemSource defines model for RestrictionRequestItem.Source.
+type RestrictionRequestItemSource string
+
+// RestrictionRequestItemState defines model for RestrictionRequestItem.State.
+type RestrictionRequestItemState string
+
+// RestrictionRequestList defines model for RestrictionRequestList.
+type RestrictionRequestList struct {
+	Requests  []RestrictionRequestItem `json:"requests"`
+	Truncated bool                     `json:"truncated"`
+}
+
+// RestrictionRequestSummary The requests awaiting a decision, counted (no requester, no
+// area). counted_at is the database clock; at most
+// MaxPendingRequestsCounted (10000) are counted and truncated says
+// there were more.
+type RestrictionRequestSummary struct {
+	// CountedAt RFC 3339 UTC with Z, millisecond precision (02 §1).
+	CountedAt Timestamp `json:"counted_at"`
+
+	// OldestReceivedAt When the longest-waiting request was received; null when none waits.
+	OldestReceivedAt *time.Time `json:"oldest_received_at"`
+	Received         int        `json:"received"`
+	Truncated        bool       `json:"truncated"`
+}
+
 // RestrictionState planned, active, ended or cancelled (02 F2, ATS.TR.237(b)).
 type RestrictionState string
 
@@ -3146,6 +3262,27 @@ type UserList struct {
 	Users []User `json:"users"`
 }
 
+// UserSummary The console accounts counted, never listed: no username, no id,
+// no time of a sign-in (01 §4). counted_at is the database clock.
+// At most MaxUsersCounted (1000, the bound of GET /v1/users)
+// accounts are counted; truncated says there were more.
+type UserSummary struct {
+	ByRole struct {
+		Admin           int `json:"admin"`
+		Viewer          int `json:"viewer"`
+		WatchSupervisor int `json:"watch_supervisor"`
+	} `json:"by_role"`
+	ByStatus struct {
+		Active   int `json:"active"`
+		Disabled int `json:"disabled"`
+	} `json:"by_status"`
+
+	// CountedAt RFC 3339 UTC with Z, millisecond precision (02 §1).
+	CountedAt Timestamp `json:"counted_at"`
+	Total     int       `json:"total"`
+	Truncated bool      `json:"truncated"`
+}
+
 // VerticalRef The vertical reference of a restriction limit: AMSL or WGS84
 // (ellipsoid). AGL is refused for a dynamic restriction in this
 // release (D3, §15 gap 3) with the reason "AGL is not supported for
@@ -3333,6 +3470,12 @@ type GetCircleOutlineParams struct {
 
 	// RadiusM The radius in metres.
 	RadiusM float64 `form:"radius_m" json:"radius_m"`
+}
+
+// ListRestrictionRequestsParams defines parameters for ListRestrictionRequests.
+type ListRestrictionRequestsParams struct {
+	// Limit At most this many items (default 100); truncated says when more existed.
+	Limit *Limit `form:"limit,omitempty" json:"limit,omitempty"`
 }
 
 // ListRestrictionsParams defines parameters for ListRestrictions.
@@ -4404,6 +4547,21 @@ type ClientInterface interface {
 	// Corresponds with GET /v1/manned-traffic/stream (the `StreamMannedTraffic` operationId).
 	StreamMannedTraffic(ctx context.Context, params *StreamMannedTrafficParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// GetMannedTrafficSummary How many manned aircraft the picture holds
+	//
+	// The live manned picture of manned-feed counted for the console's
+	// overview, from the picture itself (not from a stream): every
+	// aircraft shown, by state (live, stale, source_disabled), and how
+	// many of them are relevant to U-space. An aircraft known only from
+	// backlog samples is not shown and not counted (T-04). Counts only,
+	// no icao24 or callsign; the picture is bounded by max_aircraft.
+	// degraded says why the count may be low or empty (adapters_silent,
+	// cis_projection_stale, nats) and relevance how relevance was
+	// judged (SC-22). counted_at is manned-feed's clock.
+	//
+	// Corresponds with GET /v1/manned-traffic/summary (the `GetMannedTrafficSummary` operationId).
+	GetMannedTrafficSummary(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// CreateOccurrenceWithBody Report an occurrence
 	//
 	// An occurrence report of ANSP staff (Reg. (EU) 376/2014 Art.
@@ -4443,6 +4601,19 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /v1/occurrences (the `CreateOccurrence` operationId).
 	CreateOccurrence(ctx context.Context, params *CreateOccurrenceParams, body CreateOccurrenceJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetOccurrenceSummary The occurrence reports by delivery state
+	//
+	// The occurrence reports submitted to the authority, counted by the
+	// state of their outbox delivery (queued, sent, failed, abandoned,
+	// cancelled), for the overview's tile: counts only, no report_ref,
+	// narrative, reporter or aircraft. The newest
+	// MaxOccurrencesCounted (10000) reports by became_aware_at are
+	// counted in one bounded read over occurrence_reports_aware_idx on
+	// the database clock (counted_at); truncated says there were more.
+	//
+	// Corresponds with GET /v1/occurrences/summary (the `GetOccurrenceSummary` operationId).
+	GetOccurrenceSummary(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetCircleOutline The outline of a circle, drawn for the map
 	//
@@ -4489,6 +4660,19 @@ type ClientInterface interface {
 	// Corresponds with PUT /v1/policy (the `PutPolicy` operationId).
 	PutPolicy(ctx context.Context, body PutPolicyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// ListRestrictionRequests The restriction requests awaiting a decision
+	//
+	// The received requests (02 F11) not yet accepted or declined,
+	// oldest first, for the watch supervisor who decides them (docs/
+	// PLAN.md section 15 row 45). Each item names the request, its
+	// source, its requester and when it was received; its area and
+	// window are read with GET /v1/restriction-requests/{id}. At most
+	// limit items; truncated says when more were waiting. One read
+	// over the (state, received_at) index.
+	//
+	// Corresponds with GET /v1/restriction-requests (the `ListRestrictionRequests` operationId).
+	ListRestrictionRequests(ctx context.Context, params *ListRestrictionRequestsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// CreateRestrictionRequestWithBody Request a restriction
 	//
 	// A request from the authority (or a console user) for a
@@ -4516,6 +4700,17 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /v1/restriction-requests (the `CreateRestrictionRequest` operationId).
 	CreateRestrictionRequest(ctx context.Context, body CreateRestrictionRequestJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetRestrictionRequestSummary How many restriction requests await a decision
+	//
+	// The received requests not yet decided, counted for the
+	// overview's tile with the oldest one's received_at: counts only,
+	// no requester and no area. One bounded read over the (state,
+	// received_at) index on the database clock (counted_at); truncated
+	// says more were waiting than were counted.
+	//
+	// Corresponds with GET /v1/restriction-requests/summary (the `GetRestrictionRequestSummary` operationId).
+	GetRestrictionRequestSummary(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetRestrictionRequest The state of a restriction request
 	//
@@ -4824,6 +5019,16 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /v1/users (the `CreateUser` operationId).
 	CreateUser(ctx context.Context, body CreateUserJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetUserSummary How many console accounts there are
+	//
+	// The console accounts counted by status and by role, for the
+	// overview's tile (01 §4): counts only, no username or id. One
+	// bounded read on the database clock (counted_at); truncated says
+	// there were more accounts than were counted.
+	//
+	// Corresponds with GET /v1/users/summary (the `GetUserSummary` operationId).
+	GetUserSummary(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// DisableUser Disable an account
 	//
@@ -5477,6 +5682,31 @@ func (c *Client) StreamMannedTraffic(ctx context.Context, params *StreamMannedTr
 	return c.Client.Do(req)
 }
 
+// GetMannedTrafficSummary How many manned aircraft the picture holds
+//
+// The live manned picture of manned-feed counted for the console's
+// overview, from the picture itself (not from a stream): every
+// aircraft shown, by state (live, stale, source_disabled), and how
+// many of them are relevant to U-space. An aircraft known only from
+// backlog samples is not shown and not counted (T-04). Counts only,
+// no icao24 or callsign; the picture is bounded by max_aircraft.
+// degraded says why the count may be low or empty (adapters_silent,
+// cis_projection_stale, nats) and relevance how relevance was
+// judged (SC-22). counted_at is manned-feed's clock.
+//
+// Corresponds with GET /v1/manned-traffic/summary (the `GetMannedTrafficSummary` operationId).
+func (c *Client) GetMannedTrafficSummary(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetMannedTrafficSummaryRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // CreateOccurrenceWithBody Report an occurrence
 //
 // An occurrence report of ANSP staff (Reg. (EU) 376/2014 Art.
@@ -5527,6 +5757,29 @@ func (c *Client) CreateOccurrenceWithBody(ctx context.Context, params *CreateOcc
 // Corresponds with POST /v1/occurrences (the `CreateOccurrence` operationId).
 func (c *Client) CreateOccurrence(ctx context.Context, params *CreateOccurrenceParams, body CreateOccurrenceJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewCreateOccurrenceRequest(c.Server, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetOccurrenceSummary The occurrence reports by delivery state
+//
+// The occurrence reports submitted to the authority, counted by the
+// state of their outbox delivery (queued, sent, failed, abandoned,
+// cancelled), for the overview's tile: counts only, no report_ref,
+// narrative, reporter or aircraft. The newest
+// MaxOccurrencesCounted (10000) reports by became_aware_at are
+// counted in one bounded read over occurrence_reports_aware_idx on
+// the database clock (counted_at); truncated says there were more.
+//
+// Corresponds with GET /v1/occurrences/summary (the `GetOccurrenceSummary` operationId).
+func (c *Client) GetOccurrenceSummary(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetOccurrenceSummaryRequest(c.Server)
 	if err != nil {
 		return nil, err
 	}
@@ -5622,6 +5875,29 @@ func (c *Client) PutPolicy(ctx context.Context, body PutPolicyJSONRequestBody, r
 	return c.Client.Do(req)
 }
 
+// ListRestrictionRequests The restriction requests awaiting a decision
+//
+// The received requests (02 F11) not yet accepted or declined,
+// oldest first, for the watch supervisor who decides them (docs/
+// PLAN.md section 15 row 45). Each item names the request, its
+// source, its requester and when it was received; its area and
+// window are read with GET /v1/restriction-requests/{id}. At most
+// limit items; truncated says when more were waiting. One read
+// over the (state, received_at) index.
+//
+// Corresponds with GET /v1/restriction-requests (the `ListRestrictionRequests` operationId).
+func (c *Client) ListRestrictionRequests(ctx context.Context, params *ListRestrictionRequestsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListRestrictionRequestsRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // CreateRestrictionRequestWithBody Request a restriction
 //
 // A request from the authority (or a console user) for a
@@ -5660,6 +5936,27 @@ func (c *Client) CreateRestrictionRequestWithBody(ctx context.Context, contentTy
 // Corresponds with POST /v1/restriction-requests (the `CreateRestrictionRequest` operationId).
 func (c *Client) CreateRestrictionRequest(ctx context.Context, body CreateRestrictionRequestJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewCreateRestrictionRequestRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetRestrictionRequestSummary How many restriction requests await a decision
+//
+// The received requests not yet decided, counted for the
+// overview's tile with the oldest one's received_at: counts only,
+// no requester and no area. One bounded read over the (state,
+// received_at) index on the database clock (counted_at); truncated
+// says more were waiting than were counted.
+//
+// Corresponds with GET /v1/restriction-requests/summary (the `GetRestrictionRequestSummary` operationId).
+func (c *Client) GetRestrictionRequestSummary(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetRestrictionRequestSummaryRequest(c.Server)
 	if err != nil {
 		return nil, err
 	}
@@ -6238,6 +6535,26 @@ func (c *Client) CreateUserWithBody(ctx context.Context, contentType string, bod
 // Corresponds with POST /v1/users (the `CreateUser` operationId).
 func (c *Client) CreateUser(ctx context.Context, body CreateUserJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewCreateUserRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetUserSummary How many console accounts there are
+//
+// The console accounts counted by status and by role, for the
+// overview's tile (01 §4): counts only, no username or id. One
+// bounded read on the database clock (counted_at); truncated says
+// there were more accounts than were counted.
+//
+// Corresponds with GET /v1/users/summary (the `GetUserSummary` operationId).
+func (c *Client) GetUserSummary(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetUserSummaryRequest(c.Server)
 	if err != nil {
 		return nil, err
 	}
@@ -7173,6 +7490,33 @@ func NewStreamMannedTrafficRequest(server string, params *StreamMannedTrafficPar
 	return req, nil
 }
 
+// NewGetMannedTrafficSummaryRequest constructs an http.Request for the GetMannedTrafficSummary method
+func NewGetMannedTrafficSummaryRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/manned-traffic/summary")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewCreateOccurrenceRequest calls the generic CreateOccurrence builder with application/json body
 func NewCreateOccurrenceRequest(server string, params *CreateOccurrenceParams, body CreateOccurrenceJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -7223,6 +7567,33 @@ func NewCreateOccurrenceRequestWithBody(server string, params *CreateOccurrenceP
 			req.Header.Set("Idempotency-Key", headerParam0)
 		}
 
+	}
+
+	return req, nil
+}
+
+// NewGetOccurrenceSummaryRequest constructs an http.Request for the GetOccurrenceSummary method
+func NewGetOccurrenceSummaryRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/occurrences/summary")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
 	}
 
 	return req, nil
@@ -7361,6 +7732,60 @@ func NewPutPolicyRequestWithBody(server string, contentType string, body io.Read
 	return req, nil
 }
 
+// NewListRestrictionRequestsRequest constructs an http.Request for the ListRestrictionRequests method
+func NewListRestrictionRequestsRequest(server string, params *ListRestrictionRequestsParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/restriction-requests")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Limit != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "limit", *params.Limit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewCreateRestrictionRequestRequest calls the generic CreateRestrictionRequest builder with application/json body
 func NewCreateRestrictionRequestRequest(server string, body CreateRestrictionRequestJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -7397,6 +7822,33 @@ func NewCreateRestrictionRequestRequestWithBody(server string, contentType strin
 	}
 
 	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewGetRestrictionRequestSummaryRequest constructs an http.Request for the GetRestrictionRequestSummary method
+func NewGetRestrictionRequestSummaryRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/restriction-requests/summary")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
 
 	return req, nil
 }
@@ -8178,6 +8630,33 @@ func NewCreateUserRequestWithBody(server string, contentType string, body io.Rea
 	return req, nil
 }
 
+// NewGetUserSummaryRequest constructs an http.Request for the GetUserSummary method
+func NewGetUserSummaryRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/users/summary")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewDisableUserRequest constructs an http.Request for the DisableUser method
 func NewDisableUserRequest(server string, id UserID) (*http.Request, error) {
 	var err error
@@ -8689,6 +9168,23 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /v1/manned-traffic/stream (the `StreamMannedTraffic` operationId).
 	StreamMannedTrafficWithResponse(ctx context.Context, params *StreamMannedTrafficParams, reqEditors ...RequestEditorFn) (*StreamMannedTrafficResponse, error)
 
+	// GetMannedTrafficSummaryWithResponse How many manned aircraft the picture holds
+	//
+	// The live manned picture of manned-feed counted for the console's
+	// overview, from the picture itself (not from a stream): every
+	// aircraft shown, by state (live, stale, source_disabled), and how
+	// many of them are relevant to U-space. An aircraft known only from
+	// backlog samples is not shown and not counted (T-04). Counts only,
+	// no icao24 or callsign; the picture is bounded by max_aircraft.
+	// degraded says why the count may be low or empty (adapters_silent,
+	// cis_projection_stale, nats) and relevance how relevance was
+	// judged (SC-22). counted_at is manned-feed's clock.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/manned-traffic/summary (the `GetMannedTrafficSummary` operationId).
+	GetMannedTrafficSummaryWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetMannedTrafficSummaryResponse, error)
+
 	// CreateOccurrenceWithBodyWithResponse Report an occurrence
 	//
 	// An occurrence report of ANSP staff (Reg. (EU) 376/2014 Art.
@@ -8728,6 +9224,21 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /v1/occurrences (the `CreateOccurrence` operationId).
 	CreateOccurrenceWithResponse(ctx context.Context, params *CreateOccurrenceParams, body CreateOccurrenceJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateOccurrenceResponse, error)
+
+	// GetOccurrenceSummaryWithResponse The occurrence reports by delivery state
+	//
+	// The occurrence reports submitted to the authority, counted by the
+	// state of their outbox delivery (queued, sent, failed, abandoned,
+	// cancelled), for the overview's tile: counts only, no report_ref,
+	// narrative, reporter or aircraft. The newest
+	// MaxOccurrencesCounted (10000) reports by became_aware_at are
+	// counted in one bounded read over occurrence_reports_aware_idx on
+	// the database clock (counted_at); truncated says there were more.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/occurrences/summary (the `GetOccurrenceSummary` operationId).
+	GetOccurrenceSummaryWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetOccurrenceSummaryResponse, error)
 
 	// GetCircleOutlineWithResponse The outline of a circle, drawn for the map
 	//
@@ -8778,6 +9289,21 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with PUT /v1/policy (the `PutPolicy` operationId).
 	PutPolicyWithResponse(ctx context.Context, body PutPolicyJSONRequestBody, reqEditors ...RequestEditorFn) (*PutPolicyResponse, error)
 
+	// ListRestrictionRequestsWithResponse The restriction requests awaiting a decision
+	//
+	// The received requests (02 F11) not yet accepted or declined,
+	// oldest first, for the watch supervisor who decides them (docs/
+	// PLAN.md section 15 row 45). Each item names the request, its
+	// source, its requester and when it was received; its area and
+	// window are read with GET /v1/restriction-requests/{id}. At most
+	// limit items; truncated says when more were waiting. One read
+	// over the (state, received_at) index.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/restriction-requests (the `ListRestrictionRequests` operationId).
+	ListRestrictionRequestsWithResponse(ctx context.Context, params *ListRestrictionRequestsParams, reqEditors ...RequestEditorFn) (*ListRestrictionRequestsResponse, error)
+
 	// CreateRestrictionRequestWithBodyWithResponse Request a restriction
 	//
 	// A request from the authority (or a console user) for a
@@ -8805,6 +9331,19 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /v1/restriction-requests (the `CreateRestrictionRequest` operationId).
 	CreateRestrictionRequestWithResponse(ctx context.Context, body CreateRestrictionRequestJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateRestrictionRequestResponse, error)
+
+	// GetRestrictionRequestSummaryWithResponse How many restriction requests await a decision
+	//
+	// The received requests not yet decided, counted for the
+	// overview's tile with the oldest one's received_at: counts only,
+	// no requester and no area. One bounded read over the (state,
+	// received_at) index on the database clock (counted_at); truncated
+	// says more were waiting than were counted.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/restriction-requests/summary (the `GetRestrictionRequestSummary` operationId).
+	GetRestrictionRequestSummaryWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetRestrictionRequestSummaryResponse, error)
 
 	// GetRestrictionRequestWithResponse The state of a restriction request
 	//
@@ -9131,6 +9670,18 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /v1/users (the `CreateUser` operationId).
 	CreateUserWithResponse(ctx context.Context, body CreateUserJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateUserResponse, error)
+
+	// GetUserSummaryWithResponse How many console accounts there are
+	//
+	// The console accounts counted by status and by role, for the
+	// overview's tile (01 §4): counts only, no username or id. One
+	// bounded read on the database clock (counted_at); truncated says
+	// there were more accounts than were counted.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/users/summary (the `GetUserSummary` operationId).
+	GetUserSummaryWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetUserSummaryResponse, error)
 
 	// DisableUserWithResponse Disable an account
 	//
@@ -10872,6 +11423,68 @@ func (r StreamMannedTrafficResponse) ContentType() string {
 	return ""
 }
 
+// GetMannedTrafficSummaryResponse401Headers the declared response headers of an HTTP 401 response for GetMannedTrafficSummary
+type GetMannedTrafficSummaryResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type GetMannedTrafficSummaryResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *MannedSummary
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *Unauthorized
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *Forbidden
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *GetMannedTrafficSummaryResponse401Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetMannedTrafficSummaryResponse) GetJSON200() *MannedSummary {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r GetMannedTrafficSummaryResponse) GetApplicationproblemJSON401() *Unauthorized {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r GetMannedTrafficSummaryResponse) GetApplicationproblemJSON403() *Forbidden {
+	return r.ApplicationproblemJSON403
+}
+
+// GetBody returns the raw response body bytes
+func (r GetMannedTrafficSummaryResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetMannedTrafficSummaryResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetMannedTrafficSummaryResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetMannedTrafficSummaryResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 // CreateOccurrenceResponse401Headers the declared response headers of an HTTP 401 response for CreateOccurrence
 type CreateOccurrenceResponse401Headers struct {
 	WWWAuthenticate *string
@@ -10970,6 +11583,82 @@ func (r CreateOccurrenceResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r CreateOccurrenceResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// GetOccurrenceSummaryResponse401Headers the declared response headers of an HTTP 401 response for GetOccurrenceSummary
+type GetOccurrenceSummaryResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+// GetOccurrenceSummaryResponse503Headers the declared response headers of an HTTP 503 response for GetOccurrenceSummary
+type GetOccurrenceSummaryResponse503Headers struct {
+	RetryAfter int
+}
+
+type GetOccurrenceSummaryResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *OccurrenceSummary
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *Unauthorized
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *Forbidden
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *Unavailable
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *GetOccurrenceSummaryResponse401Headers
+	// Headers503 the parsed response headers for an HTTP 503 response
+	Headers503 *GetOccurrenceSummaryResponse503Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetOccurrenceSummaryResponse) GetJSON200() *OccurrenceSummary {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r GetOccurrenceSummaryResponse) GetApplicationproblemJSON401() *Unauthorized {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r GetOccurrenceSummaryResponse) GetApplicationproblemJSON403() *Forbidden {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r GetOccurrenceSummaryResponse) GetApplicationproblemJSON503() *Unavailable {
+	return r.ApplicationproblemJSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r GetOccurrenceSummaryResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetOccurrenceSummaryResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetOccurrenceSummaryResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetOccurrenceSummaryResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -11204,6 +11893,89 @@ func (r PutPolicyResponse) ContentType() string {
 	return ""
 }
 
+// ListRestrictionRequestsResponse401Headers the declared response headers of an HTTP 401 response for ListRestrictionRequests
+type ListRestrictionRequestsResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+// ListRestrictionRequestsResponse503Headers the declared response headers of an HTTP 503 response for ListRestrictionRequests
+type ListRestrictionRequestsResponse503Headers struct {
+	RetryAfter int
+}
+
+type ListRestrictionRequestsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *RestrictionRequestList
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *BadRequest
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *Unauthorized
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *Forbidden
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *Unavailable
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *ListRestrictionRequestsResponse401Headers
+	// Headers503 the parsed response headers for an HTTP 503 response
+	Headers503 *ListRestrictionRequestsResponse503Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListRestrictionRequestsResponse) GetJSON200() *RestrictionRequestList {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r ListRestrictionRequestsResponse) GetApplicationproblemJSON400() *BadRequest {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r ListRestrictionRequestsResponse) GetApplicationproblemJSON401() *Unauthorized {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r ListRestrictionRequestsResponse) GetApplicationproblemJSON403() *Forbidden {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r ListRestrictionRequestsResponse) GetApplicationproblemJSON503() *Unavailable {
+	return r.ApplicationproblemJSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r ListRestrictionRequestsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListRestrictionRequestsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListRestrictionRequestsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListRestrictionRequestsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 // CreateRestrictionRequestResponse401Headers the declared response headers of an HTTP 401 response for CreateRestrictionRequest
 type CreateRestrictionRequestResponse401Headers struct {
 	WWWAuthenticate *string
@@ -11302,6 +12074,82 @@ func (r CreateRestrictionRequestResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r CreateRestrictionRequestResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// GetRestrictionRequestSummaryResponse401Headers the declared response headers of an HTTP 401 response for GetRestrictionRequestSummary
+type GetRestrictionRequestSummaryResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+// GetRestrictionRequestSummaryResponse503Headers the declared response headers of an HTTP 503 response for GetRestrictionRequestSummary
+type GetRestrictionRequestSummaryResponse503Headers struct {
+	RetryAfter int
+}
+
+type GetRestrictionRequestSummaryResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *RestrictionRequestSummary
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *Unauthorized
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *Forbidden
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *Unavailable
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *GetRestrictionRequestSummaryResponse401Headers
+	// Headers503 the parsed response headers for an HTTP 503 response
+	Headers503 *GetRestrictionRequestSummaryResponse503Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetRestrictionRequestSummaryResponse) GetJSON200() *RestrictionRequestSummary {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r GetRestrictionRequestSummaryResponse) GetApplicationproblemJSON401() *Unauthorized {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r GetRestrictionRequestSummaryResponse) GetApplicationproblemJSON403() *Forbidden {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r GetRestrictionRequestSummaryResponse) GetApplicationproblemJSON503() *Unavailable {
+	return r.ApplicationproblemJSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r GetRestrictionRequestSummaryResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetRestrictionRequestSummaryResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetRestrictionRequestSummaryResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetRestrictionRequestSummaryResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -12809,6 +13657,82 @@ func (r CreateUserResponse) ContentType() string {
 	return ""
 }
 
+// GetUserSummaryResponse401Headers the declared response headers of an HTTP 401 response for GetUserSummary
+type GetUserSummaryResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+// GetUserSummaryResponse503Headers the declared response headers of an HTTP 503 response for GetUserSummary
+type GetUserSummaryResponse503Headers struct {
+	RetryAfter int
+}
+
+type GetUserSummaryResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *UserSummary
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *Unauthorized
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *Forbidden
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *Unavailable
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *GetUserSummaryResponse401Headers
+	// Headers503 the parsed response headers for an HTTP 503 response
+	Headers503 *GetUserSummaryResponse503Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetUserSummaryResponse) GetJSON200() *UserSummary {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r GetUserSummaryResponse) GetApplicationproblemJSON401() *Unauthorized {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r GetUserSummaryResponse) GetApplicationproblemJSON403() *Forbidden {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r GetUserSummaryResponse) GetApplicationproblemJSON503() *Unavailable {
+	return r.ApplicationproblemJSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r GetUserSummaryResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetUserSummaryResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetUserSummaryResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetUserSummaryResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 // DisableUserResponse401Headers the declared response headers of an HTTP 401 response for DisableUser
 type DisableUserResponse401Headers struct {
 	WWWAuthenticate *string
@@ -13550,6 +14474,29 @@ func (c *ClientWithResponses) StreamMannedTrafficWithResponse(ctx context.Contex
 	return ParseStreamMannedTrafficResponse(rsp)
 }
 
+// GetMannedTrafficSummaryWithResponse How many manned aircraft the picture holds
+//
+// The live manned picture of manned-feed counted for the console's
+// overview, from the picture itself (not from a stream): every
+// aircraft shown, by state (live, stale, source_disabled), and how
+// many of them are relevant to U-space. An aircraft known only from
+// backlog samples is not shown and not counted (T-04). Counts only,
+// no icao24 or callsign; the picture is bounded by max_aircraft.
+// degraded says why the count may be low or empty (adapters_silent,
+// cis_projection_stale, nats) and relevance how relevance was
+// judged (SC-22). counted_at is manned-feed's clock.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/manned-traffic/summary (the `GetMannedTrafficSummary` operationId).
+func (c *ClientWithResponses) GetMannedTrafficSummaryWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetMannedTrafficSummaryResponse, error) {
+	rsp, err := c.GetMannedTrafficSummary(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetMannedTrafficSummaryResponse(rsp)
+}
+
 // CreateOccurrenceWithBodyWithResponse Report an occurrence
 //
 // An occurrence report of ANSP staff (Reg. (EU) 376/2014 Art.
@@ -13600,6 +14547,27 @@ func (c *ClientWithResponses) CreateOccurrenceWithResponse(ctx context.Context, 
 		return nil, err
 	}
 	return ParseCreateOccurrenceResponse(rsp)
+}
+
+// GetOccurrenceSummaryWithResponse The occurrence reports by delivery state
+//
+// The occurrence reports submitted to the authority, counted by the
+// state of their outbox delivery (queued, sent, failed, abandoned,
+// cancelled), for the overview's tile: counts only, no report_ref,
+// narrative, reporter or aircraft. The newest
+// MaxOccurrencesCounted (10000) reports by became_aware_at are
+// counted in one bounded read over occurrence_reports_aware_idx on
+// the database clock (counted_at); truncated says there were more.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/occurrences/summary (the `GetOccurrenceSummary` operationId).
+func (c *ClientWithResponses) GetOccurrenceSummaryWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetOccurrenceSummaryResponse, error) {
+	rsp, err := c.GetOccurrenceSummary(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetOccurrenceSummaryResponse(rsp)
 }
 
 // GetCircleOutlineWithResponse The outline of a circle, drawn for the map
@@ -13675,6 +14643,27 @@ func (c *ClientWithResponses) PutPolicyWithResponse(ctx context.Context, body Pu
 	return ParsePutPolicyResponse(rsp)
 }
 
+// ListRestrictionRequestsWithResponse The restriction requests awaiting a decision
+//
+// The received requests (02 F11) not yet accepted or declined,
+// oldest first, for the watch supervisor who decides them (docs/
+// PLAN.md section 15 row 45). Each item names the request, its
+// source, its requester and when it was received; its area and
+// window are read with GET /v1/restriction-requests/{id}. At most
+// limit items; truncated says when more were waiting. One read
+// over the (state, received_at) index.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/restriction-requests (the `ListRestrictionRequests` operationId).
+func (c *ClientWithResponses) ListRestrictionRequestsWithResponse(ctx context.Context, params *ListRestrictionRequestsParams, reqEditors ...RequestEditorFn) (*ListRestrictionRequestsResponse, error) {
+	rsp, err := c.ListRestrictionRequests(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListRestrictionRequestsResponse(rsp)
+}
+
 // CreateRestrictionRequestWithBodyWithResponse Request a restriction
 //
 // A request from the authority (or a console user) for a
@@ -13713,6 +14702,25 @@ func (c *ClientWithResponses) CreateRestrictionRequestWithResponse(ctx context.C
 		return nil, err
 	}
 	return ParseCreateRestrictionRequestResponse(rsp)
+}
+
+// GetRestrictionRequestSummaryWithResponse How many restriction requests await a decision
+//
+// The received requests not yet decided, counted for the
+// overview's tile with the oldest one's received_at: counts only,
+// no requester and no area. One bounded read over the (state,
+// received_at) index on the database clock (counted_at); truncated
+// says more were waiting than were counted.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/restriction-requests/summary (the `GetRestrictionRequestSummary` operationId).
+func (c *ClientWithResponses) GetRestrictionRequestSummaryWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetRestrictionRequestSummaryResponse, error) {
+	rsp, err := c.GetRestrictionRequestSummary(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetRestrictionRequestSummaryResponse(rsp)
 }
 
 // GetRestrictionRequestWithResponse The state of a restriction request
@@ -14201,6 +15209,24 @@ func (c *ClientWithResponses) CreateUserWithResponse(ctx context.Context, body C
 		return nil, err
 	}
 	return ParseCreateUserResponse(rsp)
+}
+
+// GetUserSummaryWithResponse How many console accounts there are
+//
+// The console accounts counted by status and by role, for the
+// overview's tile (01 §4): counts only, no username or id. One
+// bounded read on the database clock (counted_at); truncated says
+// there were more accounts than were counted.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/users/summary (the `GetUserSummary` operationId).
+func (c *ClientWithResponses) GetUserSummaryWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetUserSummaryResponse, error) {
+	rsp, err := c.GetUserSummary(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetUserSummaryResponse(rsp)
 }
 
 // DisableUserWithResponse Disable an account
@@ -15792,6 +16818,59 @@ func ParseStreamMannedTrafficResponse(rsp *http.Response) (*StreamMannedTrafficR
 	return response, nil
 }
 
+// ParseGetMannedTrafficSummaryResponse parses an HTTP response from a GetMannedTrafficSummaryWithResponse call
+func ParseGetMannedTrafficSummaryResponse(rsp *http.Response) (*GetMannedTrafficSummaryResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetMannedTrafficSummaryResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest MannedSummary
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers GetMannedTrafficSummaryResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
 // ParseCreateOccurrenceResponse parses an HTTP response from a CreateOccurrenceWithResponse call
 func ParseCreateOccurrenceResponse(rsp *http.Response) (*CreateOccurrenceResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -15877,6 +16956,76 @@ func ParseCreateOccurrenceResponse(rsp *http.Response) (*CreateOccurrenceRespons
 		response.Headers401 = &headers
 	case rsp.StatusCode == 503:
 		var headers CreateOccurrenceResponse503Headers
+		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.RetryAfter = value
+		}
+		response.Headers503 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseGetOccurrenceSummaryResponse parses an HTTP response from a GetOccurrenceSummaryWithResponse call
+func ParseGetOccurrenceSummaryResponse(rsp *http.Response) (*GetOccurrenceSummaryResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetOccurrenceSummaryResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest OccurrenceSummary
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers GetOccurrenceSummaryResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	case rsp.StatusCode == 503:
+		var headers GetOccurrenceSummaryResponse503Headers
 		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
 			var value int
 			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "integer", Format: ""}); err != nil {
@@ -16097,6 +17246,83 @@ func ParsePutPolicyResponse(rsp *http.Response) (*PutPolicyResponse, error) {
 	return response, nil
 }
 
+// ParseListRestrictionRequestsResponse parses an HTTP response from a ListRestrictionRequestsWithResponse call
+func ParseListRestrictionRequestsResponse(rsp *http.Response) (*ListRestrictionRequestsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListRestrictionRequestsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest RestrictionRequestList
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers ListRestrictionRequestsResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	case rsp.StatusCode == 503:
+		var headers ListRestrictionRequestsResponse503Headers
+		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.RetryAfter = value
+		}
+		response.Headers503 = &headers
+	}
+
+	return response, nil
+}
+
 // ParseCreateRestrictionRequestResponse parses an HTTP response from a CreateRestrictionRequestWithResponse call
 func ParseCreateRestrictionRequestResponse(rsp *http.Response) (*CreateRestrictionRequestResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -16182,6 +17408,76 @@ func ParseCreateRestrictionRequestResponse(rsp *http.Response) (*CreateRestricti
 		response.Headers401 = &headers
 	case rsp.StatusCode == 503:
 		var headers CreateRestrictionRequestResponse503Headers
+		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.RetryAfter = value
+		}
+		response.Headers503 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseGetRestrictionRequestSummaryResponse parses an HTTP response from a GetRestrictionRequestSummaryWithResponse call
+func ParseGetRestrictionRequestSummaryResponse(rsp *http.Response) (*GetRestrictionRequestSummaryResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetRestrictionRequestSummaryResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest RestrictionRequestSummary
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers GetRestrictionRequestSummaryResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	case rsp.StatusCode == 503:
+		var headers GetRestrictionRequestSummaryResponse503Headers
 		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
 			var value int
 			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "integer", Format: ""}); err != nil {
@@ -17570,6 +18866,76 @@ func ParseCreateUserResponse(rsp *http.Response) (*CreateUserResponse, error) {
 	return response, nil
 }
 
+// ParseGetUserSummaryResponse parses an HTTP response from a GetUserSummaryWithResponse call
+func ParseGetUserSummaryResponse(rsp *http.Response) (*GetUserSummaryResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetUserSummaryResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest UserSummary
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers GetUserSummaryResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	case rsp.StatusCode == 503:
+		var headers GetUserSummaryResponse503Headers
+		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.RetryAfter = value
+		}
+		response.Headers503 = &headers
+	}
+
+	return response, nil
+}
+
 // ParseDisableUserResponse parses an HTTP response from a DisableUserWithResponse call
 func ParseDisableUserResponse(rsp *http.Response) (*DisableUserResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -17806,9 +19172,15 @@ type ServerInterface interface {
 	// StreamMannedTraffic The manned traffic stream (WebSocket)
 	// (GET /v1/manned-traffic/stream)
 	StreamMannedTraffic(w http.ResponseWriter, r *http.Request, params StreamMannedTrafficParams)
+	// GetMannedTrafficSummary How many manned aircraft the picture holds
+	// (GET /v1/manned-traffic/summary)
+	GetMannedTrafficSummary(w http.ResponseWriter, r *http.Request)
 	// CreateOccurrence Report an occurrence
 	// (POST /v1/occurrences)
 	CreateOccurrence(w http.ResponseWriter, r *http.Request, params CreateOccurrenceParams)
+	// GetOccurrenceSummary The occurrence reports by delivery state
+	// (GET /v1/occurrences/summary)
+	GetOccurrenceSummary(w http.ResponseWriter, r *http.Request)
 	// GetCircleOutline The outline of a circle, drawn for the map
 	// (GET /v1/outlines/circle)
 	GetCircleOutline(w http.ResponseWriter, r *http.Request, params GetCircleOutlineParams)
@@ -17818,9 +19190,15 @@ type ServerInterface interface {
 	// PutPolicy Change the thresholds
 	// (PUT /v1/policy)
 	PutPolicy(w http.ResponseWriter, r *http.Request)
+	// ListRestrictionRequests The restriction requests awaiting a decision
+	// (GET /v1/restriction-requests)
+	ListRestrictionRequests(w http.ResponseWriter, r *http.Request, params ListRestrictionRequestsParams)
 	// CreateRestrictionRequest Request a restriction
 	// (POST /v1/restriction-requests)
 	CreateRestrictionRequest(w http.ResponseWriter, r *http.Request)
+	// GetRestrictionRequestSummary How many restriction requests await a decision
+	// (GET /v1/restriction-requests/summary)
+	GetRestrictionRequestSummary(w http.ResponseWriter, r *http.Request)
 	// GetRestrictionRequest The state of a restriction request
 	// (GET /v1/restriction-requests/{id})
 	GetRestrictionRequest(w http.ResponseWriter, r *http.Request, id RequestID)
@@ -17875,6 +19253,9 @@ type ServerInterface interface {
 	// CreateUser Create a console account
 	// (POST /v1/users)
 	CreateUser(w http.ResponseWriter, r *http.Request)
+	// GetUserSummary How many console accounts there are
+	// (GET /v1/users/summary)
+	GetUserSummary(w http.ResponseWriter, r *http.Request)
 	// DisableUser Disable an account
 	// (POST /v1/users/{id}/disable)
 	DisableUser(w http.ResponseWriter, r *http.Request, id UserID)
@@ -18420,6 +19801,20 @@ func (siw *ServerInterfaceWrapper) StreamMannedTraffic(w http.ResponseWriter, r 
 	handler.ServeHTTP(w, r)
 }
 
+// GetMannedTrafficSummary operation middleware
+func (siw *ServerInterfaceWrapper) GetMannedTrafficSummary(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetMannedTrafficSummary(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // CreateOccurrence operation middleware
 func (siw *ServerInterfaceWrapper) CreateOccurrence(w http.ResponseWriter, r *http.Request) {
 
@@ -18452,6 +19847,20 @@ func (siw *ServerInterfaceWrapper) CreateOccurrence(w http.ResponseWriter, r *ht
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.CreateOccurrence(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetOccurrenceSummary operation middleware
+func (siw *ServerInterfaceWrapper) GetOccurrenceSummary(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetOccurrenceSummary(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -18548,11 +19957,58 @@ func (siw *ServerInterfaceWrapper) PutPolicy(w http.ResponseWriter, r *http.Requ
 	handler.ServeHTTP(w, r)
 }
 
+// ListRestrictionRequests operation middleware
+func (siw *ServerInterfaceWrapper) ListRestrictionRequests(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListRestrictionRequestsParams
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "limit", r.URL.Query(), &params.Limit, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "limit"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "limit", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListRestrictionRequests(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // CreateRestrictionRequest operation middleware
 func (siw *ServerInterfaceWrapper) CreateRestrictionRequest(w http.ResponseWriter, r *http.Request) {
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.CreateRestrictionRequest(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetRestrictionRequestSummary operation middleware
+func (siw *ServerInterfaceWrapper) GetRestrictionRequestSummary(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetRestrictionRequestSummary(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -19065,6 +20521,20 @@ func (siw *ServerInterfaceWrapper) CreateUser(w http.ResponseWriter, r *http.Req
 	handler.ServeHTTP(w, r)
 }
 
+// GetUserSummary operation middleware
+func (siw *ServerInterfaceWrapper) GetUserSummary(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetUserSummary(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // DisableUser operation middleware
 func (siw *ServerInterfaceWrapper) DisableUser(w http.ResponseWriter, r *http.Request) {
 
@@ -19251,7 +20721,9 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/outlines/circle", wrapper.GetCircleOutline)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/delivery-alarms", wrapper.ListDeliveryAlarms)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/delivery-alarms/{id}/acknowledge", wrapper.AcknowledgeDeliveryAlarm)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/restriction-requests", wrapper.ListRestrictionRequests)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/restriction-requests", wrapper.CreateRestrictionRequest)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/restriction-requests/summary", wrapper.GetRestrictionRequestSummary)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/restriction-requests/{id}", wrapper.GetRestrictionRequest)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/restriction-requests/{id}/accept", wrapper.AcceptRestrictionRequest)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/restriction-requests/{id}/decline", wrapper.DeclineRestrictionRequest)
@@ -19261,6 +20733,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/coordination/inbox/{id}/acknowledge", wrapper.AcknowledgeCoordinationNotice)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/coordination/stream", wrapper.StreamCoordination)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/manned-traffic/snapshot", wrapper.GetMannedTrafficSnapshot)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/manned-traffic/summary", wrapper.GetMannedTrafficSummary)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/manned-traffic/stream", wrapper.StreamMannedTraffic)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/adapters", wrapper.ListAdapters)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/adapters/{id}", wrapper.GetAdapter)
@@ -19269,6 +20742,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/policy", wrapper.GetPolicy)
 	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/v1/policy", wrapper.PutPolicy)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/occurrences", wrapper.CreateOccurrence)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/occurrences/summary", wrapper.GetOccurrenceSummary)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/audit", wrapper.ListAudit)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/auth/login", wrapper.Login)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/auth/mfa", wrapper.VerifyMfa)
@@ -19276,6 +20750,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/auth/me", wrapper.GetMe)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/users", wrapper.ListUsers)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/users", wrapper.CreateUser)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/users/summary", wrapper.GetUserSummary)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/users/{id}/reset-mfa", wrapper.ResetUserMfa)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/users/{id}/disable", wrapper.DisableUser)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/.well-known/jwks.json", wrapper.GetJwks)
@@ -21230,6 +22705,62 @@ func (response StreamMannedTraffic503ApplicationProblemPlusJSONResponse) VisitSt
 	return err
 }
 
+type GetMannedTrafficSummaryRequestObject struct {
+}
+
+type GetMannedTrafficSummaryResponseObject interface {
+	VisitGetMannedTrafficSummaryResponse(w http.ResponseWriter) error
+}
+
+type GetMannedTrafficSummary200JSONResponse MannedSummary
+
+func (response GetMannedTrafficSummary200JSONResponse) VisitGetMannedTrafficSummaryResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetMannedTrafficSummary401ApplicationProblemPlusJSONResponse struct {
+	UnauthorizedApplicationProblemPlusJSONResponse
+}
+
+func (response GetMannedTrafficSummary401ApplicationProblemPlusJSONResponse) VisitGetMannedTrafficSummaryResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	if response.Headers.WWWAuthenticate != nil {
+		w.Header().Set("WWW-Authenticate", fmt.Sprint(*response.Headers.WWWAuthenticate))
+	}
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetMannedTrafficSummary403ApplicationProblemPlusJSONResponse struct {
+	ForbiddenApplicationProblemPlusJSONResponse
+}
+
+func (response GetMannedTrafficSummary403ApplicationProblemPlusJSONResponse) VisitGetMannedTrafficSummaryResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type CreateOccurrenceRequestObject struct {
 	Params CreateOccurrenceParams
 	Body   *CreateOccurrenceJSONRequestBody
@@ -21355,6 +22886,79 @@ type CreateOccurrence503ApplicationProblemPlusJSONResponse struct {
 }
 
 func (response CreateOccurrence503ApplicationProblemPlusJSONResponse) VisitCreateOccurrenceResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetOccurrenceSummaryRequestObject struct {
+}
+
+type GetOccurrenceSummaryResponseObject interface {
+	VisitGetOccurrenceSummaryResponse(w http.ResponseWriter) error
+}
+
+type GetOccurrenceSummary200JSONResponse OccurrenceSummary
+
+func (response GetOccurrenceSummary200JSONResponse) VisitGetOccurrenceSummaryResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetOccurrenceSummary401ApplicationProblemPlusJSONResponse struct {
+	UnauthorizedApplicationProblemPlusJSONResponse
+}
+
+func (response GetOccurrenceSummary401ApplicationProblemPlusJSONResponse) VisitGetOccurrenceSummaryResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	if response.Headers.WWWAuthenticate != nil {
+		w.Header().Set("WWW-Authenticate", fmt.Sprint(*response.Headers.WWWAuthenticate))
+	}
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetOccurrenceSummary403ApplicationProblemPlusJSONResponse struct {
+	ForbiddenApplicationProblemPlusJSONResponse
+}
+
+func (response GetOccurrenceSummary403ApplicationProblemPlusJSONResponse) VisitGetOccurrenceSummaryResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetOccurrenceSummary503ApplicationProblemPlusJSONResponse struct {
+	UnavailableApplicationProblemPlusJSONResponse
+}
+
+func (response GetOccurrenceSummary503ApplicationProblemPlusJSONResponse) VisitGetOccurrenceSummaryResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
@@ -21603,6 +23207,96 @@ func (response PutPolicy503ApplicationProblemPlusJSONResponse) VisitPutPolicyRes
 	return err
 }
 
+type ListRestrictionRequestsRequestObject struct {
+	Params ListRestrictionRequestsParams
+}
+
+type ListRestrictionRequestsResponseObject interface {
+	VisitListRestrictionRequestsResponse(w http.ResponseWriter) error
+}
+
+type ListRestrictionRequests200JSONResponse RestrictionRequestList
+
+func (response ListRestrictionRequests200JSONResponse) VisitListRestrictionRequestsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListRestrictionRequests400ApplicationProblemPlusJSONResponse struct {
+	BadRequestApplicationProblemPlusJSONResponse
+}
+
+func (response ListRestrictionRequests400ApplicationProblemPlusJSONResponse) VisitListRestrictionRequestsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListRestrictionRequests401ApplicationProblemPlusJSONResponse struct {
+	UnauthorizedApplicationProblemPlusJSONResponse
+}
+
+func (response ListRestrictionRequests401ApplicationProblemPlusJSONResponse) VisitListRestrictionRequestsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	if response.Headers.WWWAuthenticate != nil {
+		w.Header().Set("WWW-Authenticate", fmt.Sprint(*response.Headers.WWWAuthenticate))
+	}
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListRestrictionRequests403ApplicationProblemPlusJSONResponse struct {
+	ForbiddenApplicationProblemPlusJSONResponse
+}
+
+func (response ListRestrictionRequests403ApplicationProblemPlusJSONResponse) VisitListRestrictionRequestsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListRestrictionRequests503ApplicationProblemPlusJSONResponse struct {
+	UnavailableApplicationProblemPlusJSONResponse
+}
+
+func (response ListRestrictionRequests503ApplicationProblemPlusJSONResponse) VisitListRestrictionRequestsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type CreateRestrictionRequestRequestObject struct {
 	Body *CreateRestrictionRequestJSONRequestBody
 }
@@ -21727,6 +23421,79 @@ type CreateRestrictionRequest503ApplicationProblemPlusJSONResponse struct {
 }
 
 func (response CreateRestrictionRequest503ApplicationProblemPlusJSONResponse) VisitCreateRestrictionRequestResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetRestrictionRequestSummaryRequestObject struct {
+}
+
+type GetRestrictionRequestSummaryResponseObject interface {
+	VisitGetRestrictionRequestSummaryResponse(w http.ResponseWriter) error
+}
+
+type GetRestrictionRequestSummary200JSONResponse RestrictionRequestSummary
+
+func (response GetRestrictionRequestSummary200JSONResponse) VisitGetRestrictionRequestSummaryResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetRestrictionRequestSummary401ApplicationProblemPlusJSONResponse struct {
+	UnauthorizedApplicationProblemPlusJSONResponse
+}
+
+func (response GetRestrictionRequestSummary401ApplicationProblemPlusJSONResponse) VisitGetRestrictionRequestSummaryResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	if response.Headers.WWWAuthenticate != nil {
+		w.Header().Set("WWW-Authenticate", fmt.Sprint(*response.Headers.WWWAuthenticate))
+	}
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetRestrictionRequestSummary403ApplicationProblemPlusJSONResponse struct {
+	ForbiddenApplicationProblemPlusJSONResponse
+}
+
+func (response GetRestrictionRequestSummary403ApplicationProblemPlusJSONResponse) VisitGetRestrictionRequestSummaryResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetRestrictionRequestSummary503ApplicationProblemPlusJSONResponse struct {
+	UnavailableApplicationProblemPlusJSONResponse
+}
+
+func (response GetRestrictionRequestSummary503ApplicationProblemPlusJSONResponse) VisitGetRestrictionRequestSummaryResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
@@ -23485,6 +25252,79 @@ func (response CreateUser503ApplicationProblemPlusJSONResponse) VisitCreateUserR
 	return err
 }
 
+type GetUserSummaryRequestObject struct {
+}
+
+type GetUserSummaryResponseObject interface {
+	VisitGetUserSummaryResponse(w http.ResponseWriter) error
+}
+
+type GetUserSummary200JSONResponse UserSummary
+
+func (response GetUserSummary200JSONResponse) VisitGetUserSummaryResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetUserSummary401ApplicationProblemPlusJSONResponse struct {
+	UnauthorizedApplicationProblemPlusJSONResponse
+}
+
+func (response GetUserSummary401ApplicationProblemPlusJSONResponse) VisitGetUserSummaryResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	if response.Headers.WWWAuthenticate != nil {
+		w.Header().Set("WWW-Authenticate", fmt.Sprint(*response.Headers.WWWAuthenticate))
+	}
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetUserSummary403ApplicationProblemPlusJSONResponse struct {
+	ForbiddenApplicationProblemPlusJSONResponse
+}
+
+func (response GetUserSummary403ApplicationProblemPlusJSONResponse) VisitGetUserSummaryResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetUserSummary503ApplicationProblemPlusJSONResponse struct {
+	UnavailableApplicationProblemPlusJSONResponse
+}
+
+func (response GetUserSummary503ApplicationProblemPlusJSONResponse) VisitGetUserSummaryResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type DisableUserRequestObject struct {
 	Id UserID `json:"id"`
 }
@@ -23765,9 +25605,15 @@ type StrictServerInterface interface {
 	// StreamMannedTraffic The manned traffic stream (WebSocket)
 	// (GET /v1/manned-traffic/stream)
 	StreamMannedTraffic(ctx context.Context, request StreamMannedTrafficRequestObject) (StreamMannedTrafficResponseObject, error)
+	// GetMannedTrafficSummary How many manned aircraft the picture holds
+	// (GET /v1/manned-traffic/summary)
+	GetMannedTrafficSummary(ctx context.Context, request GetMannedTrafficSummaryRequestObject) (GetMannedTrafficSummaryResponseObject, error)
 	// CreateOccurrence Report an occurrence
 	// (POST /v1/occurrences)
 	CreateOccurrence(ctx context.Context, request CreateOccurrenceRequestObject) (CreateOccurrenceResponseObject, error)
+	// GetOccurrenceSummary The occurrence reports by delivery state
+	// (GET /v1/occurrences/summary)
+	GetOccurrenceSummary(ctx context.Context, request GetOccurrenceSummaryRequestObject) (GetOccurrenceSummaryResponseObject, error)
 	// GetCircleOutline The outline of a circle, drawn for the map
 	// (GET /v1/outlines/circle)
 	GetCircleOutline(ctx context.Context, request GetCircleOutlineRequestObject) (GetCircleOutlineResponseObject, error)
@@ -23777,9 +25623,15 @@ type StrictServerInterface interface {
 	// PutPolicy Change the thresholds
 	// (PUT /v1/policy)
 	PutPolicy(ctx context.Context, request PutPolicyRequestObject) (PutPolicyResponseObject, error)
+	// ListRestrictionRequests The restriction requests awaiting a decision
+	// (GET /v1/restriction-requests)
+	ListRestrictionRequests(ctx context.Context, request ListRestrictionRequestsRequestObject) (ListRestrictionRequestsResponseObject, error)
 	// CreateRestrictionRequest Request a restriction
 	// (POST /v1/restriction-requests)
 	CreateRestrictionRequest(ctx context.Context, request CreateRestrictionRequestRequestObject) (CreateRestrictionRequestResponseObject, error)
+	// GetRestrictionRequestSummary How many restriction requests await a decision
+	// (GET /v1/restriction-requests/summary)
+	GetRestrictionRequestSummary(ctx context.Context, request GetRestrictionRequestSummaryRequestObject) (GetRestrictionRequestSummaryResponseObject, error)
 	// GetRestrictionRequest The state of a restriction request
 	// (GET /v1/restriction-requests/{id})
 	GetRestrictionRequest(ctx context.Context, request GetRestrictionRequestRequestObject) (GetRestrictionRequestResponseObject, error)
@@ -23834,6 +25686,9 @@ type StrictServerInterface interface {
 	// CreateUser Create a console account
 	// (POST /v1/users)
 	CreateUser(ctx context.Context, request CreateUserRequestObject) (CreateUserResponseObject, error)
+	// GetUserSummary How many console accounts there are
+	// (GET /v1/users/summary)
+	GetUserSummary(ctx context.Context, request GetUserSummaryRequestObject) (GetUserSummaryResponseObject, error)
 	// DisableUser Disable an account
 	// (POST /v1/users/{id}/disable)
 	DisableUser(ctx context.Context, request DisableUserRequestObject) (DisableUserResponseObject, error)
@@ -24469,6 +26324,30 @@ func (sh *strictHandler) StreamMannedTraffic(w http.ResponseWriter, r *http.Requ
 	}
 }
 
+// GetMannedTrafficSummary operation middleware
+func (sh *strictHandler) GetMannedTrafficSummary(w http.ResponseWriter, r *http.Request) {
+	var request GetMannedTrafficSummaryRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetMannedTrafficSummary(ctx, request.(GetMannedTrafficSummaryRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetMannedTrafficSummary")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetMannedTrafficSummaryResponseObject); ok {
+		if err := validResponse.VisitGetMannedTrafficSummaryResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
 // CreateOccurrence operation middleware
 func (sh *strictHandler) CreateOccurrence(w http.ResponseWriter, r *http.Request, params CreateOccurrenceParams) {
 	var request CreateOccurrenceRequestObject
@@ -24495,6 +26374,30 @@ func (sh *strictHandler) CreateOccurrence(w http.ResponseWriter, r *http.Request
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(CreateOccurrenceResponseObject); ok {
 		if err := validResponse.VisitCreateOccurrenceResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetOccurrenceSummary operation middleware
+func (sh *strictHandler) GetOccurrenceSummary(w http.ResponseWriter, r *http.Request) {
+	var request GetOccurrenceSummaryRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetOccurrenceSummary(ctx, request.(GetOccurrenceSummaryRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetOccurrenceSummary")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetOccurrenceSummaryResponseObject); ok {
+		if err := validResponse.VisitGetOccurrenceSummaryResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {
@@ -24583,6 +26486,32 @@ func (sh *strictHandler) PutPolicy(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// ListRestrictionRequests operation middleware
+func (sh *strictHandler) ListRestrictionRequests(w http.ResponseWriter, r *http.Request, params ListRestrictionRequestsParams) {
+	var request ListRestrictionRequestsRequestObject
+
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ListRestrictionRequests(ctx, request.(ListRestrictionRequestsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ListRestrictionRequests")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ListRestrictionRequestsResponseObject); ok {
+		if err := validResponse.VisitListRestrictionRequestsResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
 // CreateRestrictionRequest operation middleware
 func (sh *strictHandler) CreateRestrictionRequest(w http.ResponseWriter, r *http.Request) {
 	var request CreateRestrictionRequestRequestObject
@@ -24607,6 +26536,30 @@ func (sh *strictHandler) CreateRestrictionRequest(w http.ResponseWriter, r *http
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(CreateRestrictionRequestResponseObject); ok {
 		if err := validResponse.VisitCreateRestrictionRequestResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetRestrictionRequestSummary operation middleware
+func (sh *strictHandler) GetRestrictionRequestSummary(w http.ResponseWriter, r *http.Request) {
+	var request GetRestrictionRequestSummaryRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetRestrictionRequestSummary(ctx, request.(GetRestrictionRequestSummaryRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetRestrictionRequestSummary")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetRestrictionRequestSummaryResponseObject); ok {
+		if err := validResponse.VisitGetRestrictionRequestSummaryResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {
@@ -25138,6 +27091,30 @@ func (sh *strictHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(CreateUserResponseObject); ok {
 		if err := validResponse.VisitCreateUserResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetUserSummary operation middleware
+func (sh *strictHandler) GetUserSummary(w http.ResponseWriter, r *http.Request) {
+	var request GetUserSummaryRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetUserSummary(ctx, request.(GetUserSummaryRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetUserSummary")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetUserSummaryResponseObject); ok {
+		if err := validResponse.VisitGetUserSummaryResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

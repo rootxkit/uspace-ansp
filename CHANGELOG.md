@@ -110,6 +110,29 @@ complete.
 
 ### Added
 
+- `GET /v1/manned-traffic/summary` (manned-feed, any console session,
+  additive): the live manned picture counted from the picture itself
+  (live, stale, source_disabled; how many relevant), with `degraded[]`
+  and the relevance line so an empty count says why; no `icao24`. The
+  BFF forwards that one path, GET only, to `WEB_FEED_INTERNAL_URL`
+  (unset: 503 naming it); the overview shows every role the count.
+- `GET /v1/occurrences/summary` (watch_supervisor, additive): the
+  occurrence reports counted by the state of their delivery to the
+  authority (queued, sent, failed, abandoned, cancelled), the newest
+  10000 by `became_aware_at` over `occurrence_reports_aware_idx`, on the
+  database clock; no report_ref, narrative or reporter. The overview
+  shows a supervisor the reports submitted and any failed or queued.
+- `GET /v1/restriction-requests` and `GET /v1/restriction-requests/summary`
+  (watch_supervisor, additive; PLAN section 15 row 45 decided): the
+  requests awaiting a decision, oldest first without their payload, and
+  their count with the oldest one's `received_at`, each one bounded read
+  over `restriction_requests_state_idx` on the database clock. The
+  requests page lists them for a supervisor; the overview counts them.
+  The BFF's request entry is now exact (list, `{id}`, accept, decline).
+- `GET /v1/users/summary` (admin, additive; in `auth.AccessTable`): the
+  console accounts counted by status and role in one bounded read on
+  the database clock, no username or id. The overview shows an admin
+  the active accounts; the BFF forwards that one path for `GET` only.
 - `GET /v1/outlines/circle?lat=&lng=&radius_m=` (session, additive): a
   circle drawn as a closed Polygon of 64 vertices by uspace-core
   `geodesy.Destination` (`internal/outline`), display only. The

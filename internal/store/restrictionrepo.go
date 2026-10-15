@@ -154,6 +154,50 @@ func (r RestrictionRepo) Request(ctx context.Context, id string) (restriction.Re
 	return out, err
 }
 
+// PendingRequests is the received requests, oldest first, at most limit,
+// without their payload, in one query; more says others exist.
+func (r RestrictionRepo) PendingRequests(ctx context.Context, limit int) ([]restriction.Request, bool, error) {
+	page := min(max(limit, 0), restriction.MaxPendingRequestsListed)
+	var out []restriction.Request
+	more := false
+	err := r.DB.Do(ctx, func(ctx context.Context, _ relational.DBTX, q *relational.Queries) error {
+		rows, err := q.PendingRestrictionRequests(ctx, int32(page)+1)
+		if err != nil {
+			return err
+		}
+		more = len(rows) > page
+		if more {
+			rows = rows[:page]
+		}
+		out = make([]restriction.Request, 0, len(rows))
+		for i := range rows {
+			out = append(out, restriction.Request{ID: rows[i].ID, Requester: rows[i].Requester, Source: rows[i].Source,
+				ReceivedAt: rows[i].ReceivedAt.UTC(), State: rows[i].State})
+		}
+		return nil
+	})
+	return out, more, err
+}
+
+// PendingRequestCounts counts at most limit received requests on the
+// database's clock, in one statement.
+func (r RestrictionRepo) PendingRequestCounts(ctx context.Context, limit int) (restriction.RequestCounts, error) {
+	var out restriction.RequestCounts
+	err := r.DB.Do(ctx, func(ctx context.Context, _ relational.DBTX, q *relational.Queries) error {
+		row, err := q.PendingRestrictionRequestCounts(ctx, int32(min(max(limit, 0), restriction.MaxPendingRequestsCounted)))
+		if err != nil {
+			return err
+		}
+		out = restriction.RequestCounts{CountedAt: row.CountedAt.UTC(), Received: row.Received, Truncated: row.Truncated}
+		if row.Received > 0 {
+			at := row.OldestReceivedAt.UTC()
+			out.OldestReceivedAt = &at
+		}
+		return nil
+	})
+	return out, err
+}
+
 // DueActivations is the planned restrictions whose activate_at has come
 // on the database's clock.
 func (r RestrictionRepo) DueActivations(ctx context.Context, limit int) ([]string, error) {

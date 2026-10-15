@@ -35,9 +35,12 @@ type fakeRepo struct {
 
 	undelivered []Undelivered
 	delivered   []AlarmRef
+	// counts answer OccurrenceCounts; countLimit is what it was asked.
+	counts     OccurrenceCounts
+	countLimit int
 
 	failAudit, failNow, failNotices, failMark, failInsert, failBehind, failOcc error
-	failRaise, failClear, failIntersect, failEscalate                          error
+	failRaise, failClear, failIntersect, failEscalate, failCounts              error
 }
 
 func newFakeRepo() *fakeRepo {
@@ -176,6 +179,16 @@ func (r *fakeRepo) Undelivered(context.Context, time.Time, time.Duration, int) (
 	out := r.undelivered
 	r.undelivered = nil
 	return out, nil
+}
+
+func (r *fakeRepo) OccurrenceCounts(_ context.Context, limit int) (OccurrenceCounts, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.countLimit = limit
+	if r.failCounts != nil {
+		return OccurrenceCounts{}, r.failCounts
+	}
+	return r.counts, nil
 }
 
 func (r *fakeRepo) DeliveredAlarms(context.Context, int) ([]AlarmRef, error) {

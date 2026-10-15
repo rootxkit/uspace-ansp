@@ -20,30 +20,32 @@ const MaxBodyBytes = 16 << 10
 // the x-auth; a test holds this table and the contract equal, so that a
 // change to either alone fails.
 const (
-	OpLogin    = "POST /v1/auth/login"
-	OpMFA      = "POST /v1/auth/mfa"
-	OpLogout   = "POST /v1/auth/logout"
-	OpMe       = "GET /v1/auth/me"
-	OpUsers    = "GET /v1/users"
-	OpAddUser  = "POST /v1/users"
-	OpResetMFA = "POST /v1/users/{id}/reset-mfa"
-	OpDisable  = "POST /v1/users/{id}/disable"
-	OpJWKS     = "GET /.well-known/jwks.json"
+	OpLogin       = "POST /v1/auth/login"
+	OpMFA         = "POST /v1/auth/mfa"
+	OpLogout      = "POST /v1/auth/logout"
+	OpMe          = "GET /v1/auth/me"
+	OpUsers       = "GET /v1/users"
+	OpUserSummary = "GET /v1/users/summary"
+	OpAddUser     = "POST /v1/users"
+	OpResetMFA    = "POST /v1/users/{id}/reset-mfa"
+	OpDisable     = "POST /v1/users/{id}/disable"
+	OpJWKS        = "GET /.well-known/jwks.json"
 )
 
 // AccessTable is the access entry of every operation above. Sign-in and
 // the JWKS are public; everything else needs a console session.
 func AccessTable() map[string]Access {
 	return map[string]Access{
-		OpLogin:    {Public: true},
-		OpMFA:      {Public: true},
-		OpLogout:   {AnyRole: true},
-		OpMe:       {AnyRole: true},
-		OpUsers:    {Roles: []string{RoleAdmin}},
-		OpAddUser:  {Roles: []string{RoleAdmin}},
-		OpResetMFA: {Roles: []string{RoleAdmin}},
-		OpDisable:  {Roles: []string{RoleAdmin}},
-		OpJWKS:     {Public: true},
+		OpLogin:       {Public: true},
+		OpMFA:         {Public: true},
+		OpLogout:      {AnyRole: true},
+		OpMe:          {AnyRole: true},
+		OpUsers:       {Roles: []string{RoleAdmin}},
+		OpUserSummary: {Roles: []string{RoleAdmin}},
+		OpAddUser:     {Roles: []string{RoleAdmin}},
+		OpResetMFA:    {Roles: []string{RoleAdmin}},
+		OpDisable:     {Roles: []string{RoleAdmin}},
+		OpJWKS:        {Public: true},
 	}
 }
 
@@ -231,6 +233,17 @@ func (h *Handlers) Users(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"users": us})
+}
+
+// UserSummary serves GET /v1/users/summary: the accounts counted by
+// status and role, no username or id.
+func (h *Handlers) UserSummary(w http.ResponseWriter, r *http.Request) {
+	sum, err := h.Accounts.UserSummary(r.Context())
+	if err != nil {
+		apierr.WriteError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, sum)
 }
 
 // AddUser serves POST /v1/users.
