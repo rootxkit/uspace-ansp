@@ -54,6 +54,8 @@ test("an aircraft goes live, stale and source disabled; its symbol and label cha
   const status = page.getByTestId("picture-status");
   await expect(status).toHaveAttribute("data-connection", "live");
   await expect(page.getByTestId("picture-policy")).toContainText("Policy version 1 · stale after 15 s · live up to 3 s");
+  // The feed's line carries its own label: it is shown once, not "relevance: relevance: ...".
+  await expect(page.getByTestId("picture-relevance")).toHaveText("· relevance: CIS version 42, 3 volumes, age 12 s");
 
   await control(request, "/__mock/manned", { icao24: "4ca7b5", callsign: "TST123", alt_pressure_m: 1250, alt_wgs84_m: 1310, relevant: true });
   const row = page.locator('[data-aircraft="4ca7b5"]');

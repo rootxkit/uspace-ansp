@@ -295,7 +295,6 @@
   "ansp.picture.status.policy": "Policy version {version} · stale after {stale} s · live up to {live} s",
   "ansp.picture.status.cis": "CIS version {version}, age {age} s",
   "ansp.picture.status.cis_none": "No CIS projection: relevance is not evaluated",
-  "ansp.picture.status.relevance": "relevance: {text}",
   "ansp.picture.status.adapters": "Adapters",
   "ansp.picture.status.counters": "Not shown: {refused} refused frames, {out_of_order} older than the one held, {evicted} evicted past the bound, {adapters} malformed adapter entries",
   "ansp.picture.held_one": "Stream not live: {count} aircraft is shown at its last position with its age.",
