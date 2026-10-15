@@ -3,6 +3,7 @@ package auth
 import (
 	"container/list"
 	"context"
+	"crypto/rsa"
 	"crypto/subtle"
 	"errors"
 	"fmt"
@@ -78,8 +79,13 @@ type SessionVerifierConfig struct {
 	// Issuer is this system's issuer URL (the iss of every session).
 	Issuer string
 	// Ring holds the session key: its JWKS is the static key set the
-	// core verifier checks with (no network).
+	// core verifier checks with (no network). api, which signs.
 	Ring *coreauth.KeyRing
+	// PublicKey is the public part of the session key, for a process
+	// that verifies sessions and must never hold the key that signs them
+	// (manned-feed, ANSP_SESSION_PUBLIC_KEY_FILE). Exactly one of Ring
+	// and PublicKey; the key set is built from it in memory (no network).
+	PublicKey *rsa.PublicKey
 	// Audiences are ANSP_AUDIENCES; a session's aud is the first.
 	Audiences []string
 	// Checker checks the session row; required.
@@ -94,7 +100,8 @@ type SessionVerifierConfig struct {
 }
 
 // SessionVerifier verifies console session tokens: core's Verifier with
-// this system as the one issuer (keys from the session ring, no network)
+// this system as the one issuer (keys from the session ring, or from the
+// session key's public part alone, no network either way)
 // and the same audiences and StrictSessionClaims as machine tokens, then
 // the session shape of M20 (scope exactly "session", realm console, one
 // known role), then the session row through a short bounded cache, so
@@ -113,8 +120,10 @@ func NewSessionVerifier(ctx context.Context, c SessionVerifierConfig) (*SessionV
 	switch {
 	case c.Issuer == "":
 		return nil, core.Fieldf("ANSP_PUBLIC_BASE_URL", "required: it is the issuer of console sessions")
-	case c.Ring == nil:
-		return nil, core.Fieldf("ANSP_SESSION_KEY_FILE", "required to verify console sessions")
+	case c.Ring == nil && c.PublicKey == nil:
+		return nil, core.Fieldf("ANSP_SESSION_KEY_FILE", "required to verify console sessions (or, where sessions are only verified, ANSP_SESSION_PUBLIC_KEY_FILE)")
+	case c.Ring != nil && c.PublicKey != nil:
+		return nil, errors.New("a session verifier takes the key ring or the public key, not both")
 	case len(c.Audiences) == 0:
 		return nil, core.Fieldf("ANSP_AUDIENCES", "required to verify console sessions")
 	case c.Checker == nil:
@@ -129,12 +138,21 @@ func NewSessionVerifier(ctx context.Context, c SessionVerifierConfig) (*SessionV
 	if c.CacheSize <= 0 {
 		c.CacheSize = DefaultSessionCacheSize
 	}
-	v, err := coreauth.NewVerifier(ctx, coreauth.Config{
-		Issuers:             map[string]coreauth.IssuerConfig{c.Issuer: {Keys: c.Ring.JWKS()}},
+	vc := coreauth.Config{
 		Audiences:           slices.Clone(c.Audiences),
 		StrictSessionClaims: true,
 		Now:                 c.Now,
-	})
+	}
+	if c.Ring != nil {
+		vc.Issuers = map[string]coreauth.IssuerConfig{c.Issuer: {Keys: c.Ring.JWKS()}}
+	} else {
+		ic, client, err := publicKeyIssuer(c.PublicKey)
+		if err != nil {
+			return nil, err
+		}
+		vc.Issuers, vc.HTTPClient = map[string]coreauth.IssuerConfig{c.Issuer: ic}, client
+	}
+	v, err := coreauth.NewVerifier(ctx, vc)
 	if err != nil {
 		return nil, err
 	}
