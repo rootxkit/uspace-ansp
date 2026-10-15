@@ -121,6 +121,9 @@ test("the WP-12 pages in ka and en: the picture with a stale and a disabled airc
     await page.goto(`/${lang}/policy`);
     await expect(page.getByTestId("policy-table")).toBeVisible();
     await shot(page, `${lang}-policy`);
+    await page.goto(`/${lang}/users`);
+    await expect(page.getByTestId("users-table")).toBeVisible();
+    await shot(page, `${lang}-users`);
   }
   await page.goto("/en/sources");
   const replay = page.locator('[data-testid="switch"][data-instance="replay-1"]');

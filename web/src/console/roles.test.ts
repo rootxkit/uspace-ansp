@@ -8,10 +8,11 @@ describe("navigation", () => {
   });
 
   it("links the admin pages for an admin only", () => {
-    expect(navFor("admin").map((i) => i.path)).toEqual(expect.arrayContaining(["/policy", "/audit"]));
+    expect(navFor("admin").map((i) => i.path)).toEqual(expect.arrayContaining(["/policy", "/audit", "/users"]));
     for (const role of ["viewer", "watch_supervisor", null] as const) {
       expect(navFor(role).map((i) => i.path)).not.toContain("/policy");
       expect(navFor(role).map((i) => i.path)).not.toContain("/audit");
+      expect(navFor(role).map((i) => i.path)).not.toContain("/users");
     }
   });
 

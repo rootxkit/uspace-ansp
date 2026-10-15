@@ -28,6 +28,10 @@
 //   operations and drops it from every other call. Any other header
 //   stays the kit's decision.
 //
+// - users: the account administration (USER_OPERATIONS) is four exact
+//   operations, path and method; another method on one of those paths
+//   is 405 without an upstream call. The API decides who (admin only).
+//
 // - feed: GET /v1/manned-traffic/summary is manned-feed's (the live
 //   picture's owner, x-process manned-feed), so the BFF forwards that one
 //   path, GET only, with the kit's `forward` to WEB_FEED_INTERNAL_URL;
@@ -72,6 +76,27 @@ export const SUMMARY_READS: readonly RegExp[] = [/^\/v1\/users\/summary$/, /^\/v
 export const FEED_READS: readonly RegExp[] = [/^\/v1\/manned-traffic\/summary$/];
 
 /**
+ * The account administration (api/openapi.yaml tag auth, every one
+ * x-auth session:admin): exact path and method, nothing near them. A
+ * listed path with another method is 405 before any upstream call; a
+ * longer, shorter or other path is not on the list (404). The BFF never
+ * reads the role: the API answers anyone but an admin 403. The id is a
+ * ULID (components.schemas.ULID).
+ */
+export const USER_OPERATIONS: readonly { method: string; path: RegExp }[] = [
+  { method: "GET", path: /^\/v1\/users$/ },
+  { method: "POST", path: /^\/v1\/users$/ },
+  { method: "POST", path: /^\/v1\/users\/[0-7][0-9A-HJKMNP-TV-Z]{25}\/reset-mfa$/ },
+  { method: "POST", path: /^\/v1\/users\/[0-7][0-9A-HJKMNP-TV-Z]{25}\/disable$/ },
+];
+
+/** The methods USER_OPERATIONS lists for a path, or null when the path is not one of them. */
+export function userMethodsOf(apiPath: string): string[] | null {
+  const methods = USER_OPERATIONS.filter((o) => o.path.test(apiPath)).map((o) => o.method);
+  return methods.length === 0 ? null : methods;
+}
+
+/**
  * What the proxy may reach: the console's operations and nothing else.
  * /v1/auth/me is the only auth operation on it; login, mfa and logout
  * go through their own routes.
@@ -86,6 +111,7 @@ export const PROXY_ALLOW_PATHS: RegExp[] = [
   /^\/v1\/outlines\/circle$/,
   /^\/v1\/auth\/me$/,
   ...SUMMARY_READS,
+  ...USER_OPERATIONS.map((o) => o.path),
 ];
 
 /** The header the plan and the occurrence report take, and its shape (api/openapi.yaml IdempotencyKey). */
@@ -221,6 +247,12 @@ export function createBff(cfg: BffConfig): Bff {
     if (apiPath !== null && req.method !== "GET" && (fromFeed || SUMMARY_READS.some((p) => p.test(apiPath)))) {
       const res = problem(405, "method_not_allowed", "Method not allowed", "a summary is read with GET only");
       res.headers.set("Allow", "GET");
+      return Promise.resolve(res);
+    }
+    const userMethods = apiPath === null ? null : userMethodsOf(apiPath);
+    if (userMethods !== null && !userMethods.includes(req.method)) {
+      const res = problem(405, "method_not_allowed", "Method not allowed", `an account operation takes ${userMethods.join(" or ")} only`);
+      res.headers.set("Allow", userMethods.join(", "));
       return Promise.resolve(res);
     }
     if (fromFeed) return toFeed(req, apiPath);
