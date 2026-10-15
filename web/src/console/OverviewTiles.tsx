@@ -2,8 +2,8 @@
 
 // The overview's tiles that read a summary of the API (api/openapi.yaml
 // GET .../summary): one bounded read each, numbers only, counted by the
-// API on its database clock, or by manned-feed from its live picture
-// (never from a stream the browser holds). A tile is drawn only for the role the
+// API on its database clock, or by manned-feed from its live picture as
+// the API asks it (never from a stream the browser holds). A tile is drawn only for the role the
 // operation's x-auth admits (a courtesy to the layout: the API answers
 // 403 to anyone else). Each is read again every READ_PERIOD_MS; an
 // unknown figure is a dash, never a zero, and a read that failed says
@@ -12,6 +12,7 @@ import { useEffect } from "react";
 import { useLang, useT } from "@rootxkit/uspace-ui/i18n";
 import { StatTile, type StatTileStatus } from "@rootxkit/uspace-ui/ui";
 import { OccurrenceIcon, PictureIcon, RequestIcon, UsersIcon } from "../components/icons";
+import type { CallFailure } from "../api/client";
 import { useLoad, type Loaded } from "./context";
 import { timesShown } from "./ui";
 
@@ -29,9 +30,15 @@ function useSummary<T>(load: Parameters<typeof useLoad<T>>[0], key: string): Loa
   return loaded;
 }
 
-/** The status of a tile whose read failed: the figure is not known. */
-function unread(t: ReturnType<typeof useT>, failed: boolean): { status?: StatTileStatus } {
-  return failed ? { status: { tone: "warning", label: t("ansp.overview.kpi.unread") } } : {};
+/**
+ * The status of a tile whose read failed: the figure is not known. A 501
+ * is an operation this API does not serve yet, said as such in a neutral
+ * tone; it is not an outage and never a sign-out (src/api/client.ts).
+ */
+export function unread(t: ReturnType<typeof useT>, failure: CallFailure | null): { status?: StatTileStatus } {
+  if (failure === null) return {};
+  if (failure.status === 501) return { status: { tone: "neutral", label: t("ansp.overview.kpi.not_served") } };
+  return { status: { tone: "warning", label: t("ansp.overview.kpi.unread") } };
 }
 
 /** The console accounts (GET /v1/users/summary, admin only). */
@@ -55,7 +62,7 @@ export function UsersTile() {
                 admins: s.by_role.admin,
               }),
             })}
-        {...unread(t, users.failure !== null)}
+        {...unread(t, users.failure)}
       />
     </div>
   );
@@ -69,7 +76,7 @@ export function RequestsTile() {
   const s = requests.data;
   const status =
     requests.failure !== null || s === null
-      ? unread(t, requests.failure !== null)
+      ? unread(t, requests.failure)
       : {
           status:
             s.received > 0
@@ -97,7 +104,7 @@ export function OccurrencesTile() {
   const t = useT();
   const occurrences = useSummary(async (c) => (await c.GET("/v1/occurrences/summary")).data ?? null, "summary:occurrences");
   const s = occurrences.data;
-  let status = unread(t, occurrences.failure !== null);
+  let status = unread(t, occurrences.failure);
   if (occurrences.failure === null && s !== null) {
     const undelivered = s.by_state.failed + s.by_state.abandoned;
     status = {
@@ -127,15 +134,15 @@ export function OccurrencesTile() {
 
 /**
  * The manned aircraft the live picture holds (GET
- * /v1/manned-traffic/summary on manned-feed, any console role): counted
- * by the feed from the picture, with what is degraded so that an empty
- * picture says why.
+ * /v1/manned-traffic/summary on api, which asks manned-feed; any console
+ * role): counted by the feed from the picture, with what is degraded so
+ * that an empty picture says why.
  */
 export function MannedTile() {
   const t = useT();
   const manned = useSummary(async (c) => (await c.GET("/v1/manned-traffic/summary")).data ?? null, "summary:manned");
   const s = manned.data;
-  let status = unread(t, manned.failure !== null);
+  let status = unread(t, manned.failure);
   if (manned.failure === null && s !== null) {
     status = {
       status:

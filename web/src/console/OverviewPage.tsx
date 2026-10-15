@@ -27,7 +27,7 @@ import { useConsole, useLoad } from "./context";
 import { awaitingCount, groupOf, ordered } from "./inbox";
 import { useInbox } from "./InboxProvider";
 import { adapterCounts, openAlarms, recentRestrictions, restrictionCounts, switchesOff } from "./overview";
-import { MannedTile, OccurrencesTile, RequestsTile, UsersTile } from "./OverviewTiles";
+import { MannedTile, OccurrencesTile, RequestsTile, unread, UsersTile } from "./OverviewTiles";
 import { mayAdminister, maySupervise } from "./roles";
 import { ConsolePageHeader, Empty, Loading, ProblemNotice, StateBadge, Time, timesShown } from "./ui";
 import { useRestrictions } from "./useRestrictions";
@@ -151,14 +151,14 @@ export function OverviewPage() {
             hint={t(`ansp.status.coordination.${inbox.feed.connection}`, timesShown({ since: new Date(inbox.feed.sinceMs).toISOString() }, lang))}
           />
         </div>
-        <div data-testid="kpi-adapters" data-value={byAdapter === null ? "" : byAdapter.running}>
+        <div data-testid="kpi-adapters" data-value={byAdapter === null ? "" : byAdapter.running} data-failure={adapters.failure?.status ?? ""}>
           <StatTile
             className="h-full"
             icon={<AdapterIcon />}
             label={t("ansp.overview.kpi.adapters")}
             value={byAdapter === null ? null : t("ansp.overview.kpi.adapters_value", { running: byAdapter.running, total: byAdapter.total })}
             {...(byAdapter === null
-              ? {}
+              ? unread(t, adapters.failure)
               : {
                   status:
                     byAdapter.disabled + byAdapter.silent > 0
@@ -367,7 +367,12 @@ export function OverviewPage() {
             </dl>
           }
         >
-          {adapters.failure !== null && <ProblemNotice failure={adapters.failure} />}
+          {adapters.failure !== null && adapters.failure.status === 501 && (
+            <p className="m-0 text-sm text-muted-foreground" data-testid="overview-adapters-not-served">
+              {t("ansp.problem.not_served")}
+            </p>
+          )}
+          {adapters.failure !== null && adapters.failure.status !== 501 && <ProblemNotice failure={adapters.failure} />}
           {adapters.data === null && adapters.failure === null && <Loading />}
           {adapters.data !== null && adapters.data.length === 0 && <Empty textKey="ansp.adapters.none" testId="overview-adapters-none" />}
           {adapters.data !== null && adapters.data.length > 0 && (
