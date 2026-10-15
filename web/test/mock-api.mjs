@@ -455,7 +455,7 @@ function mannedStatusFrame() {
       cis_version: "42",
       cis_age_s: 3,
       nats: "connected",
-      relevance: "evaluated against CIS version 42 (synthetic)",
+      relevance: "relevance: CIS version 42, 3 volumes, age 12 s",
     },
     "ansp/manned-feed",
   );
@@ -904,7 +904,7 @@ async function api(req, res, url) {
       by_state: by,
       relevant,
       max_aircraft: 5000,
-      relevance: "evaluated against CIS version 42 (synthetic)",
+      relevance: "relevance: CIS version 42, 3 volumes, age 12 s",
       degraded: state.adapters.some((a) => a.state === "live") ? [] : ["adapters_silent"],
       policy_version: "1",
     });
