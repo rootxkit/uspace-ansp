@@ -33,7 +33,7 @@ type Datums struct {
 // guessed ground could lie below it.
 var ErrTerrainUnavailable = errors.New("terrain unavailable")
 
-// CounterTerrainUnavailable: an AGL limit could not be made absolute
+// CounterTerrainUnavailable counts an AGL limit that could not be made absolute
 // because the ground under the restriction is not known.
 const CounterTerrainUnavailable = "constraint_terrain_unavailable"
 
