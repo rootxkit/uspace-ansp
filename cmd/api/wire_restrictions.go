@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"sync/atomic"
 	"time"
 
@@ -13,6 +15,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/rootxkit/uspace-core/core"
 	"github.com/rootxkit/uspace-core/geoid"
+	"github.com/rootxkit/uspace-core/terrain"
 
 	"github.com/rootxkit/uspace-ansp/internal/auth"
 	"github.com/rootxkit/uspace-ansp/internal/bus"
@@ -67,7 +70,7 @@ type restrictionWiring struct {
 // refused; a file that does not load refuses the start.
 func loadGeoid(cfg config.Config, logger *slog.Logger) (geoid.Undulator, []obs.Check, error) {
 	if cfg.GeoidFile == "" {
-		logger.Warn("no geoid: ANSP_GEOID_FILE is not set; restrictions with AMSL limits are refused 503 geoid_unavailable")
+		logger.Warn("no geoid: ANSP_GEOID_FILE is not set; restrictions with AMSL or AGL limits are refused 503 geoid_unavailable")
 		return nil, nil, nil
 	}
 	grid, err := geoid.LoadMapped(cfg.GeoidFile)
@@ -82,8 +85,37 @@ func loadGeoid(cfg config.Config, logger *slog.Logger) (geoid.Undulator, []obs.C
 	}}}, nil
 }
 
+// loadTerrain opens ANSP_TERRAIN_DIR with uspace-core's terrain store:
+// its index.json read and parsed now, its tiles mapped read-only on first
+// use (terrain.MappedDirOpener, WP-19). It returns the readiness check
+// that names the cells indexed. Without ANSP_TERRAIN_DIR there is no
+// store and no check, and the log says what is refused; an index that
+// does not read or parse refuses the start (a DEM configured and broken
+// is not silently none).
+func loadTerrain(cfg config.Config, logger *slog.Logger) (restriction.Ground, []obs.Check, error) {
+	if cfg.TerrainDir == "" {
+		logger.Warn("no terrain: ANSP_TERRAIN_DIR is not set; an AGL restriction limit that needs an absolute altitude (the F3548 volume, an airspace limit in another reference) is refused 503 terrain_unavailable")
+		return nil, nil, nil
+	}
+	raw, err := os.ReadFile(filepath.Join(cfg.TerrainDir, "index.json"))
+	if err != nil {
+		return nil, nil, core.Fieldf("ANSP_TERRAIN_DIR", "index.json cannot be read: %s", err.Error())
+	}
+	index, err := terrain.ParseIndex(raw)
+	if err != nil {
+		return nil, nil, core.Fieldf("ANSP_TERRAIN_DIR", "index.json does not parse: %s", err.Error())
+	}
+	dem := terrain.NewStore(index, terrain.StoreOptions{OpenTile: terrain.MappedDirOpener(cfg.TerrainDir, 0)})
+	logger.Info("terrain indexed", slog.String("terrain_dir", cfg.TerrainDir), slog.Int("terrain_cells", len(index)))
+	reason := fmt.Sprintf("%d cells indexed", len(index))
+	return dem, []obs.Check{{Name: obs.DepTerrain, Probe: func(context.Context) (obs.State, string) {
+		return obs.StateOK, reason
+	}}}, nil
+}
+
 // wireRestrictions builds the restriction service on the relational
-// database, the bus, the geoid (ANSP_GEOID_FILE) and the CIS projection
+// database, the bus, the geoid (ANSP_GEOID_FILE), the terrain
+// (ANSP_TERRAIN_DIR) and the CIS projection
 // (WP-7; nil is none: every placement is refused 503 cis_stale, and the
 // log and the stream's status say so). Without the database there is
 // nothing to serve and the operations answer 503.
@@ -98,12 +130,16 @@ func wireRestrictions(cfg config.Config, db *store.Relational, b *bus.Bus, sessi
 	if err != nil {
 		return nil, err
 	}
+	ground, terrainChecks, err := loadTerrain(cfg, logger)
+	if err != nil {
+		return nil, err
+	}
 	if airspaces == nil {
 		airspaces = restriction.NoProjection{}
 		logger.Error("no CIS projection: every restriction is refused 503 cis_stale until the uspace_airspace dataset is projected")
 	}
 	svc := &restriction.Service{
-		Repo: store.RestrictionRepo{DB: db}, Airspaces: airspaces, Geoid: g,
+		Repo: store.RestrictionRepo{DB: db}, Airspaces: airspaces, Geoid: g, Ground: ground,
 		Feature: restriction.FeatureConfig{
 			AuthorityName: cfg.AuthorityName, AuthorityService: cfg.AuthorityService,
 			AuthorityEmail: cfg.AuthorityEmail, AuthorityPhone: cfg.AuthorityPhone,
@@ -147,7 +183,7 @@ func wireRestrictions(cfg config.Config, db *store.Relational, b *bus.Bus, sessi
 			return nil, err
 		}
 	}
-	w := &restrictionWiring{api: &restrictionAPI{svc: svc, stream: st}, checks: geoidChecks}
+	w := &restrictionWiring{api: &restrictionAPI{svc: svc, stream: st}, checks: append(geoidChecks, terrainChecks...)}
 	w.run = append(w.run, func(ctx context.Context) {
 		runTicker(ctx, svc, &unpublished, logger)
 	})

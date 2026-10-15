@@ -22,8 +22,8 @@ info:
     millisecond precision; every geometry is GeoJSON in WGS84 (SRID
     4326) with positions [lng, lat]; every distance is in metres and
     every altitude is a number in metres with its reference in a _ref
-    member (AMSL or WGS84; AGL is refused for a dynamic restriction in
-    this release, D3). Every error is application/problem+json in the
+    member (AGL, AMSL or WGS84; an AGL restriction limit is made absolute
+    through the DEM where an absolute altitude is needed, D3). Every error is application/problem+json in the
     one body of the ecosystem (Problem, M28), and every 429 and 503
     carries Retry-After.
 
@@ -255,7 +255,7 @@ components:
             instance: /v1/restrictions
             errors:
               - field: lower_ref
-                reason: AGL is not supported for a dynamic restriction in this release
+                reason: '"QNH" is not AGL, AMSL or WGS84'
     Unauthorized:
       description: No credential, or one that is refused; type names core's counter (rejected_audience, rejected_expired, ...).
       headers:
@@ -1053,11 +1053,19 @@ components:
     VerticalRef:
       type: string
       description: |
-        The vertical reference of a restriction limit: AMSL or WGS84
-        (ellipsoid). AGL is refused for a dynamic restriction in this
-        release (D3, §15 gap 3) with the reason "AGL is not supported for
-        a dynamic restriction in this release".
-      enum: [AMSL, WGS84]
+        The vertical reference of a restriction limit (ED-318
+        CodeVerticalReferenceType; D3, §15 gap 3): AGL (above the ground),
+        AMSL or WGS84 (ellipsoid). A limit is compared with the U-space
+        airspace's directly in the same reference; in another, both are
+        made AMSL over the restriction's area, the restriction's at the
+        highest it reaches and the airspace's at the lowest. The F3548
+        constraint is W84: an AGL lower limit over the lowest ground under
+        the area, an AGL upper limit over the highest, so the volume never
+        shrinks. Where the ground is not known everywhere under the area
+        (ANSP_TERRAIN_DIR) such a conversion is refused 503
+        terrain_unavailable, never guessed. AGL was added in this minor:
+        a consumer that reads limits accepts it.
+      enum: [AGL, AMSL, WGS84]
     ZoneType:
       type: string
       description: The ED-318 zone type of a restriction (D4); the default is the policy's default_zone_type.
@@ -2982,9 +2990,11 @@ paths:
         projection the answer is 503 cis_stale. The window and the area
         are checked against the F3548 constraint limits of uspace-core
         (CstrMaxDurationHours, CstrMaxPlanningHorizonDays, CstrMaxAreaKm2,
-        CstrMaxVertices). Vertical limits are in AMSL or WGS84; AGL is
-        refused with "lower_ref: AGL is not supported for a dynamic
-        restriction in this release" (D3). Idempotency-Key is the
+        CstrMaxVertices). Vertical limits are in AGL, AMSL or WGS84 (D3,
+        VerticalRef): an AGL limit compared with an airspace limit in
+        another reference, and every AGL limit's F3548 volume, need the
+        DEM, and without it the answer is 503 terrain_unavailable.
+        Idempotency-Key is the
         client's reference: a repeat with the same key and body answers
         200 with the restriction first created; with another body, 409.
       security:

@@ -365,8 +365,12 @@ func TestExampleValidationRefusesABrokenExample(t *testing.T) {
 		t.Fatalf("the copy of a valid example is refused: %v", err)
 	}
 	broken["lower_ref"] = "AGL"
+	if err := mt.Schema.Value.VisitJSON(broken); err != nil {
+		t.Fatalf("lower_ref AGL refused (D3, gap 3): %v", err)
+	}
+	broken["lower_ref"] = "QNH"
 	if err := mt.Schema.Value.VisitJSON(broken); err == nil {
-		t.Fatal("lower_ref AGL validated (D3)")
+		t.Fatal("lower_ref QNH validated")
 	}
 	delete(broken, "geometry")
 	broken["lower_ref"] = "AMSL"

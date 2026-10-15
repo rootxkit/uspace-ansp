@@ -22,6 +22,19 @@ func fieldIn(errs []*core.FieldError, field, reason string) bool {
 	return false
 }
 
+// AGL limits are accepted (ED-318 CodeVerticalReferenceType; gap 3),
+// alone and mixed with another reference: the presence twin of the
+// AGL rows of TestValidateRules.
+func TestValidateAcceptsAGL(t *testing.T) {
+	for _, refs := range [][2]core.VerticalRef{{RefAGL, RefAGL}, {RefAGL, RefAMSL}, {RefAMSL, RefAGL}, {RefAGL, RefWGS84}} {
+		in := input(t0, t0.Add(time.Hour))
+		in.LowerRef, in.UpperRef, in.LowerM, in.UpperM = refs[0], refs[1], 0, 100
+		if _, errs := Validate(in, t0); len(errs) != 0 {
+			t.Fatalf("%v refused: %v", refs, errs)
+		}
+	}
+}
+
 // Each rule: the accepted input (presence), then one refusal per rule
 // with its field and reason, everything reported, nothing repaired.
 func TestValidateRules(t *testing.T) {
@@ -34,10 +47,9 @@ func TestValidateRules(t *testing.T) {
 		mutate        func(*Input)
 		field, reason string
 	}{
-		{"AGL lower, the D3 text", func(in *Input) { in.LowerRef = core.RefAGL }, "lower_ref", ReasonAGL},
-		{"AGL upper", func(in *Input) { in.UpperRef = core.RefAGL }, "upper_ref", ReasonAGL},
+		{"AGL lower not below AGL upper", func(in *Input) { in.LowerRef, in.UpperRef, in.LowerM, in.UpperM = RefAGL, RefAGL, 120, 120 }, "upper_m", "not above lower_m"},
 		{"a limit without its reference (D-01)", func(in *Input) { in.UpperRef = "" }, "upper_ref", "without its reference"},
-		{"an unknown reference", func(in *Input) { in.LowerRef = "QNH" }, "lower_ref", "not AMSL or WGS84"},
+		{"an unknown reference", func(in *Input) { in.LowerRef = "QNH" }, "lower_ref", "not AGL, AMSL or WGS84"},
 		{"lower not below upper", func(in *Input) { in.LowerM = 120 }, "upper_m", "not above lower_m"},
 		{"a limit not finite", func(in *Input) { in.UpperM = inf() }, "upper_m", "finite"},
 		{"lower not finite", func(in *Input) { in.LowerM = inf() }, "lower_m", "finite"},
@@ -66,7 +78,7 @@ func TestValidateRules(t *testing.T) {
 	}
 	// Every problem reported at once.
 	bad := ok
-	bad.LowerRef, bad.UpperRef, bad.ReasonText, bad.ZoneType = core.RefAGL, "", "", "USPACE"
+	bad.LowerRef, bad.UpperRef, bad.ReasonText, bad.ZoneType = "QNH", "", "", "USPACE"
 	if _, errs := Validate(bad, t0); len(errs) < 4 {
 		t.Fatalf("not all reported: %v", errs)
 	}
@@ -249,7 +261,8 @@ func TestDecodeReason(t *testing.T) {
 // Placement in the fixture U-space airspace (44.6..45.0 E, 41.6..41.9 N,
 // up to 1500 m AMSL): inside accepted; partly outside, nowhere, an
 // unknown id refused with the M9 reason; upper above the airspace's
-// refused; a different reference is reference_mismatch; with no id the
+// refused; a different reference is converted, and refused without the
+// geoid it needs; with no id the
 // one covering airspace is inferred, several must be chosen.
 func TestPlace(t *testing.T) {
 	ctx := context.Background()
@@ -257,62 +270,65 @@ func TestPlace(t *testing.T) {
 	snap := Snapshot{Version: "42", Airspaces: []ed318.Feature{uspaceFeature("GEOTU01", 1500, RefAMSL)}}
 	tx := memTx{m}
 	in := input(t0, t0.Add(time.Hour))
-	if id, err := Place(ctx, in, snap, tx); err != nil || id != "GEOTU01" {
+	if id, err := Place(ctx, in, snap, tx, Datums{}); err != nil || id != "GEOTU01" {
 		t.Fatalf("inside: %v %v", id, err)
 	}
 	partly := in
 	partly.Shape = Shape{Ring: []core.LatLon{{LatDeg: 41.85, LonDeg: 44.95}, {LatDeg: 41.85, LonDeg: 45.05}, {LatDeg: 41.88, LonDeg: 45.05}, {LatDeg: 41.88, LonDeg: 44.95}, {LatDeg: 41.85, LonDeg: 44.95}}}
-	_, err := Place(ctx, partly, snap, tx)
+	_, err := Place(ctx, partly, snap, tx, Datums{})
 	if rf := refusalOf(t, err); rf.Slug != SlugOutsideUSpace || !hasField(rf, "geometry", "partly outside") {
 		t.Fatalf("partly: %+v", rf)
 	}
 	away := in
 	away.Shape = Shape{Ring: []core.LatLon{{LatDeg: 42.5, LonDeg: 43.0}, {LatDeg: 42.5, LonDeg: 43.1}, {LatDeg: 42.6, LonDeg: 43.1}, {LatDeg: 42.5, LonDeg: 43.0}}}
-	_, err = Place(ctx, away, snap, tx)
+	_, err = Place(ctx, away, snap, tx, Datums{})
 	if rf := refusalOf(t, err); rf.Slug != SlugOutsideUSpace || !hasField(rf, "geometry", "intersects no current USPACE feature") || !strings.Contains(rf.Detail, "M9") {
 		t.Fatalf("away: %+v", rf)
 	}
 	unknown := in
 	unknown.UspaceAirspaceID = "GEOXX99"
-	if rf := refusalOf(t, func() error { _, err := Place(ctx, unknown, snap, tx); return err }()); !hasField(rf, "uspace_airspace_id", "not a current USPACE feature") {
+	if rf := refusalOf(t, func() error { _, err := Place(ctx, unknown, snap, tx, Datums{}); return err }()); !hasField(rf, "uspace_airspace_id", "not a current USPACE feature") {
 		t.Fatalf("unknown: %+v", rf)
 	}
 	high := in
 	high.UpperM = 1600
-	if rf := refusalOf(t, func() error { _, err := Place(ctx, high, snap, tx); return err }()); rf.Slug != SlugInvalid || !hasField(rf, "upper_m", "above the U-space airspace's upper limit") {
+	if rf := refusalOf(t, func() error { _, err := Place(ctx, high, snap, tx, Datums{}); return err }()); rf.Slug != SlugInvalid || !hasField(rf, "upper_m", "above the U-space airspace's upper limit") {
 		t.Fatalf("high: %+v", rf)
 	}
 	other := in
 	other.UpperRef, other.LowerRef = RefWGS84, RefWGS84
-	if rf := refusalOf(t, func() error { _, err := Place(ctx, other, snap, tx); return err }()); rf.Slug != SlugReferenceMismatch || !hasField(rf, "upper_ref", "1500 m AMSL") {
-		t.Fatalf("mismatch: %+v", rf)
+	if rf := refusalOf(t, func() error { _, err := Place(ctx, other, snap, tx, Datums{}); return err }()); rf.Status != 503 || rf.Slug != SlugGeoidUnavailable {
+		t.Fatalf("another reference without a geoid: %+v", rf)
+	}
+	if _, err := Place(ctx, other, snap, tx, Datums{Geoid: gridGeoid{}}); err != nil {
+		t.Fatalf("another reference with a geoid: %v", err)
 	}
 	inferred := in
 	inferred.UspaceAirspaceID = ""
-	if id, err := Place(ctx, inferred, snap, tx); err != nil || id != "GEOTU01" {
+	if id, err := Place(ctx, inferred, snap, tx, Datums{}); err != nil || id != "GEOTU01" {
 		t.Fatalf("inferred: %v %v", id, err)
 	}
 	two := Snapshot{Version: "43", Airspaces: []ed318.Feature{uspaceFeature("GEOTU01", 1500, RefAMSL), uspaceFeature("GEOTU02", 1500, RefAMSL)}}
-	if rf := refusalOf(t, func() error { _, err := Place(ctx, inferred, two, tx); return err }()); !hasField(rf, "uspace_airspace_id", "GEOTU01, GEOTU02") {
+	if rf := refusalOf(t, func() error { _, err := Place(ctx, inferred, two, tx, Datums{}); return err }()); !hasField(rf, "uspace_airspace_id", "GEOTU01, GEOTU02") {
 		t.Fatalf("two: %+v", rf)
 	}
 	// An unlimited airspace (no upper) admits any upper limit; feet are
 	// converted for the comparison.
 	unlimited := uspaceFeature("GEOTU01", 0, RefAMSL)
 	unlimited.Geometry.Layer.Upper = nil
-	if _, err := Place(ctx, high, Snapshot{Airspaces: []ed318.Feature{unlimited}}, tx); err != nil {
+	if _, err := Place(ctx, high, Snapshot{Airspaces: []ed318.Feature{unlimited}}, tx, Datums{}); err != nil {
 		t.Fatalf("unlimited: %v", err)
 	}
 	feet := uspaceFeature("GEOTU01", 5000, RefAMSL)
 	ft := ed318.UomFeet
 	feet.Geometry.Layer.Uom = &ft
-	if _, err := Place(ctx, high, Snapshot{Airspaces: []ed318.Feature{feet}}, tx); err == nil {
+	if _, err := Place(ctx, high, Snapshot{Airspaces: []ed318.Feature{feet}}, tx, Datums{}); err == nil {
 		t.Fatal("1600 m above 5000 ft (1524 m)")
 	}
 	// A non-USPACE feature never places a restriction.
 	zone := uspaceFeature("GEOTU01", 1500, RefAMSL)
 	zone.Properties.Type = core.ZoneProhibited
-	if _, err := Place(ctx, in, Snapshot{Airspaces: []ed318.Feature{zone}}, tx); err == nil {
+	if _, err := Place(ctx, in, Snapshot{Airspaces: []ed318.Feature{zone}}, tx, Datums{}); err == nil {
 		t.Fatal("placed in a zone that is not U-space")
 	}
 }
@@ -343,7 +359,7 @@ func TestAirspaceParts(t *testing.T) {
 	if _, err := airspaceParts(&circ); err == nil {
 		t.Fatal("a line")
 	}
-	if _, err := Place(context.Background(), Input{Shape: box(), UspaceAirspaceID: "GEOTU01"}, Snapshot{Airspaces: []ed318.Feature{circ}}, memTx{newMemRepo(t0)}); err == nil {
+	if _, err := Place(context.Background(), Input{Shape: box(), UspaceAirspaceID: "GEOTU01"}, Snapshot{Airspaces: []ed318.Feature{circ}}, memTx{newMemRepo(t0)}, Datums{}); err == nil {
 		t.Fatal("an airspace that cannot be measured")
 	}
 }

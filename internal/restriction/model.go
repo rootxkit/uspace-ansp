@@ -49,9 +49,11 @@ const (
 // EventType is the audit event of op (internal/audit: snake_case).
 func (op Op) EventType() string { return "restriction_" + string(op) }
 
-// The vertical references a restriction limit may have (D3): AGL is
-// refused with ReasonAGL.
+// The vertical references a restriction limit may have (D3, ED-318
+// CodeVerticalReferenceType). An AGL limit is made absolute through the
+// DEM where an absolute altitude is needed (Datums, gap 3).
 const (
+	RefAGL   = core.RefAGL
 	RefAMSL  = core.RefAMSL
 	RefWGS84 = core.RefWGS84
 )

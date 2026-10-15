@@ -16,9 +16,6 @@ import (
 	"github.com/rootxkit/uspace-core/geodesy"
 )
 
-// ReasonAGL is the D3 refusal of an AGL limit, word for word.
-const ReasonAGL = "AGL is not supported for a dynamic restriction in this release"
-
 // MaxReasonChars bounds reason_text: it becomes the feature's name and
 // message, ED-318 textShortType (200 characters).
 const MaxReasonChars = MaxTextChars
@@ -62,6 +59,7 @@ const (
 	SlugReferenceMismatch  = "reference_mismatch"
 	SlugCISStale           = "cis_stale"
 	SlugGeoidUnavailable   = "geoid_unavailable"
+	SlugTerrainUnavailable = "terrain_unavailable"
 	SlugIllegalTransition  = "illegal_transition"
 	SlugIdempotency        = "idempotency_conflict"
 	SlugNotFound           = "not_found"
@@ -197,7 +195,7 @@ func ParseShape(raw json.RawMessage, radiusM *float64) (Shape, []*core.FieldErro
 }
 
 // Validate checks in against the rules that need no database: zone
-// type, limits and their references (D3, D-01), the window against the
+// type, limits and their references (D3, D-01: AGL, AMSL or WGS84), the window against the
 // F3548 limits at now (the database's clock), reason_text, and the
 // shape as ED-318 holds it (ed318.Parse of the feature it would make:
 // the antimeridian, ring and circle rules live there). Every problem is
@@ -228,14 +226,12 @@ func verticalErrors(in Input) []*core.FieldError {
 	var errs []*core.FieldError
 	ref := func(field string, r core.VerticalRef) bool {
 		switch r {
-		case RefAMSL, RefWGS84:
+		case RefAGL, RefAMSL, RefWGS84:
 			return true
 		case "":
 			errs = append(errs, core.Fieldf(field, "is required: a limit without its reference is refused (D-01)"))
-		case core.RefAGL:
-			errs = append(errs, core.Fieldf(field, "%s", ReasonAGL))
 		default:
-			errs = append(errs, core.Fieldf(field, "%q is not AMSL or WGS84", string(r)))
+			errs = append(errs, core.Fieldf(field, "%q is not AGL, AMSL or WGS84", string(r)))
 		}
 		return false
 	}

@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -120,6 +121,8 @@ type restrictionWire struct {
 	ActivatedBy string          `json:"activated_by"`
 	Feature     json.RawMessage `json:"feature"`
 	CISVersion  *string         `json:"cis_version"`
+	LowerRef    string          `json:"lower_ref"`
+	UpperRef    string          `json:"upper_ref"`
 }
 
 // The done-when of WP-5 through the HTTP API, against real PostgreSQL +
@@ -140,7 +143,7 @@ func TestIntegrationRestrictionLifecycleOverHTTP(t *testing.T) {
 	env := []string{"ANSP_PROCESS=" + process, "ANSP_MTLS_MODE=off", "ANSP_RELATIONAL_DSN=" + rel, "ANSP_NATS_URL=" + natsURL,
 		"ANSP_SESSION_KEY_FILE=" + sk, "ANSP_SECRETS_KEY_FILE=" + sec, "ANSP_PUBLIC_BASE_URL=https://ansp.test",
 		"ANSP_AUDIENCES=ansp.test,ansp-api", "ANSP_BOOTSTRAP_ADMIN_USERNAME=root", "ANSP_BOOTSTRAP_ADMIN_PASSWORD_FILE=" + pwFile,
-		"ANSP_AUTHORITY_NAME=Test ANSP"}
+		"ANSP_AUTHORITY_NAME=Test ANSP", "ANSP_GEOID_FILE=" + writeGeoid(t), "ANSP_TERRAIN_DIR=" + writeTerrain(t)}
 	if creds := os.Getenv("ANSP_NATS_CREDS"); creds != "" {
 		env = append(env, "ANSP_NATS_CREDS="+creds)
 	}
@@ -279,11 +282,44 @@ func TestIntegrationRestrictionLifecycleOverHTTP(t *testing.T) {
 		t.Fatalf("conflict: %d %s", code, out)
 	}
 	// A refusal reads back as errors[] with the field and the type slug.
-	agl := bytes.Replace(raw, []byte(`"lower_ref":"WGS84"`), []byte(`"lower_ref":"AGL"`), 1)
-	if code, out := c.do(http.MethodPost, "/v1/restrictions", watch, map[string]string{"Idempotency-Key": "console-wp5-2"}, agl); code != http.StatusBadRequest ||
+	qnh := bytes.Replace(raw, []byte(`"lower_ref":"WGS84"`), []byte(`"lower_ref":"QNH"`), 1)
+	if code, out := c.do(http.MethodPost, "/v1/restrictions", watch, map[string]string{"Idempotency-Key": "console-wp5-2"}, qnh); code != http.StatusBadRequest ||
 		!strings.Contains(string(out), `"type":"https://schemas.uspace.ge/problems/restriction_invalid"`) ||
-		!strings.Contains(string(out), `{"field":"lower_ref","reason":"AGL is not supported for a dynamic restriction in this release"}`) {
-		t.Fatalf("AGL: %d %s", code, out)
+		!strings.Contains(string(out), `{"field":"lower_ref","reason":"\"QNH\" is not AGL, AMSL or WGS84"}`) {
+		t.Fatalf("QNH: %d %s", code, out)
+	}
+	// An AGL restriction (gap 3) in the WGS84 airspace is placed through
+	// the DEM and the geoid and stored as AGL (migration 0072): its
+	// feature keeps AGL, its constraint is W84 from the lowest ground plus
+	// the least undulation to the highest ground plus 120 m plus the
+	// greatest (the test DEM is 600..620 m under it, the geoid 20 m).
+	agl := bytes.Replace(bytes.Replace(raw, []byte(`"lower_ref":"WGS84"`), []byte(`"lower_ref":"AGL"`), 1), []byte(`"upper_ref":"WGS84"`), []byte(`"upper_ref":"AGL"`), 1)
+	code, out = c.do(http.MethodPost, "/v1/restrictions", watch, map[string]string{"Idempotency-Key": "console-agl-1"}, agl)
+	var ar restrictionWire
+	if code != http.StatusCreated || json.Unmarshal(out, &ar) != nil || ar.LowerRef != "AGL" || ar.UpperRef != "AGL" {
+		t.Fatalf("AGL plan: %d %s", code, out)
+	}
+	validateResponse(t, http.MethodPost, "/v1/restrictions", code, out)
+	if !strings.Contains(string(ar.Feature), `"lowerReference":"AGL"`) || !strings.Contains(string(ar.Feature), `"upperReference":"AGL"`) {
+		t.Fatalf("AGL feature: %s", ar.Feature)
+	}
+	var aglRaw []byte
+	if err := db.Do(ctx, func(ctx context.Context, q relational.DBTX, _ *relational.Queries) error {
+		return q.QueryRow(ctx, `SELECT "constraint" FROM restriction_versions WHERE restriction_id = $1 AND version = 1`, ar.ID).Scan(&aglRaw)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var aglConstraint restriction.StoredConstraint
+	if err := json.Unmarshal(aglRaw, &aglConstraint); err != nil || len(aglConstraint.Details.Volumes) != 1 {
+		t.Fatalf("AGL constraint: %v %s", err, aglRaw)
+	}
+	near := func(a, b float64) bool { return math.Abs(a-b) < 1e-6 }
+	if v := aglConstraint.Details.Volumes[0].Volume; !near(v.AltitudeLower.Value, 620) || !near(v.AltitudeUpper.Value, 760) ||
+		!near(*aglConstraint.Derivation.LowerGroundM, 600) || !near(*aglConstraint.Derivation.UpperGroundM, 620) {
+		t.Fatalf("AGL volume %+v %+v, want 620..760 m W84", v, aglConstraint.Derivation)
+	}
+	if code, out := c.do(http.MethodPost, "/v1/restrictions/"+ar.ID+"/activate", watch, nil, map[string]string{"reason": "rescue helicopter on scene"}); code != http.StatusOK || !strings.Contains(string(out), `"state":"active"`) {
+		t.Fatalf("AGL activate: %d %s", code, out)
 	}
 
 	// The key uspace-lab's runner sent in ussp-wp12-restriction (its

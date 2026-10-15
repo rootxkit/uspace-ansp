@@ -188,10 +188,15 @@ type Config struct {
 	Country      string `env:"ANSP_COUNTRY" default:"GEO"`
 
 	// api (WP-5): the GeographicLib geoid grid that makes a restriction's
-	// AMSL limits W84 for its F3548 constraint (empty: AMSL restrictions
-	// are refused with geoid_unavailable), and the zone authority every
-	// restriction feature names (branding is configuration).
+	// AMSL and AGL limits W84 for its F3548 constraint (empty: they are
+	// refused with geoid_unavailable); the DEM directory (index.json and
+	// one <cell>.pgm per fetched cell, the lab fetch tool's layout) that
+	// makes AGL limits AMSL (gap 3; empty: an AGL limit that needs an
+	// absolute altitude is refused with terrain_unavailable); and the
+	// zone authority every restriction feature names (branding is
+	// configuration).
 	GeoidFile        string `env:"ANSP_GEOID_FILE"`
+	TerrainDir       string `env:"ANSP_TERRAIN_DIR"`
 	AuthorityName    string `env:"ANSP_AUTHORITY_NAME" default:"ANSP"`
 	AuthorityService string `env:"ANSP_AUTHORITY_SERVICE"`
 	AuthorityEmail   string `env:"ANSP_AUTHORITY_EMAIL"`
