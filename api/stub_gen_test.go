@@ -291,6 +291,12 @@ func (s exampleStub) CreateUser(_ context.Context, request gen.CreateUserRequest
 
 func (c canned) VisitCreateUserResponse(w http.ResponseWriter) error { return c.visit(w) }
 
+func (s exampleStub) GetUserSummary(_ context.Context, request gen.GetUserSummaryRequestObject) (gen.GetUserSummaryResponseObject, error) {
+	return s.answer("getUserSummary", request), nil
+}
+
+func (c canned) VisitGetUserSummaryResponse(w http.ResponseWriter) error { return c.visit(w) }
+
 func (s exampleStub) DisableUser(_ context.Context, request gen.DisableUserRequestObject) (gen.DisableUserResponseObject, error) {
 	return s.answer("disableUser", request), nil
 }

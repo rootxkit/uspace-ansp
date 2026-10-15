@@ -8,22 +8,31 @@
 import { expect, test, type APIRequestContext, type Page } from "@playwright/test";
 import { typeVertices } from "./outline";
 
-// The mock's test account and code (test/mock-api.mjs), not credentials.
+// The mock's test accounts and code (test/mock-api.mjs), not credentials.
 const SUPER = { username: "super1", password: "super1-test-password" };
+const ADMIN = { username: "admin1", password: "admin1-test-password" };
+const VIEWER = { username: "viewer1", password: "viewer1-test-password" };
 const CODE = "246810";
 
 async function control(request: APIRequestContext, path: string, data: Record<string, unknown>) {
   expect((await request.post(path, { data })).ok()).toBe(true);
 }
 
-async function signIn(page: Page) {
+/** Signs in; super1 enrols at its first sign-in, the others are enrolled. */
+async function signIn(page: Page, who = SUPER) {
   await page.goto("/en/login");
-  await page.getByLabel("Username").fill(SUPER.username);
-  await page.getByLabel("Password").fill(SUPER.password);
+  await page.getByLabel("Username").fill(who.username);
+  await page.getByLabel("Password").fill(who.password);
   await page.getByTestId("login-submit").click();
-  await expect(page.getByTestId("enrolment-qr")).toBeVisible();
+  if (who === SUPER) await expect(page.getByTestId("enrolment-qr")).toBeVisible();
   await page.getByLabel(/Code from your authenticator/).fill(CODE);
   await page.getByTestId("login-submit").click();
+  await expect(page).toHaveURL(/\/en\/overview$/);
+}
+
+/** The status of a call through the BFF from the page (its cookies, same origin). */
+async function bffStatus(page: Page, path: string, method = "GET"): Promise<number> {
+  return page.evaluate(async ([p, m]) => (await fetch(`/_bff/api${p}`, { method: m })).status, [path, method] as const);
 }
 
 test.beforeEach(async ({ request }) => {
@@ -54,6 +63,9 @@ test("the overview is the page after sign-in and its figures follow the API", as
   await expect(page.locator('[data-testid="overview-sources"] [data-adapter="sbs-1"]')).toContainText("Disabled");
   await expect(page.locator('[data-testid="overview-sources"] [data-adapter="json-1"]')).toContainText("Silent");
   await expect(page.getByTestId("kpi-cis")).toHaveAttribute("data-value", /^\d+$/);
+  // The accounts are an admin's: no tile, and the API refuses the summary.
+  await expect(page.getByTestId("kpi-users")).toHaveCount(0);
+  expect(await bffStatus(page, "/v1/users/summary")).toBe(403);
 
   // A notice received: awaiting, in the figure, the sidebar and the list; escalated: said so.
   await control(request, "/__mock/notice", { ack_id: "01K6P0N0000000000000000001", kind: "nonconformance", received_at: "2026-10-02T12:00:00.000Z" });
@@ -103,4 +115,31 @@ test("the overview is the page after sign-in and its figures follow the API", as
   await expect(page.getByTestId("kpi-alarms")).toHaveAttribute("data-value", "0");
   await expect(page.getByTestId("overview-alarms-none")).toBeVisible();
   await expect(page.getByTestId("kpi-active")).toHaveAttribute("data-value", "1");
+});
+
+test("the admin's overview counts the console accounts; nobody else is shown or served them", async ({ page, request }) => {
+  await signIn(page, ADMIN);
+  const users = page.getByTestId("kpi-users");
+  await expect(users).toHaveAttribute("data-value", "3");
+  await expect(users).toContainText("Active console accounts");
+  await expect(users).toContainText("0 disabled, 1 admins, 3 in all");
+  // The tile names no account: counts only.
+  await expect(users).not.toContainText("admin1");
+  await control(request, "/__mock/account", { username: "viewer1", status: "disabled" });
+  await page.reload();
+  await expect(users).toHaveAttribute("data-value", "2");
+  await expect(users).toContainText("1 disabled, 1 admins, 3 in all");
+  // The BFF forwards that one path for GET and nothing else.
+  expect(await bffStatus(page, "/v1/users/summary")).toBe(200);
+  expect(await bffStatus(page, "/v1/users/summary", "POST")).toBe(405);
+  expect(await bffStatus(page, "/v1/users")).toBe(404);
+  // Without a session the API answers 401 through the BFF.
+  expect((await request.get("/_bff/api/v1/users/summary")).status()).toBe(401);
+});
+
+test("a viewer's overview has no accounts tile and the API refuses it the summary", async ({ page }) => {
+  await signIn(page, VIEWER);
+  await expect(page.getByTestId("kpi-active")).toHaveAttribute("data-value", "0");
+  await expect(page.getByTestId("kpi-users")).toHaveCount(0);
+  expect(await bffStatus(page, "/v1/users/summary")).toBe(403);
 });

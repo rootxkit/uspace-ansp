@@ -50,6 +50,14 @@ export const API_MFA_PATH = "/v1/auth/mfa";
 export const API_LOGOUT_PATH = "/v1/auth/logout";
 
 /**
+ * The overview's summaries (api/openapi.yaml, one tile each), each one
+ * exact path that the proxy forwards for GET only: another method on
+ * one of them is 405 before any upstream call, and a longer or shorter
+ * path is not on the list. The API's x-auth decides who reads each.
+ */
+export const SUMMARY_READS: readonly RegExp[] = [/^\/v1\/users\/summary$/];
+
+/**
  * What the proxy may reach: the console's operations and nothing else.
  * /v1/auth/me is the only auth operation on it; login, mfa and logout
  * go through their own routes.
@@ -60,6 +68,7 @@ export const PROXY_ALLOW_PATHS: RegExp[] = [
   /^\/v1\/(occurrences|policy|audit)$/,
   /^\/v1\/outlines\/circle$/,
   /^\/v1\/auth\/me$/,
+  ...SUMMARY_READS,
 ];
 
 /** The header the plan and the occurrence report take, and its shape (api/openapi.yaml IdempotencyKey). */
@@ -163,11 +172,17 @@ export function createBff(cfg: BffConfig): Bff {
 
   // The kit's proxy forwards the client's Idempotency-Key (uspace-ui
   // 1.0.0). The console keeps its narrower rule: a key of the contract's
-  // shape on an operation that takes one, and no key anywhere else.
+  // shape on an operation that takes one, and no key anywhere else. A
+  // summary is read with GET and nothing else.
   const proxy: Handler = (req) => {
+    const apiPath = req.nextUrl.pathname.startsWith(`${BFF_API_PREFIX}/`) ? req.nextUrl.pathname.slice(BFF_API_PREFIX.length) : null;
+    if (apiPath !== null && req.method !== "GET" && SUMMARY_READS.some((p) => p.test(apiPath))) {
+      const res = problem(405, "method_not_allowed", "Method not allowed", "a summary is read with GET only");
+      res.headers.set("Allow", "GET");
+      return Promise.resolve(res);
+    }
     const key = req.headers.get(IDEMPOTENCY_HEADER);
     if (key === null) return kit.proxy(req);
-    const apiPath = req.nextUrl.pathname.startsWith(`${BFF_API_PREFIX}/`) ? req.nextUrl.pathname.slice(BFF_API_PREFIX.length) : null;
     const takesKey = apiPath !== null && IDEMPOTENT_OPERATIONS.some((o) => o.method === req.method && o.path.test(apiPath));
     return kit.proxy(takesKey && IDEMPOTENCY_KEY.test(key) ? req : withoutIdempotencyKey(req));
   };

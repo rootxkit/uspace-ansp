@@ -26,6 +26,23 @@ type User struct {
 	LastLoginAt  *time.Time
 }
 
+// UserCounts is the accounts counted by status and role (GET
+// /v1/users/summary): numbers only, no username or id.
+type UserCounts struct {
+	// CountedAt is the database clock at the count.
+	CountedAt time.Time
+	Total     int64
+	Active    int64
+	Disabled  int64
+	// By role.
+	WatchSupervisor int64
+	Viewer          int64
+	Admin           int64
+	// Truncated: more than the limit exist; the counts are of the
+	// first limit accounts.
+	Truncated bool
+}
+
 // MFA is a row of user_mfa: the sealed TOTP secret, whether the
 // enrolment is confirmed, and the last time step accepted.
 type MFA struct {
@@ -98,6 +115,9 @@ type Store interface {
 	TouchSession(ctx context.Context, jti string) error
 	// Users lists at most limit accounts by username.
 	Users(ctx context.Context, limit int) ([]User, error)
+	// UserCounts counts at most limit accounts by status and role in
+	// one read, on the database clock; Truncated says more exist.
+	UserCounts(ctx context.Context, limit int) (UserCounts, error)
 	// RecordClientsSeen upserts oauth_clients_seen at the database
 	// clock.
 	RecordClientsSeen(ctx context.Context, seen []ClientSeen) error

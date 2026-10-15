@@ -34,6 +34,9 @@ const (
 	MinPasswordChars = 12
 	// MaxUsersListed bounds GET /v1/users.
 	MaxUsersListed = 1000
+	// MaxUsersCounted bounds GET /v1/users/summary: the accounts it
+	// reads, as GET /v1/users lists them.
+	MaxUsersCounted = MaxUsersListed
 	// touchEvery bounds the writes of last_seen_at to one a minute per
 	// session.
 	touchEvery = time.Minute
@@ -865,6 +868,48 @@ func (s *Accounts) Users(ctx context.Context) ([]UserView, error) {
 		out = append(out, viewOf(us[i]))
 	}
 	return out, nil
+}
+
+// UserSummary is the answer of GET /v1/users/summary
+// (api/openapi.yaml UserSummary): counts, never a name.
+type UserSummary struct {
+	CountedAt string           `json:"counted_at"`
+	Total     int64            `json:"total"`
+	ByStatus  UserStatusCounts `json:"by_status"`
+	ByRole    UserRoleCounts   `json:"by_role"`
+	Truncated bool             `json:"truncated"`
+}
+
+// UserStatusCounts are the accounts by status.
+type UserStatusCounts struct {
+	Active   int64 `json:"active"`
+	Disabled int64 `json:"disabled"`
+}
+
+// UserRoleCounts are the accounts by role.
+type UserRoleCounts struct {
+	WatchSupervisor int64 `json:"watch_supervisor"`
+	Viewer          int64 `json:"viewer"`
+	Admin           int64 `json:"admin"`
+}
+
+// summaryTime is the contract's Timestamp: UTC, milliseconds, Z.
+const summaryTime = "2006-01-02T15:04:05.000Z"
+
+// UserSummary counts the accounts (admin) by status and role, at most
+// MaxUsersCounted, on the database clock.
+func (s *Accounts) UserSummary(ctx context.Context) (UserSummary, error) {
+	c, err := s.store.UserCounts(ctx, MaxUsersCounted)
+	if err != nil {
+		return UserSummary{}, fmt.Errorf("count users: %w", err)
+	}
+	return UserSummary{
+		CountedAt: c.CountedAt.UTC().Format(summaryTime),
+		Total:     c.Total,
+		ByStatus:  UserStatusCounts{Active: c.Active, Disabled: c.Disabled},
+		ByRole:    UserRoleCounts{WatchSupervisor: c.WatchSupervisor, Viewer: c.Viewer, Admin: c.Admin},
+		Truncated: c.Truncated,
+	}, nil
 }
 
 func notFoundUser() error { return refusal(http.StatusNotFound, SlugNotFound, "no such account") }

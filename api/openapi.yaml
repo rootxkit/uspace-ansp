@@ -2176,6 +2176,47 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/User"
+    UserSummary:
+      type: object
+      description: |
+        The console accounts counted, never listed: no username, no id,
+        no time of a sign-in (01 §4). counted_at is the database clock.
+        At most MaxUsersCounted (1000, the bound of GET /v1/users)
+        accounts are counted; truncated says there were more.
+      required: [counted_at, total, by_status, by_role, truncated]
+      properties:
+        counted_at:
+          $ref: "#/components/schemas/Timestamp"
+        total:
+          type: integer
+          minimum: 0
+        by_status:
+          type: object
+          additionalProperties: false
+          required: [active, disabled]
+          properties:
+            active:
+              type: integer
+              minimum: 0
+            disabled:
+              type: integer
+              minimum: 0
+        by_role:
+          type: object
+          additionalProperties: false
+          required: [watch_supervisor, viewer, admin]
+          properties:
+            watch_supervisor:
+              type: integer
+              minimum: 0
+            viewer:
+              type: integer
+              minimum: 0
+            admin:
+              type: integer
+              minimum: 0
+        truncated:
+          type: boolean
     UserCreate:
       type: object
       required: [username, password, role]
@@ -4546,6 +4587,46 @@ paths:
           $ref: "#/components/responses/Conflict"
         "413":
           $ref: "#/components/responses/TooLarge"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+
+  /v1/users/summary:
+    get:
+      operationId: getUserSummary
+      tags: [auth]
+      summary: How many console accounts there are
+      x-process: api
+      x-spec: 01 §4 users, 06 §3
+      x-auth: session:admin
+      description: |
+        The console accounts counted by status and by role, for the
+        overview's tile (01 §4): counts only, no username or id. One
+        bounded read on the database clock (counted_at); truncated says
+        there were more accounts than were counted.
+      security:
+        - consoleSession: []
+      responses:
+        "200":
+          description: The counts.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserSummary"
+              example:
+                counted_at: "2026-10-02T12:10:00.000Z"
+                total: 4
+                by_status:
+                  active: 3
+                  disabled: 1
+                by_role:
+                  watch_supervisor: 2
+                  viewer: 1
+                  admin: 1
+                truncated: false
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "503":
           $ref: "#/components/responses/Unavailable"
 

@@ -34,6 +34,8 @@
 //                                         and its source/status/v1 in sources[])
 //   POST /__mock/notice {...}             a coordination notice received (or changed); one frame
 //   POST /__mock/escalate {ack_id}        the inbox ticker's escalation of a notice; one frame
+//   POST /__mock/account {username, status}
+//                                         an account disabled or active again (the users summary)
 //
 // Accounts (test data, not credentials of anything): super1 (watch
 // supervisor; no authenticator until its first sign-in, so the enrolment
@@ -255,7 +257,7 @@ function issueSession(account) {
 }
 
 function user(a) {
-  return { id: a.id, username: a.username, role: a.role, status: "active", created_at: "2026-09-30T08:00:00.000Z", last_login_at: null };
+  return { id: a.id, username: a.username, role: a.role, status: a.status ?? "active", created_at: "2026-09-30T08:00:00.000Z", last_login_at: null };
 }
 
 // ---- restrictions -------------------------------------------------------
@@ -845,6 +847,19 @@ async function api(req, res, url) {
     audit(session.account, "ansp_policy", String(state.policy.policy_version), "policy_updated", "threshold change (INV-03)", state.policy);
     return json(res, 200, state.policy);
   }
+  // GET /v1/users/summary (admin): the accounts counted, no name.
+  if (path === "/v1/users/summary" && req.method === "GET") {
+    if (adminOnly()) return;
+    const accounts = Object.values(state.accounts);
+    const count = (pred) => accounts.filter(pred).length;
+    return json(res, 200, {
+      counted_at: iso(),
+      total: accounts.length,
+      by_status: { active: count((a) => a.status !== "disabled"), disabled: count((a) => a.status === "disabled") },
+      by_role: { watch_supervisor: count((a) => a.role === SUPERVISOR), viewer: count((a) => a.role === "viewer"), admin: count((a) => a.role === ADMIN) },
+      truncated: false,
+    });
+  }
   if (path === "/v1/audit" && req.method === "GET") {
     if (adminOnly()) return;
     const entity = url.searchParams.get("entity");
@@ -960,6 +975,12 @@ async function control(req, res, path) {
     state.notices = [...state.notices.filter((x) => x.ack_id !== n.ack_id), n];
     broadcast(noticeFrame(n), "coordination");
     return json(res, 200, n);
+  }
+  if (path === "/__mock/account") {
+    const a = state.accounts[input.username];
+    if (a === undefined) return json(res, 404, { error: "unknown account" });
+    a.status = input.status;
+    return json(res, 200, user(a));
   }
   if (path === "/__mock/escalate") {
     const n = state.notices.find((x) => x.ack_id === input.ack_id);

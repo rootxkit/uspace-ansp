@@ -16,6 +16,23 @@ SELECT * FROM users WHERE id = sqlc.arg(id) FOR UPDATE;
 -- name: ListUsers :many
 SELECT * FROM users ORDER BY username LIMIT sqlc.arg(max_rows);
 
+-- name: UserCounts :one
+-- The accounts counted by status and role for GET /v1/users/summary, on
+-- the database clock: at most max_rows rows are read (the users table is
+-- small, but every count here is bounded), and truncated says that more
+-- exist (an OFFSET over the primary key, also bounded). Counts only; no
+-- username or id leaves the query.
+SELECT
+    clock_timestamp()::timestamptz                                 AS counted_at,
+    count(*)::bigint                                               AS total,
+    count(*) FILTER (WHERE b.status = 'active')::bigint            AS active,
+    count(*) FILTER (WHERE b.status = 'disabled')::bigint          AS disabled,
+    count(*) FILTER (WHERE b.role = 'watch_supervisor')::bigint    AS watch_supervisor,
+    count(*) FILTER (WHERE b.role = 'viewer')::bigint              AS viewer,
+    count(*) FILTER (WHERE b.role = 'admin')::bigint               AS admin,
+    EXISTS (SELECT 1 FROM users ORDER BY id OFFSET sqlc.arg(max_rows)::int LIMIT 1) AS truncated
+FROM (SELECT role, status FROM users ORDER BY id LIMIT sqlc.arg(max_rows)::int) b;
+
 -- name: CountUsers :one
 SELECT count(*) FROM users;
 

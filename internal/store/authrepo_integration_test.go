@@ -429,3 +429,44 @@ func mustRing(t *testing.T) *coreauth.KeyRing {
 	}
 	return r
 }
+
+// UserCounts as ansp_app: the accounts by status and role on the
+// database clock in one statement; past its limit it counts limit rows
+// and says truncated (the twin under the limit says not truncated); an
+// empty table is all zeros with a time, never no answer.
+func TestIntegrationUserCounts(t *testing.T) {
+	ctx := ctxT(t)
+	w := newAuthWorld(t)
+	c, err := w.repo.UserCounts(ctx, auth.MaxUsersCounted)
+	if err != nil || c.Total != 0 || c.Truncated || c.CountedAt.IsZero() {
+		t.Fatalf("empty: %+v %v", c, err)
+	}
+	if _, err := w.accounts.Bootstrap(ctx, "root", authPW); err != nil {
+		t.Fatal(err)
+	}
+	v, err := w.accounts.CreateUser(ctx, auth.Principal{}, "view1", authPW, auth.RoleViewer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.accounts.CreateUser(ctx, auth.Principal{}, "watch1", authPW, auth.RoleWatchSupervisor); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.accounts.Disable(ctx, auth.Principal{}, v.ID); err != nil {
+		t.Fatal(err)
+	}
+	before := scalar[time.Time](t, w.dsn, `SELECT clock_timestamp()`)
+	c, err = w.repo.UserCounts(ctx, auth.MaxUsersCounted)
+	after := scalar[time.Time](t, w.dsn, `SELECT clock_timestamp()`)
+	want := auth.UserCounts{CountedAt: c.CountedAt, Total: 3, Active: 2, Disabled: 1, WatchSupervisor: 1, Viewer: 1, Admin: 1}
+	if err != nil || c != want || c.CountedAt.Before(before) || c.CountedAt.After(after) {
+		t.Fatalf("counts %+v %v, want %+v between %v and %v", c, err, want, before, after)
+	}
+	c, err = w.repo.UserCounts(ctx, 2)
+	if err != nil || c.Total != 2 || !c.Truncated {
+		t.Fatalf("past the limit: %+v %v", c, err)
+	}
+	c, err = w.repo.UserCounts(ctx, 3)
+	if err != nil || c.Total != 3 || c.Truncated {
+		t.Fatalf("at the limit: %+v %v", c, err)
+	}
+}

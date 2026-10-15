@@ -69,6 +69,7 @@ var Operations = []Operation{
 	{ID: "setSourceControl", Method: "PUT", Path: "/v1/sources/{type}/{instance}", Pattern: "PUT /v1/sources/{type}/{instance}", Tag: "sources", Process: "api", Spec: "04 §3.6, U-15", Auth: "session:admin", WebSocket: false},
 	{ID: "listUsers", Method: "GET", Path: "/v1/users", Pattern: "GET /v1/users", Tag: "auth", Process: "api", Spec: "01 §4 users, 06 §3", Auth: "session:admin", WebSocket: false},
 	{ID: "createUser", Method: "POST", Path: "/v1/users", Pattern: "POST /v1/users", Tag: "auth", Process: "api", Spec: "01 §4 users, 06 §3", Auth: "session:admin", WebSocket: false},
+	{ID: "getUserSummary", Method: "GET", Path: "/v1/users/summary", Pattern: "GET /v1/users/summary", Tag: "auth", Process: "api", Spec: "01 §4 users, 06 §3", Auth: "session:admin", WebSocket: false},
 	{ID: "disableUser", Method: "POST", Path: "/v1/users/{id}/disable", Pattern: "POST /v1/users/{id}/disable", Tag: "auth", Process: "api", Spec: "01 §4 users, 06 §3", Auth: "session:admin", WebSocket: false},
 	{ID: "resetUserMfa", Method: "POST", Path: "/v1/users/{id}/reset-mfa", Pattern: "POST /v1/users/{id}/reset-mfa", Tag: "auth", Process: "api", Spec: "01 §4 users, 06 §3", Auth: "session:admin", WebSocket: false},
 }
@@ -309,6 +310,11 @@ func (Unimplemented) ListUsers(context.Context, ListUsersRequestObject) (ListUse
 // CreateUser answers POST /v1/users with a *NotImplementedError.
 func (Unimplemented) CreateUser(context.Context, CreateUserRequestObject) (CreateUserResponseObject, error) {
 	return nil, &NotImplementedError{Operation: "createUser"}
+}
+
+// GetUserSummary answers GET /v1/users/summary with a *NotImplementedError.
+func (Unimplemented) GetUserSummary(context.Context, GetUserSummaryRequestObject) (GetUserSummaryResponseObject, error) {
+	return nil, &NotImplementedError{Operation: "getUserSummary"}
 }
 
 // DisableUser answers POST /v1/users/{id}/disable with a *NotImplementedError.

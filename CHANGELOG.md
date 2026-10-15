@@ -110,6 +110,10 @@ complete.
 
 ### Added
 
+- `GET /v1/users/summary` (admin, additive; in `auth.AccessTable`): the
+  console accounts counted by status and role in one bounded read on
+  the database clock, no username or id. The overview shows an admin
+  the active accounts; the BFF forwards that one path for `GET` only.
 - `GET /v1/outlines/circle?lat=&lng=&radius_m=` (session, additive): a
   circle drawn as a closed Polygon of 64 vertices by uspace-core
   `geodesy.Destination` (`internal/outline`), display only. The

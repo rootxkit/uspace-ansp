@@ -92,6 +92,22 @@ func (r AuthRepo) Users(ctx context.Context, limit int) ([]auth.User, error) {
 	return out, err
 }
 
+// UserCounts counts at most limit accounts by status and role, on the
+// database clock, in one statement.
+func (r AuthRepo) UserCounts(ctx context.Context, limit int) (auth.UserCounts, error) {
+	var out auth.UserCounts
+	err := r.DB.Do(ctx, func(ctx context.Context, _ relational.DBTX, q *relational.Queries) error {
+		row, err := q.UserCounts(ctx, int32(min(max(limit, 0), auth.MaxUsersCounted)))
+		if err != nil {
+			return err
+		}
+		out = auth.UserCounts{CountedAt: row.CountedAt, Total: row.Total, Active: row.Active, Disabled: row.Disabled,
+			WatchSupervisor: row.WatchSupervisor, Viewer: row.Viewer, Admin: row.Admin, Truncated: row.Truncated}
+		return nil
+	})
+	return out, err
+}
+
 // RecordClientsSeen upserts the clients at the database clock.
 func (r AuthRepo) RecordClientsSeen(ctx context.Context, seen []auth.ClientSeen) error {
 	return r.DB.Tx(ctx, func(ctx context.Context, tx Tx) error {

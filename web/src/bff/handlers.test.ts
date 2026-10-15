@@ -343,6 +343,50 @@ describe("proxy", () => {
   );
 });
 
+describe("summaries", () => {
+  const cookie = "uspace_session=tok123; uspace_csrf=csrf456";
+  const SUMMARIES = ["/v1/users/summary"];
+
+  it.each(SUMMARIES)("forwards GET %s with the bearer, and passes the API's 401 and 403 on", async (p) => {
+    for (const status of [200, 401, 403]) {
+      const api = mockApi(() => Response.json(status === 200 ? { total: 1 } : { status }, { status }));
+      const res = await bffWith(api.fetch).proxy(req(`/_bff/api${p}`, { method: "GET", headers: { cookie } }));
+      expect(res.status).toBe(status);
+      expect(api.calls).toHaveLength(1);
+      expect(api.calls[0]?.method).toBe("GET");
+      expect(api.calls[0]?.url).toBe(`${API}${p}`);
+      expect(api.calls[0]?.headers.get("authorization")).toBe("Bearer tok123");
+    }
+  });
+
+  it.each(SUMMARIES)("forwards GET %s without a session too, so the API answers 401", async (p) => {
+    const api = mockApi(() => Response.json({ status: 401 }, { status: 401 }));
+    const res = await bffWith(api.fetch).proxy(req(`/_bff/api${p}`, { method: "GET" }));
+    expect(res.status).toBe(401);
+    expect(api.calls[0]?.headers.get("authorization")).toBeNull();
+  });
+
+  it.each(SUMMARIES.flatMap((p) => ["POST", "PUT", "PATCH", "DELETE", "HEAD"].map((m) => [m, p] as const)))(
+    "refuses %s %s 405 without calling the API, CSRF pair and all",
+    async (method, p) => {
+      const api = mockApi(() => Response.json({ ok: true }));
+      const res = await bffWith(api.fetch).proxy(
+        req(`/_bff/api${p}`, { method, headers: { cookie, "x-csrf-token": "csrf456" }, ...(method === "HEAD" ? {} : { body: "{}" }) }),
+      );
+      expect(res.status).toBe(405);
+      expect(res.headers.get("allow")).toBe("GET");
+      expect(api.calls).toHaveLength(0);
+    },
+  );
+
+  it.each(SUMMARIES.flatMap((p) => [`${p}/x`, `${p}X`, p.replace(/\/summary$/, "/summar")]))("refuses %s, which is not the exact path", async (p) => {
+    const api = mockApi(() => Response.json({ ok: true }));
+    const res = await bffWith(api.fetch).proxy(req(`/_bff/api${p}`, { method: "GET", headers: { cookie } }));
+    expect(res.status).toBe(404);
+    expect(api.calls).toHaveLength(0);
+  });
+});
+
 describe("Idempotency-Key", () => {
   const cookie = "uspace_session=tok123; uspace_csrf=csrf456";
   const plan = (headers: Record<string, string>, p = "/_bff/api/v1/restrictions") =>

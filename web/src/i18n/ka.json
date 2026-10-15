@@ -590,5 +590,9 @@
   "ansp.overview.adapter.silent": "ჩუმია",
   "ansp.overview.adapter.disabled": "გამორთულია",
   "ansp.overview.stream.restrictions": "შეზღუდვების ნაკადი",
-  "ansp.overview.stream.coordination": "კოორდინაციის ნაკადი"
+  "ansp.overview.stream.coordination": "კოორდინაციის ნაკადი",
+  "ansp.overview.kpi.unread": "ვერ ჩაიტვირთა",
+  "ansp.overview.kpi.users": "აქტიური კონსოლის ანგარიშები",
+  "ansp.overview.kpi.users_hint": "{disabled} გამორთული, {admins} ადმინისტრატორი, სულ {total}",
+  "ansp.overview.kpi.users_hint_truncated": "{disabled} გამორთული, {admins} ადმინისტრატორი პირველ {total} დათვლილ ანგარიშში"
 }

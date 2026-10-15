@@ -3146,6 +3146,27 @@ type UserList struct {
 	Users []User `json:"users"`
 }
 
+// UserSummary The console accounts counted, never listed: no username, no id,
+// no time of a sign-in (01 §4). counted_at is the database clock.
+// At most MaxUsersCounted (1000, the bound of GET /v1/users)
+// accounts are counted; truncated says there were more.
+type UserSummary struct {
+	ByRole struct {
+		Admin           int `json:"admin"`
+		Viewer          int `json:"viewer"`
+		WatchSupervisor int `json:"watch_supervisor"`
+	} `json:"by_role"`
+	ByStatus struct {
+		Active   int `json:"active"`
+		Disabled int `json:"disabled"`
+	} `json:"by_status"`
+
+	// CountedAt RFC 3339 UTC with Z, millisecond precision (02 §1).
+	CountedAt Timestamp `json:"counted_at"`
+	Total     int       `json:"total"`
+	Truncated bool      `json:"truncated"`
+}
+
 // VerticalRef The vertical reference of a restriction limit: AMSL or WGS84
 // (ellipsoid). AGL is refused for a dynamic restriction in this
 // release (D3, §15 gap 3) with the reason "AGL is not supported for
@@ -4825,6 +4846,16 @@ type ClientInterface interface {
 	// Corresponds with POST /v1/users (the `CreateUser` operationId).
 	CreateUser(ctx context.Context, body CreateUserJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// GetUserSummary How many console accounts there are
+	//
+	// The console accounts counted by status and by role, for the
+	// overview's tile (01 §4): counts only, no username or id. One
+	// bounded read on the database clock (counted_at); truncated says
+	// there were more accounts than were counted.
+	//
+	// Corresponds with GET /v1/users/summary (the `GetUserSummary` operationId).
+	GetUserSummary(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// DisableUser Disable an account
 	//
 	// Disables the account and ends its sessions. Audited.
@@ -6238,6 +6269,26 @@ func (c *Client) CreateUserWithBody(ctx context.Context, contentType string, bod
 // Corresponds with POST /v1/users (the `CreateUser` operationId).
 func (c *Client) CreateUser(ctx context.Context, body CreateUserJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewCreateUserRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetUserSummary How many console accounts there are
+//
+// The console accounts counted by status and by role, for the
+// overview's tile (01 §4): counts only, no username or id. One
+// bounded read on the database clock (counted_at); truncated says
+// there were more accounts than were counted.
+//
+// Corresponds with GET /v1/users/summary (the `GetUserSummary` operationId).
+func (c *Client) GetUserSummary(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetUserSummaryRequest(c.Server)
 	if err != nil {
 		return nil, err
 	}
@@ -8178,6 +8229,33 @@ func NewCreateUserRequestWithBody(server string, contentType string, body io.Rea
 	return req, nil
 }
 
+// NewGetUserSummaryRequest constructs an http.Request for the GetUserSummary method
+func NewGetUserSummaryRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/users/summary")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewDisableUserRequest constructs an http.Request for the DisableUser method
 func NewDisableUserRequest(server string, id UserID) (*http.Request, error) {
 	var err error
@@ -9131,6 +9209,18 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /v1/users (the `CreateUser` operationId).
 	CreateUserWithResponse(ctx context.Context, body CreateUserJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateUserResponse, error)
+
+	// GetUserSummaryWithResponse How many console accounts there are
+	//
+	// The console accounts counted by status and by role, for the
+	// overview's tile (01 §4): counts only, no username or id. One
+	// bounded read on the database clock (counted_at); truncated says
+	// there were more accounts than were counted.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/users/summary (the `GetUserSummary` operationId).
+	GetUserSummaryWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetUserSummaryResponse, error)
 
 	// DisableUserWithResponse Disable an account
 	//
@@ -12809,6 +12899,82 @@ func (r CreateUserResponse) ContentType() string {
 	return ""
 }
 
+// GetUserSummaryResponse401Headers the declared response headers of an HTTP 401 response for GetUserSummary
+type GetUserSummaryResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+// GetUserSummaryResponse503Headers the declared response headers of an HTTP 503 response for GetUserSummary
+type GetUserSummaryResponse503Headers struct {
+	RetryAfter int
+}
+
+type GetUserSummaryResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *UserSummary
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *Unauthorized
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *Forbidden
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *Unavailable
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *GetUserSummaryResponse401Headers
+	// Headers503 the parsed response headers for an HTTP 503 response
+	Headers503 *GetUserSummaryResponse503Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetUserSummaryResponse) GetJSON200() *UserSummary {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r GetUserSummaryResponse) GetApplicationproblemJSON401() *Unauthorized {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r GetUserSummaryResponse) GetApplicationproblemJSON403() *Forbidden {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r GetUserSummaryResponse) GetApplicationproblemJSON503() *Unavailable {
+	return r.ApplicationproblemJSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r GetUserSummaryResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetUserSummaryResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetUserSummaryResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetUserSummaryResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 // DisableUserResponse401Headers the declared response headers of an HTTP 401 response for DisableUser
 type DisableUserResponse401Headers struct {
 	WWWAuthenticate *string
@@ -14201,6 +14367,24 @@ func (c *ClientWithResponses) CreateUserWithResponse(ctx context.Context, body C
 		return nil, err
 	}
 	return ParseCreateUserResponse(rsp)
+}
+
+// GetUserSummaryWithResponse How many console accounts there are
+//
+// The console accounts counted by status and by role, for the
+// overview's tile (01 §4): counts only, no username or id. One
+// bounded read on the database clock (counted_at); truncated says
+// there were more accounts than were counted.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/users/summary (the `GetUserSummary` operationId).
+func (c *ClientWithResponses) GetUserSummaryWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetUserSummaryResponse, error) {
+	rsp, err := c.GetUserSummary(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetUserSummaryResponse(rsp)
 }
 
 // DisableUserWithResponse Disable an account
@@ -17570,6 +17754,76 @@ func ParseCreateUserResponse(rsp *http.Response) (*CreateUserResponse, error) {
 	return response, nil
 }
 
+// ParseGetUserSummaryResponse parses an HTTP response from a GetUserSummaryWithResponse call
+func ParseGetUserSummaryResponse(rsp *http.Response) (*GetUserSummaryResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetUserSummaryResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest UserSummary
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers GetUserSummaryResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	case rsp.StatusCode == 503:
+		var headers GetUserSummaryResponse503Headers
+		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.RetryAfter = value
+		}
+		response.Headers503 = &headers
+	}
+
+	return response, nil
+}
+
 // ParseDisableUserResponse parses an HTTP response from a DisableUserWithResponse call
 func ParseDisableUserResponse(rsp *http.Response) (*DisableUserResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -17875,6 +18129,9 @@ type ServerInterface interface {
 	// CreateUser Create a console account
 	// (POST /v1/users)
 	CreateUser(w http.ResponseWriter, r *http.Request)
+	// GetUserSummary How many console accounts there are
+	// (GET /v1/users/summary)
+	GetUserSummary(w http.ResponseWriter, r *http.Request)
 	// DisableUser Disable an account
 	// (POST /v1/users/{id}/disable)
 	DisableUser(w http.ResponseWriter, r *http.Request, id UserID)
@@ -19065,6 +19322,20 @@ func (siw *ServerInterfaceWrapper) CreateUser(w http.ResponseWriter, r *http.Req
 	handler.ServeHTTP(w, r)
 }
 
+// GetUserSummary operation middleware
+func (siw *ServerInterfaceWrapper) GetUserSummary(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetUserSummary(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // DisableUser operation middleware
 func (siw *ServerInterfaceWrapper) DisableUser(w http.ResponseWriter, r *http.Request) {
 
@@ -19276,6 +19547,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/auth/me", wrapper.GetMe)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/users", wrapper.ListUsers)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/users", wrapper.CreateUser)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/users/summary", wrapper.GetUserSummary)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/users/{id}/reset-mfa", wrapper.ResetUserMfa)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/users/{id}/disable", wrapper.DisableUser)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/.well-known/jwks.json", wrapper.GetJwks)
@@ -23485,6 +23757,79 @@ func (response CreateUser503ApplicationProblemPlusJSONResponse) VisitCreateUserR
 	return err
 }
 
+type GetUserSummaryRequestObject struct {
+}
+
+type GetUserSummaryResponseObject interface {
+	VisitGetUserSummaryResponse(w http.ResponseWriter) error
+}
+
+type GetUserSummary200JSONResponse UserSummary
+
+func (response GetUserSummary200JSONResponse) VisitGetUserSummaryResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetUserSummary401ApplicationProblemPlusJSONResponse struct {
+	UnauthorizedApplicationProblemPlusJSONResponse
+}
+
+func (response GetUserSummary401ApplicationProblemPlusJSONResponse) VisitGetUserSummaryResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	if response.Headers.WWWAuthenticate != nil {
+		w.Header().Set("WWW-Authenticate", fmt.Sprint(*response.Headers.WWWAuthenticate))
+	}
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetUserSummary403ApplicationProblemPlusJSONResponse struct {
+	ForbiddenApplicationProblemPlusJSONResponse
+}
+
+func (response GetUserSummary403ApplicationProblemPlusJSONResponse) VisitGetUserSummaryResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetUserSummary503ApplicationProblemPlusJSONResponse struct {
+	UnavailableApplicationProblemPlusJSONResponse
+}
+
+func (response GetUserSummary503ApplicationProblemPlusJSONResponse) VisitGetUserSummaryResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type DisableUserRequestObject struct {
 	Id UserID `json:"id"`
 }
@@ -23834,6 +24179,9 @@ type StrictServerInterface interface {
 	// CreateUser Create a console account
 	// (POST /v1/users)
 	CreateUser(ctx context.Context, request CreateUserRequestObject) (CreateUserResponseObject, error)
+	// GetUserSummary How many console accounts there are
+	// (GET /v1/users/summary)
+	GetUserSummary(ctx context.Context, request GetUserSummaryRequestObject) (GetUserSummaryResponseObject, error)
 	// DisableUser Disable an account
 	// (POST /v1/users/{id}/disable)
 	DisableUser(ctx context.Context, request DisableUserRequestObject) (DisableUserResponseObject, error)
@@ -25138,6 +25486,30 @@ func (sh *strictHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(CreateUserResponseObject); ok {
 		if err := validResponse.VisitCreateUserResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetUserSummary operation middleware
+func (sh *strictHandler) GetUserSummary(w http.ResponseWriter, r *http.Request) {
+	var request GetUserSummaryRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetUserSummary(ctx, request.(GetUserSummaryRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetUserSummary")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetUserSummaryResponseObject); ok {
+		if err := validResponse.VisitGetUserSummaryResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {
