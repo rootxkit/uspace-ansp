@@ -79,6 +79,12 @@ function ulid(prefix = "01K6P0") {
   return prefix + tail;
 }
 
+/** A canonical lower-case UUID (version 4 shape) for a fixture account; monotonic. */
+function uuid() {
+  serial += 1;
+  return `00000000-0000-4000-8000-${serial.toString(16).padStart(12, "0")}`;
+}
+
 function b64url(v) {
   return Buffer.from(JSON.stringify(v)).toString("base64url");
 }
@@ -92,9 +98,9 @@ function reset() {
     // GET path -> the status it answers a live session (/__mock/fail).
     failures: new Map(),
     accounts: {
-      super1: { id: "01K6NZ8Q2W3E4R5T6Y7V8W9X0Z", username: "super1", password: "super1-test-password", role: "watch_supervisor", enrolled: false },
-      viewer1: { id: "01K6NZ8Q2W3E4R5T6Y7V8W9X1A", username: "viewer1", password: "viewer1-test-password", role: "viewer", enrolled: true },
-      admin1: { id: "01K6NZ8Q2W3E4R5T6Y7V8W9X2B", username: "admin1", password: "admin1-test-password", role: "admin", enrolled: true },
+      super1: { id: "6f1c2a4e-3b5d-4e7f-9a8b-0c1d2e3f4a5b", username: "super1", password: "super1-test-password", role: "watch_supervisor", enrolled: false },
+      viewer1: { id: "a3b4c5d6-1e2f-4a3b-8c4d-5e6f7a8b9c0d", username: "viewer1", password: "viewer1-test-password", role: "viewer", enrolled: true },
+      admin1: { id: "b7c8d9e0-2f3a-4b4c-9d5e-6f7a8b9c0d1e", username: "admin1", password: "admin1-test-password", role: "admin", enrolled: true },
     },
     kvDown: false,
     aircraft: new Map(),
@@ -921,12 +927,12 @@ async function api(req, res, url) {
     if (![SUPERVISOR, "viewer", ADMIN].includes(body.role)) errors.push({ field: "role", reason: "one of watch_supervisor, viewer, admin" });
     if (errors.length > 0) return problem(res, 400, "invalid_request", "Invalid request", null, errors);
     if (state.accounts[username] !== undefined) return problem(res, 409, "conflict", "Conflict", "the username is taken", [{ field: "username", reason: "taken" }]);
-    const a = { id: ulid("01K6PS"), username, password: body.password, role: body.role, enrolled: false };
+    const a = { id: uuid(), username, password: body.password, role: body.role, enrolled: false };
     state.accounts[username] = a;
     audit(session.account, "user", a.id, "user_created", "console account created", { username, role: a.role });
     return json(res, 201, user(a));
   }
-  const userAct = /^\/v1\/users\/([0-9A-Z]{26})\/(reset-mfa|disable)$/.exec(path);
+  const userAct = /^\/v1\/users\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/(reset-mfa|disable)$/.exec(path);
   if (userAct !== null && req.method === "POST") {
     if (adminOnly()) return;
     const a = Object.values(state.accounts).find((x) => x.id === userAct[1]);
