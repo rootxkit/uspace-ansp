@@ -28,6 +28,7 @@ import {
   RestrictionIcon,
   SignOutIcon,
   SwitchIcon,
+  UsersIcon,
 } from "../components/icons";
 import { ConsoleProvider, loginPath, useConsole } from "./context";
 import { awaitingCount } from "./inbox";
@@ -49,6 +50,7 @@ const NAV_ICON: Readonly<Record<string, ReactNode>> = {
   "/sources": <SwitchIcon />,
   "/policy": <PolicyIcon />,
   "/audit": <AuditIcon />,
+  "/users": <UsersIcon />,
 };
 
 /** The notices awaiting a person, beside the inbox's name: escalated ones loudest. */

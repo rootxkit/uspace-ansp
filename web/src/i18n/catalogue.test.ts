@@ -60,6 +60,8 @@ const DYNAMIC: Record<string, readonly string[]> = {
   "ansp.occurrence.channel": [...CHANNELS],
   "ansp.occurrence.category": [...CATEGORIES],
   "ansp.occurrence.aircraft": ["serial", "operator_reg", "flight_id", "authorisation_number"],
+  "ansp.users.status": ["active", "disabled"],
+  "ansp.users.problem": ["username", "password", "role"],
   "ansp.occurrence.problem": ["required", "enum", "icao24", "uuid", "number", "too_many", "too_long"],
 };
 
