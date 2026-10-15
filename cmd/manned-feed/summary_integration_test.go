@@ -13,9 +13,9 @@ import (
 	"github.com/rootxkit/uspace-ansp/internal/feed"
 )
 
-// The picture's count against real NATS, with manned-feed started as
-// deploy/compose.prod.yaml starts it: no session key, so it verifies no
-// console session, and the count still reaches api over the bus. It
+// The picture's count against real NATS, with manned-feed started
+// without ANSP_SESSION_PUBLIC_KEY_FILE, so it verifies no console
+// session, and the count still reaches api over the bus. It
 // answers ctl.manned.summary empty with adapters_silent, then two live
 // aircraft of a live adapter, each reply in the shape api decodes and
 // naming no aircraft, and counts what it answered.

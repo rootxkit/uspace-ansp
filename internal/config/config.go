@@ -146,6 +146,11 @@ type Config struct {
 	// occurrence reporter references (WP-10) at rest.
 	SessionKeyFile string `env:"ANSP_SESSION_KEY_FILE"`
 	SecretsKeyFile string `env:"ANSP_SECRETS_KEY_FILE"`
+	// SessionPublicKeyFile is the PEM public part of SessionKeyFile:
+	// manned-feed verifies console sessions with it (the picture page's
+	// live stream) and never holds the key that signs them. Unset, it
+	// verifies none and refuses every session.
+	SessionPublicKeyFile string `env:"ANSP_SESSION_PUBLIC_KEY_FILE"`
 	// Sign-in limits (S-15): per address and per username per minute in
 	// each process, and the lockout of a username in the database after
 	// LoginLockoutAfter failures for LoginLockoutS.
