@@ -359,14 +359,15 @@ describe("proxy", () => {
 
 describe("summaries", () => {
   const cookie = "uspace_session=tok123; uspace_csrf=csrf456";
-  const SUMMARIES = ["/v1/users/summary", "/v1/restriction-requests/summary", "/v1/occurrences/summary"];
+  const SUMMARIES = ["/v1/users/summary", "/v1/restriction-requests/summary", "/v1/occurrences/summary", "/v1/manned-traffic/summary"];
 
-  it.each(SUMMARIES)("forwards GET %s with the bearer, and passes the API's 401 and 403 on", async (p) => {
-    for (const status of [200, 401, 403]) {
-      const api = mockApi(() => Response.json(status === 200 ? { total: 1 } : { status }, { status }));
+  it.each(SUMMARIES)("forwards GET %s to the API with the bearer, and passes the API's 401, 403 and 503 on", async (p) => {
+    for (const status of [200, 401, 403, 503]) {
+      // GET /v1/auth/me, asked after the 401, answers 2xx: the session is live.
+      const api = mockApi((c) => (c.url.endsWith("/v1/auth/me") ? Response.json({ subject: "u1" }) : Response.json(status === 200 ? { total: 1 } : { status }, { status })));
       const res = await bffWith(api.fetch).proxy(req(`/_bff/api${p}`, { method: "GET", headers: { cookie } }));
       expect(res.status).toBe(status);
-      expect(api.calls).toHaveLength(1);
+      expect(api.calls).toHaveLength(status === 401 ? 2 : 1);
       expect(api.calls[0]?.method).toBe("GET");
       expect(api.calls[0]?.url).toBe(`${API}${p}`);
       expect(api.calls[0]?.headers.get("authorization")).toBe("Bearer tok123");
@@ -401,54 +402,87 @@ describe("summaries", () => {
   });
 });
 
-describe("the feed's summary", () => {
+describe("a 401 ends the session only when the session's own read says so", () => {
   const cookie = "uspace_session=tok123; uspace_csrf=csrf456";
-  const FEED = "http://feed.internal:8080";
-  // Without a second argument the feed is FEED; with one, that value (undefined: unset).
-  const bffFeed = (f: typeof fetch, ...base: [string | undefined] | []) => {
-    const feedBase = base.length === 0 ? FEED : base[0];
-    return createBff({ apiBase: API, ...(feedBase === undefined ? {} : { feedBase }), sessionMaxAgeS: 43200, timeoutMs: 2000, mfaChallengeSecret: MFA_SECRET, trustedProxyHops: 1, fetch: f });
+  /** The API: `path` answers `status`; GET /v1/auth/me answers `me` (a status, or a thrown fetch). */
+  const api = (status: number, me: number | "unreachable") =>
+    mockApi((c) => {
+      if (c.url === `${API}/v1/auth/me`) {
+        if (me === "unreachable") throw new TypeError("fetch failed");
+        return Response.json(me === 200 ? { subject: "u1" } : { status: me }, { status: me });
+      }
+      return Response.json({ status }, { status, headers: { "content-type": "application/problem+json" } });
+    });
+  const cleared = (res: Response) => {
+    const c = setCookies(res);
+    return c.has("uspace_session") && c.has("uspace_csrf") && /Max-Age=0/i.test(c.get("uspace_session") ?? "");
   };
 
-  it("forwards GET /v1/manned-traffic/summary to manned-feed with the bearer, and the feed's 401 and 403 on", async () => {
-    for (const status of [200, 401, 403]) {
-      const up = mockApi(() => Response.json(status === 200 ? { total: 2 } : { status }, { status }));
-      const res = await bffFeed(up.fetch).proxy(req("/_bff/api/v1/manned-traffic/summary", { method: "GET", headers: { cookie } }));
-      expect(res.status).toBe(status);
-      expect(up.calls).toHaveLength(1);
-      expect(up.calls[0]?.url).toBe(`${FEED}/v1/manned-traffic/summary`);
-      expect(up.calls[0]?.headers.get("authorization")).toBe("Bearer tok123");
-    }
+  it.each(["/v1/manned-traffic/summary", "/v1/adapters", "/v1/restrictions"])(
+    "a 401 of GET %s whose session /v1/auth/me accepts keeps both cookies and passes the 401 on",
+    async (p) => {
+      const up = api(401, 200);
+      const res = await bffWith(up.fetch).proxy(req(`/_bff/api${p}`, { method: "GET", headers: { cookie } }));
+      expect(res.status).toBe(401);
+      expect(res.headers.getSetCookie()).toEqual([]);
+      expect(up.calls.map((c) => c.url)).toEqual([`${API}${p}`, `${API}/v1/auth/me`]);
+      // The question carries the same session, as a GET with no body.
+      expect(up.calls[1]?.headers.get("authorization")).toBe("Bearer tok123");
+      expect(up.calls[1]?.method).toBe("GET");
+      expect(up.calls[1]?.body).toBeNull();
+    },
+  );
+
+  it("a 401 of a POST whose session /v1/auth/me accepts keeps both cookies, and the POST is sent once", async () => {
+    const up = api(401, 200);
+    const res = await bffWith(up.fetch).proxy(
+      req("/_bff/api/v1/restrictions/r1/activate", {
+        method: "POST",
+        headers: { cookie, "x-csrf-token": "csrf456", "content-type": "application/json" },
+        body: JSON.stringify({ reason: "test" }),
+      }),
+    );
+    expect(res.status).toBe(401);
+    expect(res.headers.getSetCookie()).toEqual([]);
+    expect(up.calls.filter((c) => c.method === "POST")).toHaveLength(1);
+    expect(up.calls[1]?.url).toBe(`${API}/v1/auth/me`);
   });
 
-  it("never sends another path to manned-feed, nor the summary to the API", async () => {
-    const up = mockApi(() => Response.json({ ok: true }));
-    const bff = bffFeed(up.fetch);
-    for (const p of ["/v1/manned-traffic/snapshot", "/v1/manned-traffic/summary/x", "/v1/manned-traffic/summaryX", "/v1/manned-traffic/stream"]) {
-      const res = await bff.proxy(req(`/_bff/api${p}`, { method: "GET", headers: { cookie } }));
-      expect(res.status).toBe(404);
-    }
-    expect(up.calls).toHaveLength(0);
-    await bff.proxy(req("/_bff/api/v1/auth/me", { method: "GET", headers: { cookie } }));
-    expect(up.calls[0]?.url).toBe(`${API}/v1/auth/me`);
+  // Presence: the session really ended. Both cookies are cleared.
+  it.each([401, 500, 503] as const)("a 401 whose session /v1/auth/me answers %s clears both cookies (fail closed)", async (me) => {
+    const up = api(401, me);
+    const res = await bffWith(up.fetch).proxy(req("/_bff/api/v1/manned-traffic/summary", { method: "GET", headers: { cookie } }));
+    expect(res.status).toBe(401);
+    expect(cleared(res)).toBe(true);
   });
 
-  it.each(["POST", "PUT", "DELETE", "HEAD"])("refuses %s on the summary 405 without calling manned-feed", async (method) => {
-    const up = mockApi(() => Response.json({ ok: true }));
-    const res = await bffFeed(up.fetch).proxy(req("/_bff/api/v1/manned-traffic/summary", { method, headers: { cookie, "x-csrf-token": "csrf456" } }));
-    expect(res.status).toBe(405);
-    expect(res.headers.get("allow")).toBe("GET");
-    expect(up.calls).toHaveLength(0);
+  it("a 401 whose session /v1/auth/me cannot be asked clears both cookies (fail closed)", async () => {
+    const res = await bffWith(api(401, "unreachable").fetch).proxy(req("/_bff/api/v1/adapters", { method: "GET", headers: { cookie } }));
+    expect(res.status).toBe(401);
+    expect(cleared(res)).toBe(true);
   });
 
-  it.each([undefined, "", "not a url", "ftp://feed.internal"])("answers 503 naming WEB_FEED_INTERNAL_URL when it is %s, and still serves the API", async (base) => {
-    const up = mockApi(() => Response.json({ ok: true }));
-    const bff = bffFeed(up.fetch, base);
-    const res = await bff.proxy(req("/_bff/api/v1/manned-traffic/summary", { method: "GET", headers: { cookie } }));
-    expect(res.status).toBe(503);
-    expect(await res.text()).toContain("WEB_FEED_INTERNAL_URL");
-    expect(up.calls).toHaveLength(0);
-    expect((await bff.proxy(req("/_bff/api/v1/auth/me", { method: "GET", headers: { cookie } }))).status).toBe(200);
+  it("a 401 of GET /v1/auth/me itself clears both cookies without asking again", async () => {
+    const up = api(401, 401);
+    const res = await bffWith(up.fetch).proxy(req("/_bff/api/v1/auth/me", { method: "GET", headers: { cookie } }));
+    expect(res.status).toBe(401);
+    expect(cleared(res)).toBe(true);
+    expect(up.calls).toHaveLength(1);
+  });
+
+  it.each([501, 503, 500, 403, 404])("a %s of a data route never touches the session and asks nothing more", async (status) => {
+    const up = api(status, 401);
+    const res = await bffWith(up.fetch).proxy(req("/_bff/api/v1/adapters", { method: "GET", headers: { cookie } }));
+    expect(res.status).toBe(status);
+    expect(res.headers.getSetCookie()).toEqual([]);
+    expect(up.calls).toHaveLength(1);
+  });
+
+  it("a 401 without a session cookie asks nothing more: there is no session to keep", async () => {
+    const up = api(401, 200);
+    const res = await bffWith(up.fetch).proxy(req("/_bff/api/v1/manned-traffic/summary", { method: "GET" }));
+    expect(res.status).toBe(401);
+    expect(up.calls.map((c) => c.url)).toEqual([`${API}/v1/manned-traffic/summary`]);
   });
 });
 

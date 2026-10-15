@@ -94,6 +94,82 @@ describe("consoleClient", () => {
   });
 });
 
+describe("who says the session is gone", () => {
+  /** Every call answers `status`; GET /v1/auth/me answers `me` (or cannot be reached). */
+  function routed(status: number, me: number | "unreachable") {
+    const onUnauthorized = vi.fn();
+    const onAuthorized = vi.fn();
+    const paths: string[] = [];
+    const f = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = new URL(new Request(input, init).url).pathname;
+      paths.push(path);
+      if (path === "/_bff/api/v1/auth/me") {
+        if (me === "unreachable") throw new TypeError("fetch failed");
+        return me === 200 ? Response.json({ subject: "u1", role: "viewer" }) : problem(me, "unauthenticated");
+      }
+      return status === 200 ? Response.json({ ok: true }) : problem(status, status === 401 ? "unauthenticated" : "not_implemented");
+    }) as unknown as typeof fetch;
+    const c = consoleClient(() => "en", { onUnauthorized, onAuthorized }, { fetch: f, origin: "https://console.test" });
+    return { c, onUnauthorized, onAuthorized, paths };
+  }
+  const asks = (paths: string[]) => paths.filter((p) => p === "/_bff/api/v1/auth/me").length;
+
+  it("a 401 of another call whose session GET /v1/auth/me accepts does not sign out", async () => {
+    const a = routed(401, 200);
+    expect((await failureFrom(a.c.GET("/v1/manned-traffic/summary"))).status).toBe(401);
+    await a.c.confirmSession();
+    expect(a.paths[0]).toBe("/_bff/api/v1/manned-traffic/summary");
+    expect(asks(a.paths)).toBeGreaterThanOrEqual(1);
+    expect(a.onUnauthorized).not.toHaveBeenCalled();
+  });
+
+  // Presence: the session really ended.
+  it.each([401, 503] as const)("a 401 of another call whose GET /v1/auth/me answers %s signs out, once for a page", async (me) => {
+    const a = routed(401, me);
+    await Promise.all([failureFrom(a.c.GET("/v1/manned-traffic/summary")), failureFrom(a.c.GET("/v1/adapters")), failureFrom(a.c.GET("/v1/sources"))]);
+    await a.c.confirmSession();
+    expect(a.onUnauthorized).toHaveBeenCalledTimes(1);
+  });
+
+  it("asks GET /v1/auth/me once for a page of 401s answered together", async () => {
+    const a = routed(401, 200);
+    await Promise.all([failureFrom(a.c.GET("/v1/adapters")), failureFrom(a.c.GET("/v1/sources")), failureFrom(a.c.GET("/v1/policy"))]);
+    await a.c.confirmSession();
+    expect(asks(a.paths)).toBeLessThanOrEqual(2);
+    expect(a.onUnauthorized).not.toHaveBeenCalled();
+  });
+
+  it("an API that cannot be reached when asked signs out (fail closed)", async () => {
+    const a = routed(401, "unreachable");
+    await failureFrom(a.c.GET("/v1/adapters"));
+    await a.c.confirmSession();
+    expect(a.onUnauthorized).toHaveBeenCalledTimes(1);
+  });
+
+  it("a 401 of GET /v1/auth/me signs out without asking again", async () => {
+    const a = routed(401, 401);
+    await failureFrom(a.c.GET("/v1/auth/me"));
+    expect(a.onUnauthorized).toHaveBeenCalledTimes(1);
+    expect(a.paths).toEqual(["/_bff/api/v1/auth/me"]);
+  });
+
+  it.each([501, 503, 500])("a %s of a data route never asks about the session and never signs out", async (status) => {
+    const a = routed(status, 401);
+    expect((await failureFrom(a.c.GET("/v1/adapters"))).status).toBe(status);
+    expect(a.paths).toEqual(["/_bff/api/v1/adapters"]);
+    expect(a.onUnauthorized).not.toHaveBeenCalled();
+  });
+
+  it("a stream's 4401 asks first: a live session stays signed in, an ended one signs out", async () => {
+    const live = routed(200, 200);
+    await live.c.confirmSession();
+    expect(live.onUnauthorized).not.toHaveBeenCalled();
+    const ended = routed(200, 401);
+    await ended.c.confirmSession();
+    expect(ended.onUnauthorized).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("chainProposal", () => {
   const base: CallFailure = { status: 400, problem: null, slug: "chain_required", retryAfterS: null, fieldErrors: [] };
 

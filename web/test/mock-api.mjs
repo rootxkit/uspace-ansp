@@ -9,8 +9,8 @@
 // them, /v1/manned-traffic/stream as manned-feed does), and passes every
 // other request to Next.js with the X-Forwarded-*
 // headers Caddy sets, so the browser sees one origin, as in a deployment.
-// The BFF reaches the API here too (WEB_API_INTERNAL_URL), and manned-feed
-// for the picture's summary (WEB_FEED_INTERNAL_URL).
+// The BFF reaches the API here too (WEB_API_INTERNAL_URL), the picture's
+// summary included (api asks manned-feed for it on the bus).
 //
 //   MOCK_PORT=3000 MOCK_UPSTREAM=http://127.0.0.1:3100 node test/mock-api.mjs
 //
@@ -39,6 +39,10 @@
 //                                         (sent, failed, abandoned, cancelled)
 //   POST /__mock/account {username, status}
 //                                         an account disabled or active again (the users summary)
+//   POST /__mock/fail {path, status}      GET <path> answers <status> (401, 501, 503, ...) to a
+//                                         live session, as a route that is not the session's own
+//                                         answer can; status null serves it again
+//   POST /__mock/expire                   every session ends (the API's session store emptied)
 //
 // Accounts (test data, not credentials of anything): super1 (watch
 // supervisor; no authenticator until its first sign-in, so the enrolment
@@ -84,6 +88,8 @@ function reset() {
   state = {
     stream: true,
     cisStale: false,
+    // GET path -> the status it answers a live session (/__mock/fail).
+    failures: new Map(),
     accounts: {
       super1: { id: "01K6NZ8Q2W3E4R5T6Y7V8W9X0Z", username: "super1", password: "super1-test-password", role: "watch_supervisor", enrolled: false },
       viewer1: { id: "01K6NZ8Q2W3E4R5T6Y7V8W9X1A", username: "viewer1", password: "viewer1-test-password", role: "viewer", enrolled: true },
@@ -612,6 +618,11 @@ async function api(req, res, url) {
 
   const session = sessionOf(bearer(req));
   if (session === null) return problem(res, 401, "unauthenticated", "Unauthenticated", "no live session");
+  const forced = req.method === "GET" ? state.failures.get(path) : undefined;
+  if (forced !== undefined) {
+    const slug = forced === 401 ? "unauthenticated" : forced === 501 ? "not_implemented" : "unavailable";
+    return problem(res, forced, slug, "Forced by the fixture", `GET ${path} answers ${forced} to a live session (/__mock/fail)`);
+  }
   const role = session.account.role;
   const supervisorOnly = () => {
     if (role === SUPERVISOR) return false;
@@ -869,9 +880,9 @@ async function api(req, res, url) {
     audit(session.account, "ansp_policy", String(state.policy.policy_version), "policy_updated", "threshold change (INV-03)", state.policy);
     return json(res, 200, state.policy);
   }
-  // GET /v1/manned-traffic/summary (manned-feed, any session; the BFF
-  // reaches it through WEB_FEED_INTERNAL_URL, here this server too): the
-  // aircraft held counted by state, none named.
+  // GET /v1/manned-traffic/summary (api, any session; api asks
+  // manned-feed on the bus): the aircraft held counted by state, none
+  // named.
   if (path === "/v1/manned-traffic/summary" && req.method === "GET") {
     const by = { live: 0, stale: 0, source_disabled: 0 };
     let relevant = 0;
@@ -935,6 +946,16 @@ async function control(req, res, path) {
     reset();
     recorded.length = 0;
     for (const c of allClients()) c.destroy();
+    return json(res, 200, { ok: true });
+  }
+  if (path === "/__mock/fail") {
+    if (typeof input.path !== "string") return json(res, 400, { error: "path" });
+    if (input.status === null) state.failures.delete(input.path);
+    else state.failures.set(input.path, Number(input.status));
+    return json(res, 200, Object.fromEntries(state.failures));
+  }
+  if (path === "/__mock/expire") {
+    state.sessions.clear();
     return json(res, 200, { ok: true });
   }
   if (path === "/__mock/state") {

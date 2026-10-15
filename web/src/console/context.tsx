@@ -3,10 +3,14 @@
 // The signed-in console: who the caller is (GET /v1/auth/me), the client
 // every page calls through, and the one restriction stream every page
 // shares (WS /v1/restrictions/stream, same origin, the session cookie on
-// the upgrade, M22). A 401 from any call, or a 4401 close of the stream,
-// is "signed out, sign in again"; the role shown here only arranges the
-// page, the API decides every request. A 2xx answer, or the stream live
-// again, after a sign-in elsewhere clears it.
+// the upgrade, M22). The session is gone when the API says so of the
+// session itself: GET /v1/auth/me answers 401, or the restriction stream
+// (the API's) closes 4401. A 401 from another call, or a 4401 close of
+// another stream, asks GET /v1/auth/me first and signs out unless it
+// answers 2xx (src/api/client.ts, fail closed); a 501 or 503 of a data
+// route is that route's failure, shown where it is read. The role shown
+// here only arranges the page, the API decides every request. A 2xx
+// answer, or the stream live again, after a sign-in elsewhere clears it.
 import { createContext, useCallback, useContext, useEffect, useEffectEvent, useMemo, useRef, useState, type ReactNode } from "react";
 import { useLang } from "@rootxkit/uspace-ui/i18n";
 import { useFeed, type ConsoleFrame, type LiveFeed } from "@rootxkit/uspace-ui/live";
@@ -27,12 +31,15 @@ export interface ConsoleContextValue {
   role: ConsoleRole | null;
   /** /me could not be read for a reason other than a 401. */
   meFailure: CallFailure | null;
-  /** A call answered 401 or the stream closed 4401: the session is gone. */
+  /** The session is gone (GET /v1/auth/me 401, or the restriction stream closed 4401). */
   signedOut: boolean;
   feed: LiveFeed;
   /** Every frame the kit does not store itself (restriction/state/v1). */
   onFrame(listener: FrameListener): () => void;
-  /** Another stream closed 4401 (manned picture, coordination): signed out. */
+  /**
+   * Another stream closed 4401 (manned picture, coordination): signed out
+   * unless GET /v1/auth/me, asked now, answers 2xx.
+   */
   markSignedOut(): void;
 }
 
@@ -73,7 +80,7 @@ export function ConsoleProvider({ children }: { children: ReactNode }) {
       .catch((err: unknown) => {
         if (!live) return;
         const f = failureOf(err);
-        // A 401 is the client's onUnauthorized: signed out.
+        // A 401 here is the session refused: the client signs out.
         if (f.status !== 401) setMeFailure(f);
       });
     return () => {
@@ -105,9 +112,10 @@ export function ConsoleProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const role = me !== null && isRole(me.role) ? me.role : null;
+  const markSignedOut = useCallback(() => void client.confirmSession(), [client]);
   const value = useMemo(
-    () => ({ client, me, role, meFailure, signedOut: signedOut || feed.unauthorized, feed, onFrame, markSignedOut: toSignedOut }),
-    [client, me, role, meFailure, signedOut, feed, onFrame, toSignedOut],
+    () => ({ client, me, role, meFailure, signedOut: signedOut || feed.unauthorized, feed, onFrame, markSignedOut }),
+    [client, me, role, meFailure, signedOut, feed, onFrame, markSignedOut],
   );
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
