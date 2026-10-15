@@ -18,7 +18,7 @@ import { useLang, useT } from "@rootxkit/uspace-ui/i18n";
 import { useNowMs } from "@rootxkit/uspace-ui/live";
 import { FeedStatusBar } from "@rootxkit/uspace-ui/status";
 import type { StatusTone } from "@rootxkit/uspace-ui/theme";
-import { Button, KpiRow, MapPanel, Panel, StatTile, StatusBadge } from "@rootxkit/uspace-ui/ui";
+import { Button, cn, KpiRow, MapPanel, Panel, StatTile, StatusBadge, TABLE_NOWRAP } from "@rootxkit/uspace-ui/ui";
 import { AdapterIcon, AlarmIcon, ClockIcon, InboxIcon, RestrictionIcon } from "../components/icons";
 import { toView } from "./adapt";
 import { statusLine, switchFor, type ApiAdapter } from "./adapters";
@@ -279,7 +279,7 @@ export function OverviewPage() {
                   <tbody>
                     {recent.map((r) => (
                       <tr key={r.id} className="border-b border-border last:border-b-0 hover:bg-hover" data-restriction={r.identifier} data-state={r.state}>
-                        <td className="px-4 py-2.5">
+                        <td className={cn("px-4 py-2.5", TABLE_NOWRAP)}>
                           <Link href={`/${lang}/restrictions/${r.id}`} className="font-mono font-semibold underline underline-offset-2">
                             {r.identifier}
                           </Link>
@@ -290,7 +290,7 @@ export function OverviewPage() {
                         <td className="px-4 py-2.5 text-xs">
                           <Time iso={r.starts_at} /> – <Time iso={r.ends_at} />
                         </td>
-                        <td className="px-4 py-2.5 font-mono text-xs">{r.uspace_airspace_id}</td>
+                        <td className={cn("px-4 py-2.5 font-mono text-xs", TABLE_NOWRAP)}>{r.uspace_airspace_id}</td>
                       </tr>
                     ))}
                   </tbody>

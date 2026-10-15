@@ -8,7 +8,7 @@
 import Link from "next/link";
 import { useMemo, useState } from "react";
 import { useLang, useT } from "@rootxkit/uspace-ui/i18n";
-import { Button, MapPanel, Panel } from "@rootxkit/uspace-ui/ui";
+import { Button, cn, MapPanel, Panel, TABLE_NOWRAP } from "@rootxkit/uspace-ui/ui";
 import { ConsoleMap } from "./ConsoleMap";
 import { useConsole } from "./context";
 import { toView } from "./adapt";
@@ -156,7 +156,7 @@ export function RestrictionsPage() {
                   const alarms = openAlarmsOf(r.id, live.alarms);
                   return (
                     <tr key={r.id} className="border-b border-border align-top last:border-b-0 hover:bg-hover" data-restriction={r.identifier} data-state={r.state}>
-                      <td className="px-4 py-2.5">
+                      <td className={cn("px-4 py-2.5", TABLE_NOWRAP)}>
                         <Link href={`/${lang}/restrictions/${r.id}`} className="font-mono font-semibold underline underline-offset-2">
                           {r.identifier}
                         </Link>
@@ -167,8 +167,8 @@ export function RestrictionsPage() {
                       <td className="px-4 py-2.5">
                         <Time iso={r.starts_at} /> – <Time iso={r.ends_at} />
                       </td>
-                      <td className="px-4 py-2.5 font-mono">{r.uspace_airspace_id}</td>
-                      <td className="px-4 py-2.5" data-testid="version">
+                      <td className={cn("px-4 py-2.5 font-mono", TABLE_NOWRAP)}>{r.uspace_airspace_id}</td>
+                      <td className={cn("px-4 py-2.5", TABLE_NOWRAP)} data-testid="version">
                         {t("ansp.restrictions.version", { version: r.ansp_version })}
                       </td>
                       <td className="px-4 py-2.5">
