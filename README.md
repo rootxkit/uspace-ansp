@@ -19,15 +19,19 @@ EUROCAE ED-318 (restriction features).
 
 ## Status
 
-Planning. `docs/PLAN.md` is the implementation plan; `docs/WORKPACKAGES/`
-holds one brief per work package (WP-0 to WP-13, five waves); `CLAUDE.md`
-holds the rules. No product code yet: WP-0 scaffolds the module.
+Work packages WP-0 to WP-13 are built. The release is prepared as 1.0.0
+(N-M3) but not tagged: `CHANGELOG.md` holds it under Unreleased, and
+`docs/runbooks/release.md` says how it is cut. The N-M1 and N-M2 live
+proofs are recorded in `docs/runbooks/n-m1.md` and `n-m2.md`; the ones
+that need a supervisor session are open in `docs/BACKLOG.md`.
+`docs/PLAN.md` is the implementation plan; `docs/WORKPACKAGES/` holds one
+brief per work package; `CLAUDE.md` holds the rules.
 
 Milestones (spec `07` Phase 5): N-M0 scaffold and contracts, N-M1
 restrictions and manned feed (first demo), N-M2 coordination and degraded
 paths, N-M3 release.
 
-## Layout (planned)
+## Layout
 
 ```
 cmd/api              restrictions, coordination, outbox, DSS and CIS clients, accounts, audit
