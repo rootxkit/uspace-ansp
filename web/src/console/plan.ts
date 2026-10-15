@@ -9,7 +9,7 @@ import { positionOf, verticesOfOutline } from "./outline";
 
 type ApiRestrictionCreate = components["schemas"]["RestrictionCreate"];
 
-export const VERTICAL_REFS = ["AMSL", "WGS84"] as const;
+export const VERTICAL_REFS = ["AGL", "AMSL", "WGS84"] as const;
 export const ZONE_TYPES = ["PROHIBITED", "REQ_AUTHORIZATION"] as const;
 
 /** The form's shape (api/openapi.yaml RestrictionCreate members); meaning is the API's. */

@@ -44,7 +44,7 @@ describe("consoleClient", () => {
 
   it("maps a 400 problem to its slug and its field errors", async () => {
     const errors = [
-      { field: "lower_ref", reason: "AGL is not supported for a dynamic restriction in this release" },
+      { field: "lower_ref", reason: '"QNH" is not AGL, AMSL or WGS84' },
       { field: "geometry.coordinates[0][3]", reason: "self-intersection" },
     ];
     const { c } = client(() => problem(400, "invalid_request", errors));

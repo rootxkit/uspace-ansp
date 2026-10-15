@@ -70,9 +70,10 @@ describe("planBody", () => {
 });
 
 describe("planSchema", () => {
-  it("passes the shape, and refuses AGL, an empty reason and a time that is not UTC", () => {
+  it("passes the shape with every reference, and refuses another reference, an empty reason and a time that is not UTC", () => {
     expect(planSchema.safeParse(VALUES).success).toBe(true);
-    expect(planSchema.safeParse({ ...VALUES, lower_ref: "AGL" }).success).toBe(false);
+    expect(planSchema.safeParse({ ...VALUES, lower_ref: "AGL", upper_ref: "AGL" }).success).toBe(true);
+    expect(planSchema.safeParse({ ...VALUES, lower_ref: "QNH" }).success).toBe(false);
     expect(planSchema.safeParse({ ...VALUES, reason_text: "  " }).success).toBe(false);
     expect(planSchema.safeParse({ ...VALUES, starts_at: "2026-10-02T12:00:00+04:00" }).success).toBe(false);
   });
