@@ -24,6 +24,8 @@ export function ConsoleMap(props: {
   onSelect?(identifier: string): void;
   children?: ReactNode;
   className?: string;
+  /** Fill the positioned box around it (the kit's MapPanel) instead of setting a height. */
+  fill?: boolean;
 }) {
   const t = useT();
   const { lang } = useLang();
@@ -37,13 +39,13 @@ export function ConsoleMap(props: {
   );
   if (cfg.mapView === null) {
     return (
-      <p role="alert" data-testid="map-not-configured" className="m-0 p-4 text-[var(--us-danger)]">
+      <p role="alert" data-testid="map-not-configured" className="m-0 p-4 text-status-critical">
         {t("ansp.map.not_configured", { problem: cfg.mapViewProblem ?? "" })}
       </p>
     );
   }
   return (
-    <div className={`relative ${props.className ?? "h-[50vh]"}`} data-testid="console-map">
+    <div className={props.fill === true ? "absolute inset-0" : `relative ${props.className ?? "h-[50vh]"}`} data-testid="console-map">
       {origin !== null && (
         <MapView
           className="absolute inset-0"

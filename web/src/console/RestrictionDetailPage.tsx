@@ -11,7 +11,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { inputToUtc } from "@rootxkit/uspace-ui/form";
 import { useLang, useT } from "@rootxkit/uspace-ui/i18n";
-import { Input, Label } from "@rootxkit/uspace-ui/ui";
+import { Button, Input, Label, MapPanel } from "@rootxkit/uspace-ui/ui";
 import { toView } from "./adapt";
 import { ConsoleMap } from "./ConsoleMap";
 import { useConsole, useLoad } from "./context";
@@ -19,7 +19,7 @@ import type { ApiAlarm, ApiRestriction } from "./delivery";
 import { mergeAlarm, mergeState, stateBodyOf, type ApiStateBody } from "./restrictions";
 import { AlarmList, DeliveryLines } from "./RestrictionsPage";
 import { maySupervise } from "./roles";
-import { Loading, ProblemNotice, ReasonAction, Section, StateBadge, Time, utcText } from "./ui";
+import { ConsolePageHeader, Loading, ProblemNotice, ReasonAction, Section, StateBadge, Time, utcText } from "./ui";
 
 /** The frames of one restriction the page keeps. Display-only bound. */
 const FRAMES_KEPT = 50;
@@ -36,7 +36,7 @@ function Row({ labelKey, children }: { labelKey: string; children: React.ReactNo
 
 function Json({ value, testId }: { value: unknown; testId: string }) {
   return (
-    <pre data-testid={testId} className="m-0 max-h-80 overflow-auto rounded border border-[var(--us-border)] bg-[var(--us-surface-sunken)] p-2 text-xs">
+    <pre data-testid={testId} className="m-0 max-h-80 overflow-auto rounded-md border border-border bg-surface-sunken p-3 text-xs">
       {JSON.stringify(value, null, 2)}
     </pre>
   );
@@ -48,7 +48,7 @@ function Acts({ r, onDone }: { r: ApiRestriction; onDone(): void }) {
   const { lang } = useLang();
   const { client, role } = useConsole();
   const [endsLocal, setEndsLocal] = useState("");
-  if (!maySupervise(role)) return <p className="m-0 text-xs text-[var(--us-text-muted)]">{t("ansp.detail.acts_role")}</p>;
+  if (!maySupervise(role)) return <p className="m-0 text-xs text-muted-foreground">{t("ansp.detail.acts_role")}</p>;
   const vars = {
     identifier: r.identifier,
     version: r.ansp_version,
@@ -59,7 +59,7 @@ function Acts({ r, onDone }: { r: ApiRestriction; onDone(): void }) {
   const newEnds = inputToUtc(endsLocal);
   const path = { params: { path: { id: r.id } } };
   return (
-    <div className="flex flex-wrap items-start gap-4" data-testid="acts">
+    <div className="flex flex-wrap items-start gap-4 rounded-lg border border-border bg-card p-4 shadow-panel" data-testid="acts">
       {r.state === "planned" && (
         <ReasonAction
           labelKey="ansp.act.activate"
@@ -163,24 +163,40 @@ export function RestrictionDetailPage({ id }: { id: string }) {
     alarmsLoad.reload();
   };
 
-  if (loaded.failure !== null && r === null) return <ProblemNotice failure={loaded.failure} />;
-  if (r === null) return <Loading />;
+  if (r === null) {
+    return (
+      <div className="flex flex-col gap-6">
+        <ConsolePageHeader titleKey="ansp.detail.title" />
+        {loaded.failure !== null ? <ProblemNotice failure={loaded.failure} /> : <Loading />}
+      </div>
+    );
+  }
   const open = live.alarms.filter((a) => a.state !== "cleared");
 
   return (
-    <div className="flex flex-col gap-4" data-testid="restriction-detail" data-state={r.state}>
-      <div className="flex flex-wrap items-center gap-3">
-        <h2 className="m-0 font-mono text-lg font-semibold">{r.identifier}</h2>
-        <StateBadge state={r.state} />
-        <span data-testid="version">{t("ansp.restrictions.version", { version: r.ansp_version })}</span>
-        <Link href={`/${lang}/restrictions`} className="text-sm underline">
-          {t("ansp.detail.back")}
-        </Link>
-      </div>
+    <div className="flex flex-col gap-6" data-testid="restriction-detail" data-state={r.state}>
+      <ConsolePageHeader
+        titleKey="ansp.detail.title"
+        title={<span className="font-mono">{r.identifier}</span>}
+        description={r.reason_text}
+        meta={
+          <>
+            <StateBadge state={r.state} />
+            <span data-testid="version" className="text-sm font-semibold text-muted-foreground">
+              {t("ansp.restrictions.version", { version: r.ansp_version })}
+            </span>
+          </>
+        }
+        actions={
+          <Button asChild variant="outline" size="sm">
+            <Link href={`/${lang}/restrictions`}>{t("ansp.detail.back")}</Link>
+          </Button>
+        }
+      />
       {loaded.failure !== null && <ProblemNotice failure={loaded.failure} />}
       <Acts r={r} onDone={reloadAll} />
-      <div className="flex flex-col gap-4 lg:flex-row">
-        <div className="flex flex-1 flex-col gap-4">
+      <div className="flex flex-col gap-6 lg:flex-row lg:items-start">
+        <div className="flex min-w-0 flex-1 flex-col gap-6">
           <Section titleKey="ansp.detail.summary">
             <dl className="m-0 grid grid-cols-[max-content_1fr] gap-x-4 gap-y-1 text-sm">
               <Row labelKey="ansp.detail.window">
@@ -261,10 +277,14 @@ export function RestrictionDetailPage({ id }: { id: string }) {
             )}
           </Section>
         </div>
-        <div className="flex flex-col gap-1 lg:w-[40%]">
-          <ConsoleMap restrictions={views} />
-          {r.geometry.type === "Point" && <p className="m-0 text-xs text-[var(--us-text-muted)]">{t("ansp.map.circle_centre_only", { count: 1 })}</p>}
-        </div>
+        <MapPanel
+          title={t("ansp.map.title")}
+          className="lg:w-[40%]"
+          mapClassName="h-[30rem]"
+          {...(r.geometry.type === "Point" ? { footer: <p className="m-0 text-xs text-muted-foreground">{t("ansp.map.circle_centre_only", { count: 1 })}</p> } : {})}
+        >
+          <ConsoleMap restrictions={views} fill />
+        </MapPanel>
       </div>
       <Section titleKey="ansp.detail.versions">
         {versions.failure !== null && <ProblemNotice failure={versions.failure} />}
@@ -273,26 +293,26 @@ export function RestrictionDetailPage({ id }: { id: string }) {
         ) : (
           <table className="w-full border-collapse text-sm" data-testid="versions">
             <thead>
-              <tr className="border-b border-[var(--us-border)]">
-                <th className="p-1 text-start">{t("ansp.detail.version.version")}</th>
-                <th className="p-1 text-start">{t("ansp.detail.version.state")}</th>
-                <th className="p-1 text-start">{t("ansp.detail.version.by")}</th>
-                <th className="p-1 text-start">{t("ansp.detail.version.at")}</th>
-                <th className="p-1 text-start">{t("ansp.detail.version.reason")}</th>
+              <tr className="border-b border-border bg-panel-header text-muted-foreground">
+                <th className="px-3 py-2 text-start font-semibold">{t("ansp.detail.version.version")}</th>
+                <th className="px-3 py-2 text-start font-semibold">{t("ansp.detail.version.state")}</th>
+                <th className="px-3 py-2 text-start font-semibold">{t("ansp.detail.version.by")}</th>
+                <th className="px-3 py-2 text-start font-semibold">{t("ansp.detail.version.at")}</th>
+                <th className="px-3 py-2 text-start font-semibold">{t("ansp.detail.version.reason")}</th>
               </tr>
             </thead>
             <tbody>
               {versions.data.map((v) => (
-                <tr key={v.version} className="border-b border-[var(--us-border)]">
-                  <td className="p-1">{v.version}</td>
-                  <td className="p-1">
+                <tr key={v.version} className="border-b border-border">
+                  <td className="px-3 py-2">{v.version}</td>
+                  <td className="px-3 py-2">
                     <StateBadge state={v.state} />
                   </td>
-                  <td className="p-1">{t(`ansp.changed_by.${v.changed_by}`)}</td>
-                  <td className="p-1">
+                  <td className="px-3 py-2">{t(`ansp.changed_by.${v.changed_by}`)}</td>
+                  <td className="px-3 py-2">
                     <Time iso={v.changed_at} />
                   </td>
-                  <td className="p-1">{v.change_reason}</td>
+                  <td className="px-3 py-2">{v.change_reason}</td>
                 </tr>
               ))}
             </tbody>

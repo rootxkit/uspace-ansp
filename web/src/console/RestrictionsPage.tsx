@@ -8,12 +8,13 @@
 import Link from "next/link";
 import { useMemo, useState } from "react";
 import { useLang, useT } from "@rootxkit/uspace-ui/i18n";
+import { Button, MapPanel, Panel } from "@rootxkit/uspace-ui/ui";
 import { ConsoleMap } from "./ConsoleMap";
 import { useConsole } from "./context";
 import { toView } from "./adapt";
 import { deliveryLines, openAlarmsOf, type ApiAlarm, type ApiRestriction } from "./delivery";
 import { maySupervise } from "./roles";
-import { Empty, Loading, ProblemNotice, ReasonAction, StateBadge, Time, timesShown } from "./ui";
+import { ConsolePageHeader, Empty, Loading, ProblemNotice, ReasonAction, Section, StateBadge, Time, timesShown } from "./ui";
 import { useRestrictions } from "./useRestrictions";
 
 const FILTERS = ["all", "planned", "active", "ended", "cancelled"] as const;
@@ -27,7 +28,7 @@ export function DeliveryLines({ restriction, alarms }: { restriction: ApiRestric
       {deliveryLines(restriction, alarms).map((l) => (
         <li
           key={l.key}
-          className={`list-none ${l.attention ? "font-semibold text-[var(--us-danger)]" : ""}`}
+          className={`list-none ${l.attention ? "font-semibold text-status-critical" : ""}`}
           data-key={l.key}
           data-attention={l.attention}
         >
@@ -46,14 +47,20 @@ export function AlarmList({ alarms, onChanged }: { alarms: readonly ApiAlarm[]; 
   const open = alarms.filter((a) => a.state !== "cleared");
   if (open.length === 0) return <Empty textKey="ansp.alarms.none" testId="alarms-none" />;
   return (
-    <ul className="m-0 flex flex-col gap-2 p-0" data-testid="alarms">
+    <div className="flex flex-col gap-2" data-testid="alarms">
       {open.map((a) => (
-        <li key={a.id} role="alert" className="list-none rounded border border-[var(--us-danger)] p-2 text-sm" data-kind={a.kind} data-state={a.state}>
-          <p className="m-0 font-semibold text-[var(--us-danger)]">
+        <div
+          key={a.id}
+          role="alert"
+          className="flex flex-col gap-1 rounded-lg border border-status-critical-border bg-status-critical-soft p-3 text-sm"
+          data-kind={a.kind}
+          data-state={a.state}
+        >
+          <p className="m-0 font-semibold text-status-critical">
             {t(`ansp.alarm.kind.${a.kind}`)} · {t(`ansp.alarm.state.${a.state}`)}
           </p>
           <p className="m-0">{a.detail}</p>
-          <p className="m-0 text-xs text-[var(--us-text-muted)]">{t("ansp.alarm.since", timesShown({ since: a.since }, lang))}</p>
+          <p className="m-0 text-xs text-muted-foreground">{t("ansp.alarm.since", timesShown({ since: a.since }, lang))}</p>
           {a.state === "open" && maySupervise(role) && (
             <ReasonAction
               labelKey="ansp.alarm.acknowledge"
@@ -65,9 +72,9 @@ export function AlarmList({ alarms, onChanged }: { alarms: readonly ApiAlarm[]; 
               testId={`acknowledge-${a.id}`}
             />
           )}
-        </li>
+        </div>
       ))}
-    </ul>
+    </div>
   );
 }
 
@@ -80,40 +87,51 @@ export function RestrictionsPage() {
   const circles = (live.restrictions ?? []).filter((r) => r.geometry.type === "Point").length;
 
   return (
-    <div className="flex flex-col gap-4">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <h2 className="m-0 text-lg font-semibold">{t("ansp.restrictions.title")}</h2>
-        <Link href={`/${lang}/restrictions/new`} className="text-sm underline" data-testid="plan-link">
-          {t("ansp.restrictions.plan")}
-        </Link>
-      </div>
-      <p className="m-0 text-xs text-[var(--us-text-muted)]" data-testid="list-cis">
-        {live.cisVersion === null
-          ? t("ansp.restrictions.cis_none")
-          : t("ansp.restrictions.cis", { version: live.cisVersion, age: live.cisAgeS === null ? "—" : Math.round(live.cisAgeS) })}
-      </p>
-      <section aria-label={t("ansp.alarms.label")} className="flex flex-col gap-2">
-        <h3 className="m-0 text-base font-semibold">{t("ansp.alarms.title")}</h3>
+    <div className="flex flex-col gap-6">
+      <ConsolePageHeader
+        titleKey="ansp.restrictions.title"
+        descriptionKey="ansp.restrictions.description"
+        meta={
+          <span className="text-xs text-muted-foreground" data-testid="list-cis">
+            {live.cisVersion === null
+              ? t("ansp.restrictions.cis_none")
+              : t("ansp.restrictions.cis", { version: live.cisVersion, age: live.cisAgeS === null ? "—" : Math.round(live.cisAgeS) })}
+          </span>
+        }
+        actions={
+          <Button asChild size="sm">
+            <Link href={`/${lang}/restrictions/new`} data-testid="plan-link">
+              {t("ansp.restrictions.plan")}
+            </Link>
+          </Button>
+        }
+      />
+      <Section titleKey="ansp.alarms.title">
         {live.alarmsFailure !== null && <ProblemNotice failure={live.alarmsFailure} />}
         <AlarmList alarms={live.alarms} onChanged={live.reload} />
-      </section>
-      <div className="flex flex-col gap-4 lg:flex-row">
-        <div className="flex flex-1 flex-col gap-2">
-          <label className="flex items-center gap-2 text-sm">
-            {t("ansp.restrictions.filter")}
-            <select
-              value={filter}
-              onChange={(e) => setFilter(e.target.value as (typeof FILTERS)[number])}
-              className="rounded border border-[var(--us-border)] bg-[var(--us-surface)] px-2 py-1"
-              data-testid="state-filter"
-            >
-              {FILTERS.map((f) => (
-                <option key={f} value={f}>
-                  {t(`ansp.restrictions.filter.${f}`)}
-                </option>
-              ))}
-            </select>
-          </label>
+      </Section>
+      <div className="grid items-start gap-6 2xl:grid-cols-[minmax(0,1fr)_34rem]">
+        <Panel
+          title={t("ansp.restrictions.list_title")}
+          bodyClassName="flex flex-col gap-3"
+          actions={
+            <label className="flex items-center gap-2 text-sm">
+              {t("ansp.restrictions.filter")}
+              <select
+                value={filter}
+                onChange={(e) => setFilter(e.target.value as (typeof FILTERS)[number])}
+                className="h-8 rounded-md border border-border bg-card px-2 text-sm"
+                data-testid="state-filter"
+              >
+                {FILTERS.map((f) => (
+                  <option key={f} value={f}>
+                    {t(`ansp.restrictions.filter.${f}`)}
+                  </option>
+                ))}
+              </select>
+            </label>
+          }
+        >
           {live.failure !== null && <ProblemNotice failure={live.failure} />}
           {live.restrictions === null && live.failure === null && <Loading />}
           {live.restrictions !== null && live.restrictions.length === 0 && (
@@ -121,41 +139,42 @@ export function RestrictionsPage() {
           )}
           {live.truncated && <p className="m-0 text-xs">{t("ansp.restrictions.truncated")}</p>}
           {live.restrictions !== null && live.restrictions.length > 0 && (
+            <div className="overflow-x-auto rounded-md border border-border">
             <table className="w-full border-collapse text-sm" data-testid="restrictions-table">
               <thead>
-                <tr className="border-b border-[var(--us-border)] text-start">
-                  <th className="p-1 text-start">{t("ansp.restrictions.col.identifier")}</th>
-                  <th className="p-1 text-start">{t("ansp.restrictions.col.state")}</th>
-                  <th className="p-1 text-start">{t("ansp.restrictions.col.window")}</th>
-                  <th className="p-1 text-start">{t("ansp.restrictions.col.airspace")}</th>
-                  <th className="p-1 text-start">{t("ansp.restrictions.col.version")}</th>
-                  <th className="p-1 text-start">{t("ansp.restrictions.col.delivery")}</th>
+                <tr className="border-b border-border bg-panel-header text-start text-xs text-muted-foreground">
+                  <th className="px-4 py-2 text-start font-semibold">{t("ansp.restrictions.col.identifier")}</th>
+                  <th className="px-4 py-2 text-start font-semibold">{t("ansp.restrictions.col.state")}</th>
+                  <th className="px-4 py-2 text-start font-semibold">{t("ansp.restrictions.col.window")}</th>
+                  <th className="px-4 py-2 text-start font-semibold">{t("ansp.restrictions.col.airspace")}</th>
+                  <th className="px-4 py-2 text-start font-semibold">{t("ansp.restrictions.col.version")}</th>
+                  <th className="min-w-[18rem] px-4 py-2 text-start font-semibold">{t("ansp.restrictions.col.delivery")}</th>
                 </tr>
               </thead>
               <tbody>
                 {live.restrictions.map((r) => {
                   const alarms = openAlarmsOf(r.id, live.alarms);
                   return (
-                    <tr key={r.id} className="border-b border-[var(--us-border)] align-top" data-restriction={r.identifier} data-state={r.state}>
-                      <td className="p-1">
-                        <Link href={`/${lang}/restrictions/${r.id}`} className="font-mono underline">
+                    <tr key={r.id} className="border-b border-border align-top last:border-b-0 hover:bg-hover" data-restriction={r.identifier} data-state={r.state}>
+                      <td className="px-4 py-2.5">
+                        <Link href={`/${lang}/restrictions/${r.id}`} className="font-mono font-semibold underline underline-offset-2">
                           {r.identifier}
                         </Link>
                       </td>
-                      <td className="p-1">
+                      <td className="px-4 py-2.5">
                         <StateBadge state={r.state} />
                       </td>
-                      <td className="p-1">
+                      <td className="px-4 py-2.5">
                         <Time iso={r.starts_at} /> – <Time iso={r.ends_at} />
                       </td>
-                      <td className="p-1 font-mono">{r.uspace_airspace_id}</td>
-                      <td className="p-1" data-testid="version">
+                      <td className="px-4 py-2.5 font-mono">{r.uspace_airspace_id}</td>
+                      <td className="px-4 py-2.5" data-testid="version">
                         {t("ansp.restrictions.version", { version: r.ansp_version })}
                       </td>
-                      <td className="p-1">
+                      <td className="px-4 py-2.5">
                         <DeliveryLines restriction={r} alarms={alarms} />
                         {alarms.length > 0 && (
-                          <p className="m-0 font-semibold text-[var(--us-danger)]">{t("ansp.restrictions.alarms_open", { count: alarms.length })}</p>
+                          <p className="m-0 font-semibold text-status-critical">{t("ansp.restrictions.alarms_open", { count: alarms.length })}</p>
                         )}
                       </td>
                     </tr>
@@ -163,12 +182,16 @@ export function RestrictionsPage() {
                 })}
               </tbody>
             </table>
+            </div>
           )}
-        </div>
-        <div className="flex flex-col gap-1 lg:w-[40%]">
-          <ConsoleMap restrictions={views} />
-          {circles > 0 && <p className="m-0 text-xs text-[var(--us-text-muted)]">{t("ansp.map.circle_centre_only", { count: circles })}</p>}
-        </div>
+        </Panel>
+        <MapPanel
+          title={t("ansp.map.title")}
+          mapClassName="h-[32rem]"
+          {...(circles > 0 ? { footer: <p className="m-0 text-xs text-muted-foreground">{t("ansp.map.circle_centre_only", { count: circles })}</p> } : {})}
+        >
+          <ConsoleMap restrictions={views} fill />
+        </MapPanel>
       </div>
     </div>
   );

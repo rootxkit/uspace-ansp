@@ -13,3 +13,13 @@ body {
   background: var(--us-surface);
   color: var(--us-text);
 }
+
+/* The sidebar's width: the console's page names are long, in Georgian
+   longer (a frame dimension, not a meaning token). */
+:root {
+  --us-sidebar-width: 16.5rem;
+}
+
+html[lang="ka"] {
+  --us-sidebar-width: 21rem;
+}

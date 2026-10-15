@@ -52,8 +52,11 @@ async function signIn(page: Page, who: { username: string; password: string }, e
   }
   await page.getByLabel(/Code from your authenticator/).fill(CODE);
   await page.getByTestId("login-submit").click();
-  await expect(page).toHaveURL(/\/en\/restrictions$/);
+  // The page after sign-in is the overview; the flows below start on the list.
+  await expect(page).toHaveURL(/\/en\/overview$/);
   await expect(page.getByTestId("status-bar")).toHaveAttribute("data-connection", "live");
+  await page.getByRole("link", { name: "Restrictions", exact: true }).click();
+  await expect(page).toHaveURL(/\/en\/restrictions$/);
 }
 
 test.beforeEach(async ({ request }) => {

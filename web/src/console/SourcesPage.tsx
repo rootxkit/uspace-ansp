@@ -15,7 +15,7 @@ import { statusLine, switchFor, TYPE_INSTANCE } from "./adapters";
 import { useConsole, useLoad } from "./context";
 import { mayAdminister } from "./roles";
 import { isEnabled, SOURCE_TYPE, switchAuditEntity, switchBody, switchRows } from "./sources";
-import { Empty, Loading, ProblemNotice, ReasonAction, Time, timesShown } from "./ui";
+import { ConsolePageHeader, Empty, Loading, ProblemNotice, ReasonAction, Time, timesShown } from "./ui";
 
 /** How often the page reads the switches again. Display-only. */
 export const READ_PERIOD_MS = 10_000;
@@ -39,9 +39,8 @@ export function SourcesPage() {
   const rows = sources.data === null ? null : switchRows(adapters.data ?? [], sources.data);
 
   return (
-    <div className="flex flex-col gap-4">
-      <h2 className="m-0 text-lg font-semibold">{t("ansp.sources.title")}</h2>
-      <p className="m-0 text-xs text-[var(--us-text-muted)]">{t(admin ? "ansp.sources.intro_admin" : "ansp.sources.intro_reader")}</p>
+    <div className="flex flex-col gap-6">
+      <ConsolePageHeader titleKey="ansp.sources.title" descriptionKey={admin ? "ansp.sources.intro_admin" : "ansp.sources.intro_reader"} />
       {sources.failure !== null && <ProblemNotice failure={sources.failure} />}
       {adapters.failure !== null && (
         <div>
@@ -59,7 +58,7 @@ export function SourcesPage() {
             return (
               <li
                 key={row.instance}
-                className={`flex list-none flex-col gap-1 rounded border p-3 text-sm ${enabled ? "border-[var(--us-border)]" : "border-[var(--us-danger)]"}`}
+                className={`flex list-none flex-col gap-1 rounded-lg border p-4 text-sm shadow-panel ${enabled ? "border-border bg-card" : "border-status-critical-border bg-status-critical-soft"}`}
                 data-testid="switch"
                 data-instance={row.instance}
                 data-enabled={enabled}
@@ -67,7 +66,7 @@ export function SourcesPage() {
                 <p className="m-0 font-semibold">
                   {name} <code className="font-normal">{`${SOURCE_TYPE}/${row.instance}`}</code>
                 </p>
-                <p className={`m-0 ${enabled ? "" : "font-semibold text-[var(--us-danger)]"}`} data-testid="switch-state">
+                <p className={`m-0 ${enabled ? "" : "font-semibold text-status-critical"}`} data-testid="switch-state">
                   {row.control === null
                     ? t("ansp.sources.none_set")
                     : t(row.control.enabled ? "ansp.sources.enabled_by" : "ansp.sources.disabled_by", {
@@ -80,7 +79,7 @@ export function SourcesPage() {
                 {line !== null && <p className="m-0 text-xs">{t(line.key, timesShown(line.vars, lang))}</p>}
                 {row.adapter === null && row.instance !== TYPE_INSTANCE && <p className="m-0 text-xs">{t("ansp.sources.not_registered")}</p>}
                 {row.control !== null && (
-                  <p className="m-0 text-xs text-[var(--us-text-muted)]">
+                  <p className="m-0 text-xs text-muted-foreground">
                     {t("ansp.sources.changed")} <Time iso={row.control.changed_at} />
                     {admin && (
                       <>

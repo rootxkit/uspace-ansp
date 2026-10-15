@@ -103,7 +103,7 @@ export function LoginPage() {
         setStep("otp");
         return;
       }
-      router.replace(`/${lang}/restrictions`);
+      router.replace(`/${lang}/overview`);
     } catch {
       setRefusal({ key: "ansp.login.problem.unavailable", detail: null, retryAfterS: null });
     } finally {
