@@ -603,5 +603,13 @@
   "ansp.overview.kpi.requests_waiting": "ელოდება ზედამხედველს",
   "ansp.overview.kpi.requests_none": "მომლოდინე არ არის",
   "ansp.overview.kpi.requests_oldest": "უძველესი მიღებულია {since}",
-  "ansp.overview.kpi.at_least": "{count}+"
+  "ansp.overview.kpi.at_least": "{count}+",
+  "ansp.overview.kpi.occurrences": "გაგზავნილი შემთხვევის შეტყობინებები",
+  "ansp.overview.kpi.occurrences_hint": "{sent} გაგზავნილი, {queued} რიგში, {failed} ვერ გაიგზავნა, {abandoned} მიტოვებული, {cancelled} გაუქმებული",
+  "ansp.overview.kpi.occurrences_undelivered_one": "{count} ვერ გაიგზავნა ან მიტოვებულია",
+  "ansp.overview.kpi.occurrences_undelivered_other": "{count} ვერ გაიგზავნა ან მიტოვებულია",
+  "ansp.overview.kpi.occurrences_queued_one": "{count} რიგშია უწყებისთვის",
+  "ansp.overview.kpi.occurrences_queued_other": "{count} რიგშია უწყებისთვის",
+  "ansp.overview.kpi.occurrences_sent": "ყველა გაგზავნილია",
+  "ansp.overview.kpi.occurrences_none": "არცერთი არ გაგზავნილა"
 }

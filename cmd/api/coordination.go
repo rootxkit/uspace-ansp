@@ -299,6 +299,22 @@ func (s apiServer) CreateOccurrence(w http.ResponseWriter, r *http.Request, para
 	writeJSON(w, status, q)
 }
 
+// GetOccurrenceSummary serves GET /v1/occurrences/summary
+// (watch_supervisor): the reports counted by the state of their
+// delivery to the authority, on the database clock.
+func (s apiServer) GetOccurrenceSummary(w http.ResponseWriter, r *http.Request) {
+	if s.co == nil || s.co.occ == nil {
+		apierr.WriteError(w, r, apierr.Unavailable(coordUnavailableRetry, "occurrence reports need the relational database and the outbox (ANSP_RELATIONAL_DSN)"))
+		return
+	}
+	sum, err := s.co.occ.Summary(r.Context())
+	if err != nil {
+		coordRefusal(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, sum)
+}
+
 func fieldProblems(errs []*core.FieldError) []apierr.FieldProblem {
 	out := make([]apierr.FieldProblem, 0, len(errs))
 	for _, e := range errs {

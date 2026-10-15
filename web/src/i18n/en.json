@@ -603,5 +603,13 @@
   "ansp.overview.kpi.requests_waiting": "Awaiting a supervisor",
   "ansp.overview.kpi.requests_none": "None waiting",
   "ansp.overview.kpi.requests_oldest": "Oldest received {since}",
-  "ansp.overview.kpi.at_least": "{count}+"
+  "ansp.overview.kpi.at_least": "{count}+",
+  "ansp.overview.kpi.occurrences": "Occurrence reports submitted",
+  "ansp.overview.kpi.occurrences_hint": "{sent} sent, {queued} queued, {failed} failed, {abandoned} abandoned, {cancelled} cancelled",
+  "ansp.overview.kpi.occurrences_undelivered_one": "{count} failed or abandoned",
+  "ansp.overview.kpi.occurrences_undelivered_other": "{count} failed or abandoned",
+  "ansp.overview.kpi.occurrences_queued_one": "{count} queued to the authority",
+  "ansp.overview.kpi.occurrences_queued_other": "{count} queued to the authority",
+  "ansp.overview.kpi.occurrences_sent": "All sent",
+  "ansp.overview.kpi.occurrences_none": "None submitted"
 }

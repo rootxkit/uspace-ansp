@@ -361,6 +361,7 @@ checked against an `Origin` allow-list; machine clients with a bearer
 | `GET /v1/sources`, `PUT /v1/sources/{type}/{instance}` | api | `04 §3.6`, U-15 | `admin` (write), session (read) | enable / disable by type (`manned`) and instance (adapter id), with reason; audited; 503 when KV cannot take it |
 | `GET /v1/policy`, `PUT /v1/policy` | api | INV-03 | `admin` | the thresholds row; a new `policy_version` |
 | `POST /v1/occurrences` | api | `01` N4, 376 Art. 4(8), `02 F7` | `watch_supervisor` | an ANSP staff occurrence report, queued to the authority's `POST /v1/occurrences` |
+| `GET /v1/occurrences/summary` | api | `01` N4, 376 Art. 4(8), `02 F7` | `watch_supervisor` | the occurrence reports counted by the state of their delivery to the authority (queued, sent, failed, abandoned, cancelled) for the overview; the newest 10000 by `became_aware_at`, one bounded read on the database clock |
 | `GET /v1/audit?entity=&since=` | api | `01` N4 | `admin` | the append-only events |
 | `POST /v1/auth/login`, `POST /v1/auth/mfa`, `POST /v1/auth/logout`, `GET /v1/auth/me` | api | `06 §3` | — / session | local accounts with mandatory TOTP; the BFF calls these and sets the `uspace_session` / `uspace_csrf` cookies (M21); the session JWT is `scope = "session"`, `roles: [role]`, `realm: "console"`, `aud` = this system's host (M20) |
 | `GET /v1/users`, `POST /v1/users`, `POST /v1/users/{id}/reset-mfa`, `POST /v1/users/{id}/disable` | api | `01 §4` users, `06 §3` | `admin` | console accounts and roles; every change audited |

@@ -142,6 +142,21 @@ type Undelivered struct {
 	DeliveryState string
 }
 
+// OccurrenceCounts is the reports counted by the state of their
+// delivery to the authority: counts only.
+type OccurrenceCounts struct {
+	// CountedAt is the database clock at the count.
+	CountedAt time.Time
+	Total     int64
+	Queued    int64
+	Sent      int64
+	Failed    int64
+	Abandoned int64
+	Cancelled int64
+	// Truncated: older reports exist than the newest limit counted.
+	Truncated bool
+}
+
 // AlarmRef is an open occurrence_undelivered alarm whose report is now
 // delivered.
 type AlarmRef struct {
@@ -165,6 +180,9 @@ type Repo interface {
 	// OccurrenceByDelivery is the report a delivery carries.
 	OccurrenceByDelivery(ctx context.Context, deliveryID string) (Occurrence, error)
 	Undelivered(ctx context.Context, now time.Time, after time.Duration, limit int) ([]Undelivered, error)
+	// OccurrenceCounts counts the newest limit reports by the state of
+	// their delivery, on the database clock.
+	OccurrenceCounts(ctx context.Context, limit int) (OccurrenceCounts, error)
 	DeliveredAlarms(ctx context.Context, limit int) ([]AlarmRef, error)
 }
 

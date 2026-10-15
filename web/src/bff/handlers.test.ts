@@ -359,7 +359,7 @@ describe("proxy", () => {
 
 describe("summaries", () => {
   const cookie = "uspace_session=tok123; uspace_csrf=csrf456";
-  const SUMMARIES = ["/v1/users/summary", "/v1/restriction-requests/summary"];
+  const SUMMARIES = ["/v1/users/summary", "/v1/restriction-requests/summary", "/v1/occurrences/summary"];
 
   it.each(SUMMARIES)("forwards GET %s with the bearer, and passes the API's 401 and 403 on", async (p) => {
     for (const status of [200, 401, 403]) {

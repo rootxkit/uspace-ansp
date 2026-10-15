@@ -2509,6 +2509,25 @@ type OccurrenceQueued struct {
 // OccurrenceQueuedState defines model for OccurrenceQueued.State.
 type OccurrenceQueuedState string
 
+// OccurrenceSummary The occurrence reports counted by the state of their delivery to
+// the authority (deliveries.state): counts only. counted_at is the
+// database clock; truncated says more reports existed than the
+// newest MaxOccurrencesCounted counted.
+type OccurrenceSummary struct {
+	ByState struct {
+		Abandoned int `json:"abandoned"`
+		Cancelled int `json:"cancelled"`
+		Failed    int `json:"failed"`
+		Queued    int `json:"queued"`
+		Sent      int `json:"sent"`
+	} `json:"by_state"`
+
+	// CountedAt RFC 3339 UTC with Z, millisecond precision (02 §1).
+	CountedAt Timestamp `json:"counted_at"`
+	Total     int       `json:"total"`
+	Truncated bool      `json:"truncated"`
+}
+
 // Policy defines model for Policy.
 type Policy struct {
 	// ChangedAt RFC 3339 UTC with Z, millisecond precision (02 §1).
@@ -4544,6 +4563,19 @@ type ClientInterface interface {
 	// Corresponds with POST /v1/occurrences (the `CreateOccurrence` operationId).
 	CreateOccurrence(ctx context.Context, params *CreateOccurrenceParams, body CreateOccurrenceJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// GetOccurrenceSummary The occurrence reports by delivery state
+	//
+	// The occurrence reports submitted to the authority, counted by the
+	// state of their outbox delivery (queued, sent, failed, abandoned,
+	// cancelled), for the overview's tile: counts only, no report_ref,
+	// narrative, reporter or aircraft. The newest
+	// MaxOccurrencesCounted (10000) reports by became_aware_at are
+	// counted in one bounded read over occurrence_reports_aware_idx on
+	// the database clock (counted_at); truncated says there were more.
+	//
+	// Corresponds with GET /v1/occurrences/summary (the `GetOccurrenceSummary` operationId).
+	GetOccurrenceSummary(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// GetCircleOutline The outline of a circle, drawn for the map
 	//
 	// The circle of radius_m about (lat, lng) as a closed GeoJSON
@@ -5661,6 +5693,29 @@ func (c *Client) CreateOccurrenceWithBody(ctx context.Context, params *CreateOcc
 // Corresponds with POST /v1/occurrences (the `CreateOccurrence` operationId).
 func (c *Client) CreateOccurrence(ctx context.Context, params *CreateOccurrenceParams, body CreateOccurrenceJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewCreateOccurrenceRequest(c.Server, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetOccurrenceSummary The occurrence reports by delivery state
+//
+// The occurrence reports submitted to the authority, counted by the
+// state of their outbox delivery (queued, sent, failed, abandoned,
+// cancelled), for the overview's tile: counts only, no report_ref,
+// narrative, reporter or aircraft. The newest
+// MaxOccurrencesCounted (10000) reports by became_aware_at are
+// counted in one bounded read over occurrence_reports_aware_idx on
+// the database clock (counted_at); truncated says there were more.
+//
+// Corresponds with GET /v1/occurrences/summary (the `GetOccurrenceSummary` operationId).
+func (c *Client) GetOccurrenceSummary(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetOccurrenceSummaryRequest(c.Server)
 	if err != nil {
 		return nil, err
 	}
@@ -7426,6 +7481,33 @@ func NewCreateOccurrenceRequestWithBody(server string, params *CreateOccurrenceP
 	return req, nil
 }
 
+// NewGetOccurrenceSummaryRequest constructs an http.Request for the GetOccurrenceSummary method
+func NewGetOccurrenceSummaryRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/occurrences/summary")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewGetCircleOutlineRequest constructs an http.Request for the GetCircleOutline method
 func NewGetCircleOutlineRequest(server string, params *GetCircleOutlineParams) (*http.Request, error) {
 	var err error
@@ -9034,6 +9116,21 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /v1/occurrences (the `CreateOccurrence` operationId).
 	CreateOccurrenceWithResponse(ctx context.Context, params *CreateOccurrenceParams, body CreateOccurrenceJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateOccurrenceResponse, error)
+
+	// GetOccurrenceSummaryWithResponse The occurrence reports by delivery state
+	//
+	// The occurrence reports submitted to the authority, counted by the
+	// state of their outbox delivery (queued, sent, failed, abandoned,
+	// cancelled), for the overview's tile: counts only, no report_ref,
+	// narrative, reporter or aircraft. The newest
+	// MaxOccurrencesCounted (10000) reports by became_aware_at are
+	// counted in one bounded read over occurrence_reports_aware_idx on
+	// the database clock (counted_at); truncated says there were more.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/occurrences/summary (the `GetOccurrenceSummary` operationId).
+	GetOccurrenceSummaryWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetOccurrenceSummaryResponse, error)
 
 	// GetCircleOutlineWithResponse The outline of a circle, drawn for the map
 	//
@@ -11316,6 +11413,82 @@ func (r CreateOccurrenceResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r CreateOccurrenceResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// GetOccurrenceSummaryResponse401Headers the declared response headers of an HTTP 401 response for GetOccurrenceSummary
+type GetOccurrenceSummaryResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+// GetOccurrenceSummaryResponse503Headers the declared response headers of an HTTP 503 response for GetOccurrenceSummary
+type GetOccurrenceSummaryResponse503Headers struct {
+	RetryAfter int
+}
+
+type GetOccurrenceSummaryResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *OccurrenceSummary
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *Unauthorized
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *Forbidden
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *Unavailable
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *GetOccurrenceSummaryResponse401Headers
+	// Headers503 the parsed response headers for an HTTP 503 response
+	Headers503 *GetOccurrenceSummaryResponse503Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetOccurrenceSummaryResponse) GetJSON200() *OccurrenceSummary {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r GetOccurrenceSummaryResponse) GetApplicationproblemJSON401() *Unauthorized {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r GetOccurrenceSummaryResponse) GetApplicationproblemJSON403() *Forbidden {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r GetOccurrenceSummaryResponse) GetApplicationproblemJSON503() *Unavailable {
+	return r.ApplicationproblemJSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r GetOccurrenceSummaryResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetOccurrenceSummaryResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetOccurrenceSummaryResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetOccurrenceSummaryResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -14183,6 +14356,27 @@ func (c *ClientWithResponses) CreateOccurrenceWithResponse(ctx context.Context, 
 	return ParseCreateOccurrenceResponse(rsp)
 }
 
+// GetOccurrenceSummaryWithResponse The occurrence reports by delivery state
+//
+// The occurrence reports submitted to the authority, counted by the
+// state of their outbox delivery (queued, sent, failed, abandoned,
+// cancelled), for the overview's tile: counts only, no report_ref,
+// narrative, reporter or aircraft. The newest
+// MaxOccurrencesCounted (10000) reports by became_aware_at are
+// counted in one bounded read over occurrence_reports_aware_idx on
+// the database clock (counted_at); truncated says there were more.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/occurrences/summary (the `GetOccurrenceSummary` operationId).
+func (c *ClientWithResponses) GetOccurrenceSummaryWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetOccurrenceSummaryResponse, error) {
+	rsp, err := c.GetOccurrenceSummary(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetOccurrenceSummaryResponse(rsp)
+}
+
 // GetCircleOutlineWithResponse The outline of a circle, drawn for the map
 //
 // The circle of radius_m about (lat, lng) as a closed GeoJSON
@@ -16529,6 +16723,76 @@ func ParseCreateOccurrenceResponse(rsp *http.Response) (*CreateOccurrenceRespons
 	return response, nil
 }
 
+// ParseGetOccurrenceSummaryResponse parses an HTTP response from a GetOccurrenceSummaryWithResponse call
+func ParseGetOccurrenceSummaryResponse(rsp *http.Response) (*GetOccurrenceSummaryResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetOccurrenceSummaryResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest OccurrenceSummary
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers GetOccurrenceSummaryResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	case rsp.StatusCode == 503:
+		var headers GetOccurrenceSummaryResponse503Headers
+		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.RetryAfter = value
+		}
+		response.Headers503 = &headers
+	}
+
+	return response, nil
+}
+
 // ParseGetCircleOutlineResponse parses an HTTP response from a GetCircleOutlineWithResponse call
 func ParseGetCircleOutlineResponse(rsp *http.Response) (*GetCircleOutlineResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -18665,6 +18929,9 @@ type ServerInterface interface {
 	// CreateOccurrence Report an occurrence
 	// (POST /v1/occurrences)
 	CreateOccurrence(w http.ResponseWriter, r *http.Request, params CreateOccurrenceParams)
+	// GetOccurrenceSummary The occurrence reports by delivery state
+	// (GET /v1/occurrences/summary)
+	GetOccurrenceSummary(w http.ResponseWriter, r *http.Request)
 	// GetCircleOutline The outline of a circle, drawn for the map
 	// (GET /v1/outlines/circle)
 	GetCircleOutline(w http.ResponseWriter, r *http.Request, params GetCircleOutlineParams)
@@ -19317,6 +19584,20 @@ func (siw *ServerInterfaceWrapper) CreateOccurrence(w http.ResponseWriter, r *ht
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.CreateOccurrence(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetOccurrenceSummary operation middleware
+func (siw *ServerInterfaceWrapper) GetOccurrenceSummary(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetOccurrenceSummary(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -20197,6 +20478,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/policy", wrapper.GetPolicy)
 	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/v1/policy", wrapper.PutPolicy)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/occurrences", wrapper.CreateOccurrence)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/occurrences/summary", wrapper.GetOccurrenceSummary)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/audit", wrapper.ListAudit)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/auth/login", wrapper.Login)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/auth/mfa", wrapper.VerifyMfa)
@@ -22284,6 +22566,79 @@ type CreateOccurrence503ApplicationProblemPlusJSONResponse struct {
 }
 
 func (response CreateOccurrence503ApplicationProblemPlusJSONResponse) VisitCreateOccurrenceResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetOccurrenceSummaryRequestObject struct {
+}
+
+type GetOccurrenceSummaryResponseObject interface {
+	VisitGetOccurrenceSummaryResponse(w http.ResponseWriter) error
+}
+
+type GetOccurrenceSummary200JSONResponse OccurrenceSummary
+
+func (response GetOccurrenceSummary200JSONResponse) VisitGetOccurrenceSummaryResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetOccurrenceSummary401ApplicationProblemPlusJSONResponse struct {
+	UnauthorizedApplicationProblemPlusJSONResponse
+}
+
+func (response GetOccurrenceSummary401ApplicationProblemPlusJSONResponse) VisitGetOccurrenceSummaryResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	if response.Headers.WWWAuthenticate != nil {
+		w.Header().Set("WWW-Authenticate", fmt.Sprint(*response.Headers.WWWAuthenticate))
+	}
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetOccurrenceSummary403ApplicationProblemPlusJSONResponse struct {
+	ForbiddenApplicationProblemPlusJSONResponse
+}
+
+func (response GetOccurrenceSummary403ApplicationProblemPlusJSONResponse) VisitGetOccurrenceSummaryResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetOccurrenceSummary503ApplicationProblemPlusJSONResponse struct {
+	UnavailableApplicationProblemPlusJSONResponse
+}
+
+func (response GetOccurrenceSummary503ApplicationProblemPlusJSONResponse) VisitGetOccurrenceSummaryResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
@@ -24933,6 +25288,9 @@ type StrictServerInterface interface {
 	// CreateOccurrence Report an occurrence
 	// (POST /v1/occurrences)
 	CreateOccurrence(ctx context.Context, request CreateOccurrenceRequestObject) (CreateOccurrenceResponseObject, error)
+	// GetOccurrenceSummary The occurrence reports by delivery state
+	// (GET /v1/occurrences/summary)
+	GetOccurrenceSummary(ctx context.Context, request GetOccurrenceSummaryRequestObject) (GetOccurrenceSummaryResponseObject, error)
 	// GetCircleOutline The outline of a circle, drawn for the map
 	// (GET /v1/outlines/circle)
 	GetCircleOutline(ctx context.Context, request GetCircleOutlineRequestObject) (GetCircleOutlineResponseObject, error)
@@ -25669,6 +26027,30 @@ func (sh *strictHandler) CreateOccurrence(w http.ResponseWriter, r *http.Request
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(CreateOccurrenceResponseObject); ok {
 		if err := validResponse.VisitCreateOccurrenceResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetOccurrenceSummary operation middleware
+func (sh *strictHandler) GetOccurrenceSummary(w http.ResponseWriter, r *http.Request) {
+	var request GetOccurrenceSummaryRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetOccurrenceSummary(ctx, request.(GetOccurrenceSummaryRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetOccurrenceSummary")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetOccurrenceSummaryResponseObject); ok {
+		if err := validResponse.VisitGetOccurrenceSummaryResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

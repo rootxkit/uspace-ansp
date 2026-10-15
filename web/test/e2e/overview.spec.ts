@@ -141,13 +141,15 @@ test("the admin's overview counts the console accounts; nobody else is shown or 
   expect((await request.get("/_bff/api/v1/users/summary")).status()).toBe(401);
 });
 
-test("a viewer's overview has no accounts or requests tile and the API refuses it both summaries", async ({ page }) => {
+test("a viewer's overview has no accounts, requests or occurrence tile and the API refuses it each summary", async ({ page }) => {
   await signIn(page, VIEWER);
   await expect(page.getByTestId("kpi-active")).toHaveAttribute("data-value", "0");
   await expect(page.getByTestId("kpi-users")).toHaveCount(0);
   await expect(page.getByTestId("kpi-requests")).toHaveCount(0);
+  await expect(page.getByTestId("kpi-occurrences")).toHaveCount(0);
   expect(await bffStatus(page, "/v1/users/summary")).toBe(403);
   expect(await bffStatus(page, "/v1/restriction-requests/summary")).toBe(403);
+  expect(await bffStatus(page, "/v1/occurrences/summary")).toBe(403);
   expect(await bffStatus(page, "/v1/restriction-requests")).toBe(403);
   // Its requests page opens a request by its id and says why there is no list.
   await page.getByRole("navigation", { name: "Main navigation" }).getByRole("link", { name: "Restriction requests" }).click();
@@ -173,4 +175,40 @@ test("the supervisor's requests tile counts the requests awaiting a decision and
   await page.getByRole("navigation", { name: "Main navigation" }).getByRole("link", { name: "Overview" }).click();
   await expect(tile).toHaveAttribute("data-value", "0");
   await expect(tile).toContainText("None waiting");
+});
+
+test("the supervisor's occurrence tile counts the reports by the state of their delivery", async ({ page, request }) => {
+  await signIn(page);
+  const tile = page.getByTestId("kpi-occurrences");
+  await expect(tile).toHaveAttribute("data-value", "0");
+  await expect(tile).toContainText("None submitted");
+  expect(await bffStatus(page, "/v1/occurrences/summary", "PUT")).toBe(405);
+  expect((await request.get("/_bff/api/v1/occurrences/summary")).status()).toBe(401);
+
+  await page.getByRole("navigation", { name: "Main navigation" }).getByRole("link", { name: "Report an occurrence" }).click();
+  await page.getByTestId("occ-occurred_at").fill("2026-10-02T11:20");
+  await page.getByTestId("occ-became_aware_at").fill("2026-10-02T11:25");
+  await page.getByTestId("occ-narrative").fill("Synthetic airprox between a UAS and a manned aircraft.");
+  await page.getByTestId("occ-submit").click();
+  await expect(page.getByTestId("occurrence-queued")).toContainText("ANSP-OCC-2026-0001");
+  await page.getByRole("navigation", { name: "Main navigation" }).getByRole("link", { name: "Overview" }).click();
+  await expect(tile).toHaveAttribute("data-value", "1");
+  await expect(tile).toContainText("1 queued to the authority");
+  await expect(tile).toContainText("0 sent, 1 queued, 0 failed, 0 abandoned, 0 cancelled");
+
+  // The outbox's outcome, as the API states it: sent, then a failed one.
+  await control(request, "/__mock/occurrence", { state: "sent" });
+  await page.reload();
+  await expect(tile).toContainText("All sent");
+  await expect(tile).toContainText("1 sent, 0 queued");
+  await page.getByRole("navigation", { name: "Main navigation" }).getByRole("link", { name: "Report an occurrence" }).click();
+  await page.getByTestId("occ-occurred_at").fill("2026-10-02T12:20");
+  await page.getByTestId("occ-became_aware_at").fill("2026-10-02T12:25");
+  await page.getByTestId("occ-narrative").fill("Second synthetic report.");
+  await page.getByTestId("occ-submit").click();
+  await expect(page.getByTestId("occurrence-queued")).toContainText("ANSP-OCC-2026-0002");
+  await control(request, "/__mock/occurrence", { state: "failed" });
+  await page.getByRole("navigation", { name: "Main navigation" }).getByRole("link", { name: "Overview" }).click();
+  await expect(tile).toHaveAttribute("data-value", "2");
+  await expect(tile).toContainText("1 failed or abandoned");
 });

@@ -34,6 +34,8 @@
 //                                         and its source/status/v1 in sources[])
 //   POST /__mock/notice {...}             a coordination notice received (or changed); one frame
 //   POST /__mock/escalate {ack_id}        the inbox ticker's escalation of a notice; one frame
+//   POST /__mock/occurrence {state}       the outbox's outcome for the newest report queued
+//                                         (sent, failed, abandoned, cancelled)
 //   POST /__mock/account {username, status}
 //                                         an account disabled or active again (the users summary)
 //
@@ -121,6 +123,8 @@ function reset() {
     },
     audit: [],
     occurrences: 0,
+    // The delivery state of each report queued, as the outbox holds it.
+    occurrenceStates: [],
     challenges: new Map(),
     sessions: new Map(),
     restrictions: [],
@@ -877,6 +881,13 @@ async function api(req, res, url) {
       truncated: false,
     });
   }
+  // GET /v1/occurrences/summary (watch supervisor): the reports by delivery state.
+  if (path === "/v1/occurrences/summary" && req.method === "GET") {
+    if (supervisorOnly()) return;
+    const by = { queued: 0, sent: 0, failed: 0, abandoned: 0, cancelled: 0 };
+    for (const st of state.occurrenceStates) by[st] += 1;
+    return json(res, 200, { counted_at: iso(), total: state.occurrenceStates.length, by_state: by, truncated: false });
+  }
   if (path === "/v1/audit" && req.method === "GET") {
     if (adminOnly()) return;
     const entity = url.searchParams.get("entity");
@@ -887,6 +898,7 @@ async function api(req, res, url) {
   if (path === "/v1/occurrences" && req.method === "POST") {
     if (supervisorOnly()) return;
     state.occurrences += 1;
+    state.occurrenceStates.push("queued");
     const deadline = iso(Date.parse(body.became_aware_at) + 72 * 3_600_000);
     return json(res, 202, { id: ulid("01K6PO"), report_ref: `ANSP-OCC-2026-${String(state.occurrences).padStart(4, "0")}`, state: "queued", deadline_at: deadline });
   }
@@ -992,6 +1004,12 @@ async function control(req, res, path) {
     state.notices = [...state.notices.filter((x) => x.ack_id !== n.ack_id), n];
     broadcast(noticeFrame(n), "coordination");
     return json(res, 200, n);
+  }
+  if (path === "/__mock/occurrence") {
+    const i = state.occurrenceStates.lastIndexOf("queued");
+    if (i < 0) return json(res, 409, { error: "no report queued" });
+    state.occurrenceStates[i] = input.state;
+    return json(res, 200, { states: state.occurrenceStates });
   }
   if (path === "/__mock/account") {
     const a = state.accounts[input.username];

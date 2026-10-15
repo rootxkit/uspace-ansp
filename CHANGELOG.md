@@ -110,6 +110,12 @@ complete.
 
 ### Added
 
+- `GET /v1/occurrences/summary` (watch_supervisor, additive): the
+  occurrence reports counted by the state of their delivery to the
+  authority (queued, sent, failed, abandoned, cancelled), the newest
+  10000 by `became_aware_at` over `occurrence_reports_aware_idx`, on the
+  database clock; no report_ref, narrative or reporter. The overview
+  shows a supervisor the reports submitted and any failed or queued.
 - `GET /v1/restriction-requests` and `GET /v1/restriction-requests/summary`
   (watch_supervisor, additive; PLAN section 15 row 45 decided): the
   requests awaiting a decision, oldest first without their payload, and

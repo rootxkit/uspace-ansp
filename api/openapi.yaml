@@ -2093,6 +2093,43 @@ components:
         deadline_at:
           $ref: "#/components/schemas/Timestamp"
 
+    OccurrenceSummary:
+      type: object
+      description: |
+        The occurrence reports counted by the state of their delivery to
+        the authority (deliveries.state): counts only. counted_at is the
+        database clock; truncated says more reports existed than the
+        newest MaxOccurrencesCounted counted.
+      required: [counted_at, total, by_state, truncated]
+      properties:
+        counted_at:
+          $ref: "#/components/schemas/Timestamp"
+        total:
+          type: integer
+          minimum: 0
+        by_state:
+          type: object
+          additionalProperties: false
+          required: [queued, sent, failed, abandoned, cancelled]
+          properties:
+            queued:
+              type: integer
+              minimum: 0
+            sent:
+              type: integer
+              minimum: 0
+            failed:
+              type: integer
+              minimum: 0
+            abandoned:
+              type: integer
+              minimum: 0
+            cancelled:
+              type: integer
+              minimum: 0
+        truncated:
+          type: boolean
+
     AuditEvent:
       type: object
       required: [id, ts, actor_type, actor_id, purpose, entity_type, entity_id, event_type, payload, prev_hash, hash]
@@ -4422,6 +4459,48 @@ paths:
           $ref: "#/components/responses/Conflict"
         "413":
           $ref: "#/components/responses/TooLarge"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+
+  /v1/occurrences/summary:
+    get:
+      operationId: getOccurrenceSummary
+      tags: [occurrences]
+      summary: The occurrence reports by delivery state
+      x-process: api
+      x-spec: 01 N4, 376/2014 Art. 4(8), 02 F7
+      x-auth: session:watch_supervisor
+      description: |
+        The occurrence reports submitted to the authority, counted by the
+        state of their outbox delivery (queued, sent, failed, abandoned,
+        cancelled), for the overview's tile: counts only, no report_ref,
+        narrative, reporter or aircraft. The newest
+        MaxOccurrencesCounted (10000) reports by became_aware_at are
+        counted in one bounded read over occurrence_reports_aware_idx on
+        the database clock (counted_at); truncated says there were more.
+      security:
+        - consoleSession: []
+      responses:
+        "200":
+          description: The counts.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OccurrenceSummary"
+              example:
+                counted_at: "2026-10-02T12:10:00.000Z"
+                total: 3
+                by_state:
+                  queued: 1
+                  sent: 2
+                  failed: 0
+                  abandoned: 0
+                  cancelled: 0
+                truncated: false
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "503":
           $ref: "#/components/responses/Unavailable"
 

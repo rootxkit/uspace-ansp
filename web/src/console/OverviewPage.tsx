@@ -27,7 +27,7 @@ import { useConsole, useLoad } from "./context";
 import { awaitingCount, groupOf, ordered } from "./inbox";
 import { useInbox } from "./InboxProvider";
 import { adapterCounts, openAlarms, recentRestrictions, restrictionCounts, switchesOff } from "./overview";
-import { RequestsTile, UsersTile } from "./OverviewTiles";
+import { OccurrencesTile, RequestsTile, UsersTile } from "./OverviewTiles";
 import { mayAdminister, maySupervise } from "./roles";
 import { ConsolePageHeader, Empty, Loading, ProblemNotice, StateBadge, Time, timesShown } from "./ui";
 import { useRestrictions } from "./useRestrictions";
@@ -182,6 +182,7 @@ export function OverviewPage() {
           />
         </div>
         {maySupervise(role) && <RequestsTile />}
+        {maySupervise(role) && <OccurrencesTile />}
         {mayAdminister(role) && <UsersTile />}
       </KpiRow>
 

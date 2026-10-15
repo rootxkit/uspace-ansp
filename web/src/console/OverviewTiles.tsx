@@ -9,8 +9,8 @@
 // so in the tile (E-02).
 import { useEffect } from "react";
 import { useLang, useT } from "@rootxkit/uspace-ui/i18n";
-import { StatTile } from "@rootxkit/uspace-ui/ui";
-import { RequestIcon, UsersIcon } from "../components/icons";
+import { StatTile, type StatTileStatus } from "@rootxkit/uspace-ui/ui";
+import { OccurrenceIcon, RequestIcon, UsersIcon } from "../components/icons";
 import { useLoad, type Loaded } from "./context";
 import { timesShown } from "./ui";
 
@@ -29,8 +29,8 @@ function useSummary<T>(load: Parameters<typeof useLoad<T>>[0], key: string): Loa
 }
 
 /** The status of a tile whose read failed: the figure is not known. */
-function unread(t: ReturnType<typeof useT>, failed: boolean) {
-  return failed ? { status: { tone: "warning" as const, label: t("ansp.overview.kpi.unread") } } : {};
+function unread(t: ReturnType<typeof useT>, failed: boolean): { status?: StatTileStatus } {
+  return failed ? { status: { tone: "warning", label: t("ansp.overview.kpi.unread") } } : {};
 }
 
 /** The console accounts (GET /v1/users/summary, admin only). */
@@ -85,6 +85,39 @@ export function RequestsTile() {
         {...(s === null || s.oldest_received_at === null
           ? {}
           : { hint: t("ansp.overview.kpi.requests_oldest", timesShown({ since: s.oldest_received_at }, lang)) })}
+        {...status}
+      />
+    </div>
+  );
+}
+
+/** The occurrence reports by the state of their delivery to the authority (GET /v1/occurrences/summary, watch supervisor). */
+export function OccurrencesTile() {
+  const t = useT();
+  const occurrences = useSummary(async (c) => (await c.GET("/v1/occurrences/summary")).data ?? null, "summary:occurrences");
+  const s = occurrences.data;
+  let status = unread(t, occurrences.failure !== null);
+  if (occurrences.failure === null && s !== null) {
+    const undelivered = s.by_state.failed + s.by_state.abandoned;
+    status = {
+      status:
+        undelivered > 0
+          ? { tone: "critical", label: t("ansp.overview.kpi.occurrences_undelivered", { count: undelivered }) }
+          : s.by_state.queued > 0
+            ? { tone: "warning", label: t("ansp.overview.kpi.occurrences_queued", { count: s.by_state.queued }) }
+            : s.total > 0
+              ? { tone: "ok", label: t("ansp.overview.kpi.occurrences_sent") }
+              : { tone: "neutral", label: t("ansp.overview.kpi.occurrences_none") },
+    };
+  }
+  return (
+    <div data-testid="kpi-occurrences" data-value={s === null ? "" : s.total}>
+      <StatTile
+        className="h-full"
+        icon={<OccurrenceIcon />}
+        label={t("ansp.overview.kpi.occurrences")}
+        value={s === null ? null : s.truncated ? t("ansp.overview.kpi.at_least", { count: s.total }) : s.total}
+        {...(s === null ? {} : { hint: t("ansp.overview.kpi.occurrences_hint", { ...s.by_state }) })}
         {...status}
       />
     </div>

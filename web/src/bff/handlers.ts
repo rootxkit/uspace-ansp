@@ -55,7 +55,7 @@ export const API_LOGOUT_PATH = "/v1/auth/logout";
  * one of them is 405 before any upstream call, and a longer or shorter
  * path is not on the list. The API's x-auth decides who reads each.
  */
-export const SUMMARY_READS: readonly RegExp[] = [/^\/v1\/users\/summary$/, /^\/v1\/restriction-requests\/summary$/];
+export const SUMMARY_READS: readonly RegExp[] = [/^\/v1\/users\/summary$/, /^\/v1\/restriction-requests\/summary$/, /^\/v1\/occurrences\/summary$/];
 
 /**
  * What the proxy may reach: the console's operations and nothing else.

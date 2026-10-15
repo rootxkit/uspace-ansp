@@ -5,7 +5,13 @@ package main
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
+	"time"
+
+	"github.com/rootxkit/uspace-ansp/internal/coord"
+	"github.com/rootxkit/uspace-ansp/internal/restriction"
+	"github.com/rootxkit/uspace-ansp/internal/store"
 )
 
 // summaryCase is one summary operation and who may read it: the
@@ -157,5 +163,76 @@ func TestIntegrationRestrictionRequestSummary(t *testing.T) {
 	code, raw = s.c.do(http.MethodGet, "/v1/restriction-requests", s.watch, nil, nil)
 	if err := json.Unmarshal(raw, &l); code != http.StatusOK || err != nil || len(l.Requests) != 0 {
 		t.Fatalf("list after the decline: %d %s", code, raw)
+	}
+}
+
+// The occurrence reports by delivery state against the database and the
+// outbox: one delivered to the authority stub (sent), one held while it
+// answers 503 (queued); the supervisor reads both counted (the viewer
+// and the admin refused 403, no session 401); the store's bound past
+// one report says truncated; no report_ref or narrative in the answer.
+func TestIntegrationOccurrenceSummary(t *testing.T) {
+	s := newCoordStack(t, false)
+	type summary struct {
+		Total     int64            `json:"total"`
+		ByState   map[string]int64 `json:"by_state"`
+		Truncated bool             `json:"truncated"`
+	}
+	read := func() (summary, string) {
+		t.Helper()
+		raw := s.checkSummaryAccess(t, summaryCase{path: "/v1/occurrences/summary", allowed: "watch_supervisor"})
+		var got summary
+		if err := json.Unmarshal(raw, &got); err != nil {
+			t.Fatal(err)
+		}
+		return got, string(raw)
+	}
+	if got, _ := read(); got.Total != 0 || got.ByState["queued"] != 0 || got.Truncated {
+		t.Fatalf("none: %+v", got)
+	}
+	aware := time.Now().UTC().Add(-time.Hour).Truncate(time.Millisecond)
+	body := map[string]any{"channel": "mandatory", "occurred_at": restriction.Stamp(aware.Add(-5 * time.Minute)),
+		"became_aware_at": restriction.Stamp(aware), "category": "airprox", "narrative": "Synthetic airprox (summary test)."}
+	state := func(ref, want string) {
+		t.Helper()
+		deadline := time.Now().Add(20 * time.Second)
+		for s.count(`SELECT count(*) FROM deliveries d JOIN occurrence_reports o ON o.delivery_id = d.id WHERE o.report_ref = $1 AND d.state = $2`, ref, want) != 1 {
+			if time.Now().After(deadline) {
+				t.Fatalf("report %s not %s", ref, want)
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+	}
+	code, raw := s.c.do(http.MethodPost, "/v1/occurrences", s.watch, nil, body)
+	var q1 coord.Queued
+	if code != http.StatusAccepted || json.Unmarshal(raw, &q1) != nil {
+		t.Fatalf("%d %s", code, raw)
+	}
+	state(q1.ReportRef, "sent")
+	s.authority.answer.Store(func(peerRequest) int { return http.StatusServiceUnavailable })
+	body["became_aware_at"] = restriction.Stamp(aware.Add(time.Minute))
+	code, raw = s.c.do(http.MethodPost, "/v1/occurrences", s.watch, nil, body)
+	var q2 coord.Queued
+	if code != http.StatusAccepted || json.Unmarshal(raw, &q2) != nil {
+		t.Fatalf("%d %s", code, raw)
+	}
+	s.authority.await(t, "/v1/occurrences", 2, 20*time.Second)
+	state(q2.ReportRef, "queued")
+	got, text := read()
+	if got.Total != 2 || got.ByState["sent"] != 1 || got.ByState["queued"] != 1 || got.ByState["failed"] != 0 || got.Truncated {
+		t.Fatalf("two: %s", text)
+	}
+	for _, leak := range []string{q1.ReportRef, q2.ReportRef, "Synthetic airprox"} {
+		if strings.Contains(text, leak) {
+			t.Fatalf("the summary names a report (%s): %s", leak, text)
+		}
+	}
+	// Past the store's bound: the newest one counted, truncated said.
+	c, err := store.CoordRepo{DB: s.db}.OccurrenceCounts(s.ctx, 1)
+	if err != nil || c.Total != 1 || c.Queued != 1 || !c.Truncated {
+		t.Fatalf("past the bound: %+v %v", c, err)
+	}
+	if c, err = (store.CoordRepo{DB: s.db}).OccurrenceCounts(s.ctx, 2); err != nil || c.Total != 2 || c.Truncated {
+		t.Fatalf("at the bound: %+v %v", c, err)
 	}
 }

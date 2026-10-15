@@ -15,6 +15,7 @@ import (
 	"github.com/rootxkit/uspace-ansp/api/gen"
 	"github.com/rootxkit/uspace-ansp/internal/apierr"
 	"github.com/rootxkit/uspace-ansp/internal/auth"
+	"github.com/rootxkit/uspace-ansp/internal/coord"
 	"github.com/rootxkit/uspace-ansp/internal/restriction"
 )
 
@@ -52,7 +53,7 @@ func (p *pendingRepo) PendingRequestCounts(_ context.Context, limit int) (restri
 // rules; the integration test runs each role).
 func TestSummariesRefuseWithoutTheirSession(t *testing.T) {
 	_, h := testServer(t, nil)
-	for _, path := range []string{"/v1/restriction-requests", "/v1/restriction-requests/summary"} {
+	for _, path := range []string{"/v1/restriction-requests", "/v1/restriction-requests/summary", "/v1/occurrences/summary"} {
 		if a := call(t, h, http.MethodGet, path, "", "", ""); a.code != http.StatusUnauthorized || a.problem.Slug() != apierr.SlugUnauthenticated {
 			t.Errorf("%s without a credential: %d %+v", path, a.code, a.problem)
 		}
@@ -148,5 +149,46 @@ func TestRestrictionRequestSummary(t *testing.T) {
 	apiServer{}.GetRestrictionRequestSummary(rec, supervisorReq("/v1/restriction-requests/summary"))
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("no database: %d", rec.Code)
+	}
+}
+
+// countsRepo answers OccurrenceCounts and records the limit asked.
+type countsRepo struct {
+	coord.Repo
+	counts coord.OccurrenceCounts
+	err    error
+	limit  int
+}
+
+func (c *countsRepo) OccurrenceCounts(_ context.Context, limit int) (coord.OccurrenceCounts, error) {
+	c.limit = limit
+	return c.counts, c.err
+}
+
+// GET /v1/occurrences/summary: the reports by delivery state in the
+// contract's shape, read with MaxOccurrencesCounted; a store failure
+// 500 without its text; no outbox 503.
+func TestOccurrenceSummaryHandler(t *testing.T) {
+	repo := &countsRepo{counts: coord.OccurrenceCounts{CountedAt: time.Date(2026, 10, 2, 12, 10, 0, 0, time.UTC), Total: 3, Queued: 1, Sent: 2}}
+	s := apiServer{co: &coordAPI{occ: &coord.Occurrences{Repo: repo}}}
+	rec := httptest.NewRecorder()
+	s.GetOccurrenceSummary(rec, supervisorReq("/v1/occurrences/summary"))
+	want := `{"counted_at":"2026-10-02T12:10:00.000Z","total":3,"by_state":{"queued":1,"sent":2,"failed":0,"abandoned":0,"cancelled":0},"truncated":false}`
+	if rec.Code != http.StatusOK || strings.TrimSpace(rec.Body.String()) != want || repo.limit != coord.MaxOccurrencesCounted {
+		t.Fatalf("%d limit %d %s", rec.Code, repo.limit, rec.Body)
+	}
+	validateResponse(t, http.MethodGet, "/v1/occurrences/summary", rec.Code, rec.Body.Bytes())
+	repo.err = errors.New("pq: secret detail")
+	rec = httptest.NewRecorder()
+	s.GetOccurrenceSummary(rec, supervisorReq("/v1/occurrences/summary"))
+	if rec.Code != http.StatusInternalServerError || strings.Contains(rec.Body.String(), "secret") {
+		t.Fatalf("store down: %d %s", rec.Code, rec.Body)
+	}
+	for _, srv := range []apiServer{{}, {co: &coordAPI{}}} {
+		rec = httptest.NewRecorder()
+		srv.GetOccurrenceSummary(rec, supervisorReq("/v1/occurrences/summary"))
+		if rec.Code != http.StatusServiceUnavailable || rec.Header().Get("Retry-After") == "" {
+			t.Fatalf("no outbox: %d", rec.Code)
+		}
 	}
 }

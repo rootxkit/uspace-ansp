@@ -47,6 +47,7 @@ var Operations = []Operation{
 	{ID: "getMannedTrafficSnapshot", Method: "GET", Path: "/v1/manned-traffic/snapshot", Pattern: "GET /v1/manned-traffic/snapshot", Tag: "manned-traffic", Process: "manned-feed", Spec: "02 F4", Auth: "token:ansp.traffic+mtls or session", WebSocket: false},
 	{ID: "streamMannedTraffic", Method: "GET", Path: "/v1/manned-traffic/stream", Pattern: "GET /v1/manned-traffic/stream", Tag: "manned-traffic", Process: "manned-feed", Spec: "02 F4, 04 §3.1 track/manned/v1", Auth: "token:ansp.traffic+mtls or session", WebSocket: true},
 	{ID: "createOccurrence", Method: "POST", Path: "/v1/occurrences", Pattern: "POST /v1/occurrences", Tag: "occurrences", Process: "api", Spec: "01 N4, 376/2014 Art. 4(8), 02 F7", Auth: "session:watch_supervisor", WebSocket: false},
+	{ID: "getOccurrenceSummary", Method: "GET", Path: "/v1/occurrences/summary", Pattern: "GET /v1/occurrences/summary", Tag: "occurrences", Process: "api", Spec: "01 N4, 376/2014 Art. 4(8), 02 F7", Auth: "session:watch_supervisor", WebSocket: false},
 	{ID: "getCircleOutline", Method: "GET", Path: "/v1/outlines/circle", Pattern: "GET /v1/outlines/circle", Tag: "outlines", Process: "api", Spec: "02 F2 (the restriction editor's map), uspace-ui DrawLayer", Auth: "session", WebSocket: false},
 	{ID: "getPolicy", Method: "GET", Path: "/v1/policy", Pattern: "GET /v1/policy", Tag: "policy", Process: "api", Spec: "INV-03", Auth: "session:admin", WebSocket: false},
 	{ID: "putPolicy", Method: "PUT", Path: "/v1/policy", Pattern: "PUT /v1/policy", Tag: "policy", Process: "api", Spec: "INV-03", Auth: "session:admin", WebSocket: false},
@@ -202,6 +203,11 @@ func (Unimplemented) StreamMannedTraffic(context.Context, StreamMannedTrafficReq
 // CreateOccurrence answers POST /v1/occurrences with a *NotImplementedError.
 func (Unimplemented) CreateOccurrence(context.Context, CreateOccurrenceRequestObject) (CreateOccurrenceResponseObject, error) {
 	return nil, &NotImplementedError{Operation: "createOccurrence"}
+}
+
+// GetOccurrenceSummary answers GET /v1/occurrences/summary with a *NotImplementedError.
+func (Unimplemented) GetOccurrenceSummary(context.Context, GetOccurrenceSummaryRequestObject) (GetOccurrenceSummaryResponseObject, error) {
+	return nil, &NotImplementedError{Operation: "getOccurrenceSummary"}
 }
 
 // GetCircleOutline answers GET /v1/outlines/circle with a *NotImplementedError.
