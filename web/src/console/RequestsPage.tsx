@@ -13,12 +13,12 @@ import Link from "next/link";
 import { useMemo, useState, type FormEvent } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useLang, useT } from "@rootxkit/uspace-ui/i18n";
-import { Button, Input, Label } from "@rootxkit/uspace-ui/ui";
+import { Button, Input, Label, MapPanel } from "@rootxkit/uspace-ui/ui";
 import { requestView } from "./adapt";
 import { ConsoleMap } from "./ConsoleMap";
 import { useConsole, useLoad } from "./context";
 import { maySupervise } from "./roles";
-import { Empty, Loading, ProblemNotice, ReasonAction, Section, Time, utcText } from "./ui";
+import { ConsolePageHeader, Empty, Loading, ProblemNotice, ReasonAction, Section, Time, utcText } from "./ui";
 import { ZONE_TYPES } from "./plan";
 
 /** A request id as api/openapi.yaml takes it (a ULID). Shape only. */
@@ -44,7 +44,7 @@ function RequestView({ id }: { id: string }) {
     zone_type: t(`ansp.zone_type.${zoneType}`),
   };
   return (
-    <div className="flex flex-col gap-4 lg:flex-row" data-testid="request" data-state={q.state}>
+    <div className="flex flex-col gap-6 lg:flex-row lg:items-start" data-testid="request" data-state={q.state}>
       <div className="flex flex-1 flex-col gap-3">
         <Section titleKey="ansp.requests.request" vars={{ id: q.id }}>
           <dl className="m-0 grid grid-cols-[max-content_1fr] gap-x-4 gap-y-1 text-sm">
@@ -99,7 +99,7 @@ function RequestView({ id }: { id: string }) {
                 id="accept-zone-type"
                 value={zoneType}
                 onChange={(e) => setZoneType(e.target.value as (typeof ZONE_TYPES)[number])}
-                className="rounded border border-[var(--us-border)] bg-[var(--us-surface)] px-2 py-1 text-sm"
+                className="h-8 rounded-md border border-border bg-card px-2 text-sm"
               >
                 {ZONE_TYPES.map((z) => (
                   <option key={z} value={z}>
@@ -132,10 +132,14 @@ function RequestView({ id }: { id: string }) {
           </div>
         )}
       </div>
-      <div className="flex flex-col gap-1 lg:w-[45%]">
-        <ConsoleMap restrictions={views} />
-        {p.geometry.type === "Point" && <p className="m-0 text-xs text-[var(--us-text-muted)]">{t("ansp.map.circle_centre_only", { count: 1 })}</p>}
-      </div>
+      <MapPanel
+        title={t("ansp.map.title")}
+        className="lg:w-[45%]"
+        mapClassName="h-[28rem]"
+        {...(p.geometry.type === "Point" ? { footer: <p className="m-0 text-xs text-muted-foreground">{t("ansp.map.circle_centre_only", { count: 1 })}</p> } : {})}
+      >
+        <ConsoleMap restrictions={views} fill />
+      </MapPanel>
     </div>
   );
 }
@@ -153,10 +157,10 @@ export function RequestsPage() {
     if (valid) router.push(`/${lang}/requests?id=${encodeURIComponent(typed.trim())}`);
   };
   return (
-    <div className="flex flex-col gap-4">
-      <h2 className="m-0 text-lg font-semibold">{t("ansp.requests.title")}</h2>
+    <div className="flex flex-col gap-6">
+      <ConsolePageHeader titleKey="ansp.requests.title" descriptionKey="ansp.requests.description" />
       <Empty textKey="ansp.requests.no_list" testId="requests-no-list" />
-      <form onSubmit={open} className="flex flex-wrap items-end gap-2">
+      <form onSubmit={open} className="flex flex-wrap items-end gap-3 rounded-lg border border-border bg-card p-4 shadow-panel">
         <div className="flex flex-col gap-1">
           <Label htmlFor="request-id">{t("ansp.requests.id")}</Label>
           <Input id="request-id" value={typed} onChange={(e) => setTyped(e.target.value)} className="font-mono" data-testid="request-id" />

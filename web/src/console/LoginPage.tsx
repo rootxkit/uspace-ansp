@@ -17,6 +17,7 @@ import { parseProblem, problemSlug, retryAfterSOf } from "@rootxkit/uspace-ui/ap
 import { useLang, useT } from "@rootxkit/uspace-ui/i18n";
 import { Button, Input, Label } from "@rootxkit/uspace-ui/ui";
 import { encode } from "uqr";
+import { AuthFrame } from "../components/AuthFrame";
 import { qrPath, refusalKey } from "./login";
 
 function QrCode({ text, label }: { text: string; label: string }) {
@@ -103,7 +104,7 @@ export function LoginPage() {
         setStep("otp");
         return;
       }
-      router.replace(`/${lang}/restrictions`);
+      router.replace(`/${lang}/overview`);
     } catch {
       setRefusal({ key: "ansp.login.problem.unavailable", detail: null, retryAfterS: null });
     } finally {
@@ -112,12 +113,22 @@ export function LoginPage() {
   };
 
   return (
-    <div className="flex flex-col gap-4 p-4">
-      <p className="m-0 max-w-prose text-sm text-[var(--us-text-muted)]">{t("ansp.login.intro")}</p>
-      <form onSubmit={(e) => void submit(e)} aria-labelledby="login-title" className="flex max-w-sm flex-col gap-3" data-testid="login-form">
-        <h2 id="login-title" className="m-0 text-lg font-semibold">
-          {t(step === "password" ? "ansp.login.title" : "ansp.login.title_otp")}
-        </h2>
+    <AuthFrame>
+      <form
+        onSubmit={(e) => void submit(e)}
+        aria-labelledby="login-title"
+        className="flex flex-col gap-4 rounded-xl border border-border bg-card p-6 shadow-panel"
+        data-testid="login-form"
+      >
+        <div className="flex flex-col gap-1.5">
+          <p className="m-0 text-xs font-semibold text-muted-foreground" data-testid="login-step">
+            {t("ansp.login.step", { step: step === "password" ? 1 : 2, steps: 2 })}
+          </p>
+          <h1 id="login-title" className="m-0 text-xl font-bold">
+            {t(step === "password" ? "ansp.login.title" : "ansp.login.title_otp")}
+          </h1>
+          <p className="m-0 text-sm text-muted-foreground">{t("ansp.login.intro")}</p>
+        </div>
         {step === "password" ? (
           <>
             <div className="flex flex-col gap-1">
@@ -140,7 +151,7 @@ export function LoginPage() {
         ) : (
           <>
             {enrolment !== null && (
-              <div className="flex flex-col gap-2 text-sm" data-testid="enrolment">
+              <div className="flex flex-col items-start gap-2 rounded-lg border border-border bg-surface-sunken p-3 text-sm" data-testid="enrolment">
                 <p className="m-0">{t("ansp.login.enrol")}</p>
                 <QrCode text={enrolment.otpauthUri} label={t("ansp.login.enrol_qr")} />
                 <p className="m-0">
@@ -164,7 +175,7 @@ export function LoginPage() {
           </>
         )}
         {refusal !== null && (
-          <div role="alert" data-testid="login-refusal" className="text-sm text-[var(--us-danger)]">
+          <div role="alert" data-testid="login-refusal" className="rounded-lg border border-status-critical-border bg-status-critical-soft p-3 text-sm text-status-critical">
             <p className="m-0 font-semibold">{t(refusal.key)}</p>
             {refusal.detail !== null && refusal.detail !== "" && <p className="m-0">{refusal.detail}</p>}
           </div>
@@ -174,10 +185,10 @@ export function LoginPage() {
             {t("ansp.login.wait", { seconds: waitS })}
           </p>
         )}
-        <Button type="submit" disabled={busy || waitS > 0} data-testid="login-submit">
+        <Button type="submit" className="w-full" disabled={busy || waitS > 0} data-testid="login-submit">
           {t(step === "password" ? "ansp.login.next" : "ansp.login.submit")}
         </Button>
       </form>
-    </div>
+    </AuthFrame>
   );
 }

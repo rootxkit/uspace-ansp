@@ -17,7 +17,7 @@ import { failureOf, type CallFailure } from "../api/client";
 import { auditQuery, exportDocument, exportFileName, LIMIT_DEFAULT, shortHash, type ApiAuditEvent, type AuditQuery, type QueryProblem } from "./audit";
 import { useConsole } from "./context";
 import { mayAdminister } from "./roles";
-import { Empty, ProblemNotice, Time } from "./ui";
+import { ConsolePageHeader, Empty, ProblemNotice, Time } from "./ui";
 
 interface Listing {
   query: AuditQuery;
@@ -71,11 +71,11 @@ export function AuditPage() {
   };
 
   return (
-    <div className="flex flex-col gap-4">
-      <h2 className="m-0 text-lg font-semibold">{t("ansp.audit.title")}</h2>
+    <div className="flex flex-col gap-6">
+      <ConsolePageHeader titleKey="ansp.audit.title" descriptionKey="ansp.audit.description" />
       {!mayAdminister(role) && <Empty textKey="ansp.audit.role" testId="audit-role" />}
       <form
-        className="flex flex-wrap items-end gap-3"
+        className="flex flex-wrap items-end gap-3 rounded-lg border border-border bg-card p-4 shadow-panel"
         onSubmit={(e) => {
           e.preventDefault();
           void load();
@@ -84,23 +84,23 @@ export function AuditPage() {
         <div className="flex flex-col gap-0.5">
           <Label htmlFor="audit-entity">{t("ansp.audit.entity")}</Label>
           <Input id="audit-entity" value={entity} onChange={(e) => setEntity(e.target.value)} className="w-80 font-mono" data-testid="audit-entity" />
-          {problems.includes("entity") && <p className="m-0 text-xs text-[var(--us-danger)]">{t("ansp.audit.problem.entity")}</p>}
+          {problems.includes("entity") && <p className="m-0 text-xs text-status-critical">{t("ansp.audit.problem.entity")}</p>}
         </div>
         <div className="flex flex-col gap-0.5">
           <Label htmlFor="audit-since">{t("ansp.audit.since")}</Label>
           <Input id="audit-since" type="datetime-local" step={1} value={since} onChange={(e) => setSince(e.target.value)} data-testid="audit-since" />
-          {problems.includes("since") && <p className="m-0 text-xs text-[var(--us-danger)]">{t("ansp.audit.problem.since")}</p>}
+          {problems.includes("since") && <p className="m-0 text-xs text-status-critical">{t("ansp.audit.problem.since")}</p>}
         </div>
         <div className="flex flex-col gap-0.5">
           <Label htmlFor="audit-limit">{t("ansp.audit.limit")}</Label>
           <Input id="audit-limit" inputMode="numeric" value={limit} onChange={(e) => setLimit(e.target.value)} className="w-24" />
-          {problems.includes("limit") && <p className="m-0 text-xs text-[var(--us-danger)]">{t("ansp.audit.problem.limit")}</p>}
+          {problems.includes("limit") && <p className="m-0 text-xs text-status-critical">{t("ansp.audit.problem.limit")}</p>}
         </div>
         <Button type="submit" size="sm" disabled={busy} data-testid="audit-load">
           {t("ansp.audit.load")}
         </Button>
       </form>
-      <p className="m-0 text-xs text-[var(--us-text-muted)]">{t("ansp.audit.hint")}</p>
+      <p className="m-0 text-xs text-muted-foreground">{t("ansp.audit.hint")}</p>
       {failure !== null && <ProblemNotice failure={failure} />}
       {listing !== null && (
         <div className="flex flex-col gap-2">
@@ -118,36 +118,36 @@ export function AuditPage() {
           ) : (
             <table className="w-full border-collapse text-xs" data-testid="audit-table">
               <thead>
-                <tr className="border-b border-[var(--us-border)]">
-                  <th className="p-1 text-start">{t("ansp.audit.col.id")}</th>
-                  <th className="p-1 text-start">{t("ansp.audit.col.ts")}</th>
-                  <th className="p-1 text-start">{t("ansp.audit.col.actor")}</th>
-                  <th className="p-1 text-start">{t("ansp.audit.col.purpose")}</th>
-                  <th className="p-1 text-start">{t("ansp.audit.col.entity")}</th>
-                  <th className="p-1 text-start">{t("ansp.audit.col.event")}</th>
-                  <th className="p-1 text-start">{t("ansp.audit.col.payload")}</th>
-                  <th className="p-1 text-start">{t("ansp.audit.col.chain")}</th>
+                <tr className="border-b border-border bg-panel-header text-muted-foreground">
+                  <th className="px-3 py-2 text-start font-semibold">{t("ansp.audit.col.id")}</th>
+                  <th className="px-3 py-2 text-start font-semibold">{t("ansp.audit.col.ts")}</th>
+                  <th className="px-3 py-2 text-start font-semibold">{t("ansp.audit.col.actor")}</th>
+                  <th className="px-3 py-2 text-start font-semibold">{t("ansp.audit.col.purpose")}</th>
+                  <th className="px-3 py-2 text-start font-semibold">{t("ansp.audit.col.entity")}</th>
+                  <th className="px-3 py-2 text-start font-semibold">{t("ansp.audit.col.event")}</th>
+                  <th className="px-3 py-2 text-start font-semibold">{t("ansp.audit.col.payload")}</th>
+                  <th className="px-3 py-2 text-start font-semibold">{t("ansp.audit.col.chain")}</th>
                 </tr>
               </thead>
               <tbody>
                 {listing.events.map((e) => (
-                  <tr key={e.id} className="border-b border-[var(--us-border)] align-top" data-event={e.id}>
-                    <td className="p-1 font-mono">{e.id}</td>
-                    <td className="p-1">
+                  <tr key={e.id} className="border-b border-border align-top" data-event={e.id}>
+                    <td className="px-3 py-2 font-mono">{e.id}</td>
+                    <td className="px-3 py-2">
                       <Time iso={e.ts} />
                     </td>
-                    <td className="p-1 font-mono">
+                    <td className="px-3 py-2 font-mono">
                       {e.actor_type}:{e.actor_id}
                     </td>
-                    <td className="p-1">{e.purpose}</td>
-                    <td className="p-1 font-mono">
+                    <td className="px-3 py-2">{e.purpose}</td>
+                    <td className="px-3 py-2 font-mono">
                       {e.entity_type}:{e.entity_id}
                     </td>
-                    <td className="p-1 font-mono">{e.event_type}</td>
-                    <td className="p-1">
+                    <td className="px-3 py-2 font-mono">{e.event_type}</td>
+                    <td className="px-3 py-2">
                       <pre className="m-0 max-w-[28rem] overflow-x-auto whitespace-pre-wrap break-all font-mono">{JSON.stringify(e.payload)}</pre>
                     </td>
-                    <td className="p-1 font-mono">
+                    <td className="px-3 py-2 font-mono">
                       <span title={e.prev_hash}>{shortHash(e.prev_hash)}</span>
                       {" → "}
                       <span title={e.hash}>{shortHash(e.hash)}</span>

@@ -40,7 +40,7 @@ async function signIn(page: Page, who: { username: string; password: string }, e
   if (enrolment) await expect(page.getByTestId("enrolment-qr")).toBeVisible();
   await page.getByLabel(/Code from your authenticator/).fill(CODE);
   await page.getByTestId("login-submit").click();
-  await expect(page).toHaveURL(/\/en\/restrictions$/);
+  await expect(page).toHaveURL(/\/en\/overview$/);
 }
 
 test.beforeEach(async ({ request }) => {

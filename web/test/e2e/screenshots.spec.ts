@@ -30,7 +30,7 @@ test("every page in ka and en", async ({ page, request }) => {
   await shot(page, "ka-login-enrolment");
   await page.locator("#login-otp").fill("246810");
   await page.getByTestId("login-submit").click();
-  await expect(page).toHaveURL(/\/ka\/restrictions$/);
+  await expect(page).toHaveURL(/\/ka\/overview$/);
 
   // One restriction planned and activated through the API, as the smoke run does.
   await page.goto("/en/restrictions/new");
@@ -85,7 +85,7 @@ async function signInAs(page: Page, who: { username: string; password: string })
   await page.getByTestId("login-submit").click();
   await page.locator("#login-otp").fill("246810");
   await page.getByTestId("login-submit").click();
-  await expect(page).toHaveURL(/\/en\/restrictions$/);
+  await expect(page).toHaveURL(/\/en\/overview$/);
 }
 
 test("the WP-12 pages in ka and en: the picture with a stale and a disabled aircraft, the inbox, sources, policy, audit, occurrence", async ({ page, request }) => {
@@ -145,7 +145,7 @@ test("the occurrence form in ka and en", async ({ page, request }) => {
   await page.getByTestId("login-submit").click();
   await page.locator("#login-otp").fill("246810");
   await page.getByTestId("login-submit").click();
-  await expect(page).toHaveURL(/\/en\/restrictions$/);
+  await expect(page).toHaveURL(/\/en\/overview$/);
   for (const lang of ["ka", "en"] as const) {
     await page.goto(`/${lang}/occurrences/new`);
     await page.getByTestId("occ-occurred_at").fill("2026-10-02T11:20");

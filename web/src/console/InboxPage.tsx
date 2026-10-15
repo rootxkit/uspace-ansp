@@ -18,7 +18,7 @@ import { useLang, useT } from "@rootxkit/uspace-ui/i18n";
 import { resolveColour, useLayer } from "@rootxkit/uspace-ui/layers";
 import { useNowMs } from "@rootxkit/uspace-ui/live";
 import { FeedStatusBar } from "@rootxkit/uspace-ui/status";
-import { Button, Label, Textarea } from "@rootxkit/uspace-ui/ui";
+import { Button, Label, MapPanel, Textarea } from "@rootxkit/uspace-ui/ui";
 import { failureOf, type CallFailure } from "../api/client";
 import { toView } from "./adapt";
 import { ConsoleMap, LayerReady } from "./ConsoleMap";
@@ -37,7 +37,7 @@ import {
 } from "./inbox";
 import { MAX_NOTICES, useInbox } from "./InboxProvider";
 import { maySupervise } from "./roles";
-import { Empty, Loading, ProblemNotice, Time } from "./ui";
+import { ConsolePageHeader, Empty, Loading, ProblemNotice, Time } from "./ui";
 import { useRestrictions } from "./useRestrictions";
 
 const FILTERS = ["all", "escalated", "received", "acknowledged"] as const;
@@ -122,7 +122,7 @@ function Acknowledge({ notice, onConflict }: { notice: ApiNotice; onConflict(ack
     <div className="flex flex-col gap-1" data-testid="acknowledge-form">
       <Label htmlFor={id}>{t("ansp.inbox.note")}</Label>
       <Textarea id={id} rows={2} value={note} onChange={(e) => setNote(e.target.value)} data-testid="ack-note" />
-      <p className={`m-0 text-xs ${tooLong ? "text-[var(--us-danger)]" : "text-[var(--us-text-muted)]"}`}>
+      <p className={`m-0 text-xs ${tooLong ? "text-status-critical" : "text-muted-foreground"}`}>
         {t("ansp.inbox.note_bytes", { bytes, max: NOTE_MAX_BYTES })}
       </p>
       <div>
@@ -143,8 +143,8 @@ function NoticeCard({ notice, selected, onSelect, onConflict }: { notice: ApiNot
   const { intents, malformed } = intentsOf(notice.payload);
   const loud = group === "escalated";
   return (
-    <li
-      className={`flex list-none flex-col gap-1 rounded border p-2 text-sm ${loud ? "border-2 border-[var(--us-danger)] bg-[var(--us-surface-raised)]" : "border-[var(--us-border)]"} ${selected ? "outline outline-2 outline-[var(--us-focus)]" : ""}`}
+    <div
+      className={`flex flex-col gap-1.5 rounded-lg border p-3 text-sm shadow-panel ${loud ? "border-2 border-status-critical-border bg-status-critical-soft" : "border-border bg-card"} ${selected ? "outline outline-2 outline-offset-2 outline-ring" : ""}`}
       data-testid="notice"
       data-ack={notice.ack_id}
       data-state={notice.state}
@@ -153,7 +153,7 @@ function NoticeCard({ notice, selected, onSelect, onConflict }: { notice: ApiNot
       {...(loud ? { role: "alert" } : {})}
     >
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <p className={`m-0 font-semibold ${loud ? "text-[var(--us-danger)]" : ""}`}>
+        <p className={`m-0 font-semibold ${loud ? "text-status-critical" : ""}`}>
           {t(`ansp.inbox.kind.${notice.kind}`)} · {t(`ansp.inbox.state.${notice.state}`)}
         </p>
         <Button type="button" size="sm" variant="outline" onClick={onSelect} data-testid="notice-show">
@@ -165,13 +165,13 @@ function NoticeCard({ notice, selected, onSelect, onConflict }: { notice: ApiNot
         {t("ansp.inbox.received")} <Time iso={notice.received_at} />
       </p>
       {loud && (
-        <p className="m-0 font-semibold text-[var(--us-danger)]" data-testid="notice-escalated">
+        <p className="m-0 font-semibold text-status-critical" data-testid="notice-escalated">
           {t("ansp.inbox.escalated", { count: notice.escalations ?? 1 })} <Time iso={notice.last_escalated_at ?? notice.escalated_at} />
         </p>
       )}
-      {group === "informational" && <p className="m-0 text-xs text-[var(--us-text-muted)]">{t("ansp.inbox.informational")}</p>}
+      {group === "informational" && <p className="m-0 text-xs text-muted-foreground">{t("ansp.inbox.informational")}</p>}
       {notice.sender_unverified === true && (
-        <p className="m-0 text-xs font-semibold text-[var(--us-danger)]">{t("ansp.inbox.sender_unverified")}</p>
+        <p className="m-0 text-xs font-semibold text-status-critical">{t("ansp.inbox.sender_unverified")}</p>
       )}
       {intents.length > 0 && (
         <table className="text-xs">
@@ -232,9 +232,9 @@ function NoticeCard({ notice, selected, onSelect, onConflict }: { notice: ApiNot
       ) : maySupervise(role) ? (
         <Acknowledge notice={notice} onConflict={onConflict} />
       ) : (
-        <p className="m-0 text-xs text-[var(--us-text-muted)]">{t("ansp.inbox.ack_role")}</p>
+        <p className="m-0 text-xs text-muted-foreground">{t("ansp.inbox.ack_role")}</p>
       )}
-    </li>
+    </div>
   );
 }
 
@@ -242,7 +242,7 @@ function NotifyControl() {
   const t = useT();
   const { notify, setNotify } = useInbox();
   if (notify === "unsupported" || notify === "denied") {
-    return <p className="m-0 text-xs text-[var(--us-text-muted)]">{t(`ansp.inbox.notify.${notify}`)}</p>;
+    return <p className="m-0 text-xs text-muted-foreground">{t(`ansp.inbox.notify.${notify}`)}</p>;
   }
   return (
     <Button type="button" size="sm" variant="outline" onClick={() => setNotify(notify !== "on")} data-testid="notify-toggle" data-notify={notify}>
@@ -283,33 +283,35 @@ export function InboxPage() {
   }, [list, selected]);
 
   return (
-    <div className="flex flex-col gap-3">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <h2 className="m-0 text-lg font-semibold">{t("ansp.inbox.title")}</h2>
-        <NotifyControl />
-      </div>
-      <section aria-label={t("ansp.inbox.stream")} data-testid="inbox-stream" data-connection={inbox.feed.connection} className="text-xs">
+    <div className="flex flex-col gap-6">
+      <ConsolePageHeader titleKey="ansp.inbox.title" descriptionKey="ansp.inbox.description" actions={<NotifyControl />} />
+      <section
+        aria-label={t("ansp.inbox.stream")}
+        data-testid="inbox-stream"
+        data-connection={inbox.feed.connection}
+        className="flex flex-col gap-2 rounded-lg border border-border bg-card px-4 py-3 text-xs shadow-panel"
+      >
         <FeedStatusBar status={inbox.feed} nowMs={nowMs} />
-        {inbox.feed.connection === "down" && <p className="m-0 mt-1 font-semibold text-[var(--us-danger)]">{t("ansp.inbox.stream_down")}</p>}
+        {inbox.feed.connection === "down" && <p className="m-0 font-semibold text-status-critical">{t("ansp.inbox.stream_down")}</p>}
+        <label className="flex items-center gap-2 text-sm">
+          {t("ansp.inbox.filter")}
+          <select
+            value={filter}
+            onChange={(e) => setFilter(e.target.value as Filter)}
+            className="h-8 rounded-md border border-border bg-card px-2 text-sm"
+            data-testid="inbox-filter"
+          >
+            {FILTERS.map((f) => (
+              <option key={f} value={f}>
+                {t(`ansp.inbox.filter.${f}`)}
+              </option>
+            ))}
+          </select>
+        </label>
       </section>
-      <label className="flex items-center gap-2 text-sm">
-        {t("ansp.inbox.filter")}
-        <select
-          value={filter}
-          onChange={(e) => setFilter(e.target.value as Filter)}
-          className="rounded border border-[var(--us-border)] bg-[var(--us-surface)] px-2 py-1"
-          data-testid="inbox-filter"
-        >
-          {FILTERS.map((f) => (
-            <option key={f} value={f}>
-              {t(`ansp.inbox.filter.${f}`)}
-            </option>
-          ))}
-        </select>
-      </label>
       {inbox.failure !== null && <ProblemNotice failure={inbox.failure} />}
       {conflict !== null && (
-        <p role="status" className="m-0 rounded border border-[var(--us-border-strong)] p-2 text-sm font-semibold" data-testid="ack-conflict" data-ack={conflict}>
+        <p role="status" className="m-0 rounded-lg border border-status-warning-border bg-status-warning-soft p-3 text-sm font-semibold text-status-warning" data-testid="ack-conflict" data-ack={conflict}>
           {t("ansp.inbox.ack_conflict", { ack: conflict })}
         </p>
       )}
@@ -320,35 +322,43 @@ export function InboxPage() {
         </p>
       )}
       {(inbox.dropped > 0 || inbox.ignored > 0) && (
-        <p className="m-0 text-xs text-[var(--us-text-muted)]">{t("ansp.inbox.counters", { dropped: inbox.dropped, ignored: inbox.ignored })}</p>
+        <p className="m-0 text-xs text-muted-foreground">{t("ansp.inbox.counters", { dropped: inbox.dropped, ignored: inbox.ignored })}</p>
       )}
-      <div className="flex flex-col gap-3 lg:flex-row">
-        <div className="flex flex-1 flex-col gap-3" data-testid="inbox">
+      <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(0,40%)]">
+        <div className="flex min-w-0 flex-col gap-4" data-testid="inbox">
           {!inbox.loaded && inbox.failure === null && <Loading />}
           {inbox.loaded && list.length === 0 && (
             <Empty textKey={filter === "all" ? "ansp.inbox.none" : "ansp.inbox.none_in_state"} vars={{ state: t(`ansp.inbox.filter.${filter}`) }} testId="inbox-none" />
           )}
           {groups.map(({ group, notices }) => (
             <section key={group} className="flex flex-col gap-2" data-testid={`inbox-group-${group}`}>
-              <h3 className={`m-0 text-base font-semibold ${group === "escalated" ? "text-[var(--us-danger)]" : ""}`}>
+              <h2 className={`m-0 text-base font-semibold ${group === "escalated" ? "text-status-critical" : ""}`}>
                 {t(`ansp.inbox.group.${group}`, { count: notices.length })}
-              </h3>
-              <ul className="m-0 flex flex-col gap-2 p-0">
+              </h2>
+              <div className="flex flex-col gap-2">
                 {notices.map((n) => (
                   <NoticeCard key={n.ack_id} notice={n} selected={n.ack_id === selected} onSelect={() => setSelected(n.ack_id)} onConflict={setConflict} />
                 ))}
-              </ul>
+              </div>
             </section>
           ))}
         </div>
-        <div className="flex flex-col gap-1 lg:w-[40%]">
-          <ConsoleMap restrictions={views} className="h-[60vh]">
+        <MapPanel
+          title={t("ansp.map.title")}
+          mapClassName="h-[60vh]"
+          className="xl:sticky xl:top-20"
+          footer={
+            <div className="flex flex-col gap-1 text-xs text-muted-foreground">
+              <p className="m-0">{t("ansp.inbox.map_note")}</p>
+              {volumes.circles > 0 && <p className="m-0">{t("ansp.inbox.circles", { count: volumes.circles })}</p>}
+              {volumes.malformed > 0 && <p className="m-0 text-foreground">{t("ansp.inbox.volumes_malformed", { count: volumes.malformed })}</p>}
+            </div>
+          }
+        >
+          <ConsoleMap restrictions={views} fill>
             <NoticeLayer features={volumes.features} />
           </ConsoleMap>
-          <p className="m-0 text-xs text-[var(--us-text-muted)]">{t("ansp.inbox.map_note")}</p>
-          {volumes.circles > 0 && <p className="m-0 text-xs text-[var(--us-text-muted)]">{t("ansp.inbox.circles", { count: volumes.circles })}</p>}
-          {volumes.malformed > 0 && <p className="m-0 text-xs">{t("ansp.inbox.volumes_malformed", { count: volumes.malformed })}</p>}
-        </div>
+        </MapPanel>
       </div>
     </div>
   );

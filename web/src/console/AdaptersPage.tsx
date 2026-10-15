@@ -9,7 +9,7 @@ import { useEffect } from "react";
 import { useLang, useT } from "@rootxkit/uspace-ui/i18n";
 import { switchFor, statusLine } from "./adapters";
 import { useLoad } from "./context";
-import { Empty, Loading, ProblemNotice, Time, timesShown } from "./ui";
+import { ConsolePageHeader, Empty, Loading, ProblemNotice, Time, timesShown } from "./ui";
 
 /** How often the page reads the adapters again. Display-only. */
 export const READ_PERIOD_MS = 10_000;
@@ -30,8 +30,8 @@ export function AdaptersPage() {
   }, [reloadAdapters, reloadSources]);
 
   return (
-    <div className="flex flex-col gap-4">
-      <h2 className="m-0 text-lg font-semibold">{t("ansp.adapters.title")}</h2>
+    <div className="flex flex-col gap-6">
+      <ConsolePageHeader titleKey="ansp.adapters.title" descriptionKey="ansp.adapters.description" />
       {adapters.failure !== null && <ProblemNotice failure={adapters.failure} />}
       {sources.failure !== null && (
         <div>
@@ -47,14 +47,14 @@ export function AdaptersPage() {
             const line = statusLine(a, switchFor(a, sources.data ?? []));
             const counters = Object.entries(a.counters).sort(([x], [y]) => x.localeCompare(y));
             return (
-              <li key={a.id} className="list-none rounded border border-[var(--us-border)] p-3 text-sm" data-adapter={a.id} data-status={a.status}>
+              <li key={a.id} className="flex list-none flex-col gap-1 rounded-lg border border-border bg-card p-4 text-sm shadow-panel" data-adapter={a.id} data-status={a.status}>
                 <p className="m-0 font-semibold">
                   {a.display_name} <code className="font-normal">{a.id}</code>
                 </p>
-                <p className="m-0 text-xs text-[var(--us-text-muted)]">
+                <p className="m-0 text-xs text-muted-foreground">
                   {t(`ansp.adapters.kind.${a.kind}`)} · {t(`ansp.adapters.class.${a.source_class}`)}
                 </p>
-                <p className={`m-0 ${line.attention ? "font-semibold text-[var(--us-danger)]" : ""}`} data-testid="adapter-status">
+                <p className={`m-0 ${line.attention ? "font-semibold text-status-critical" : ""}`} data-testid="adapter-status">
                   {t(line.key, timesShown(line.vars, lang))}
                 </p>
                 <p className="m-0 text-xs">

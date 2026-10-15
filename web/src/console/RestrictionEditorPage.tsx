@@ -23,6 +23,7 @@ import { CheckboxField, EnumField, Form, NumberField, OutlineFields, TextField, 
 import { ConfirmDialog } from "@rootxkit/uspace-ui/form";
 import { useLang, useT } from "@rootxkit/uspace-ui/i18n";
 import { DrawLayer } from "@rootxkit/uspace-ui/layers";
+import { MapPanel } from "@rootxkit/uspace-ui/ui";
 import type { DrawOutline, FieldError } from "@rootxkit/uspace-ui/model";
 import { chainProposal, failureOf, type CallFailure } from "../api/client";
 import type { components } from "../api/types";
@@ -33,7 +34,7 @@ import { MAX_VERTICES, useCircleOutline } from "./outline";
 import { planBody, planSchema, VERTICAL_REFS, ZONE_TYPES, type PlanValues } from "./plan";
 import { referenceAfter, referenceFor } from "./reference";
 import { maySupervise } from "./roles";
-import { Empty } from "./ui";
+import { ConsolePageHeader, Empty } from "./ui";
 import { useRestrictions } from "./useRestrictions";
 
 type ApiRestrictionCreate = components["schemas"]["RestrictionCreate"];
@@ -106,12 +107,20 @@ export function RestrictionEditorPage() {
     }
   };
 
-  if (!maySupervise(role)) return <Empty textKey="ansp.editor.role" testId="editor-role" />;
+  if (!maySupervise(role)) {
+    return (
+      <div className="flex flex-col gap-6">
+        <ConsolePageHeader titleKey="ansp.editor.title" descriptionKey="ansp.editor.description" />
+        <Empty textKey="ansp.editor.role" testId="editor-role" />
+      </div>
+    );
+  }
 
   return (
-    <div className="flex flex-col gap-4 lg:flex-row">
-      <div className="flex flex-col gap-2 lg:w-[45%]">
-        <h2 className="m-0 text-lg font-semibold">{t("ansp.editor.title")}</h2>
+    <div className="flex flex-col gap-6">
+    <ConsolePageHeader titleKey="ansp.editor.title" descriptionKey="ansp.editor.description" />
+    <div className="flex flex-col gap-6 lg:flex-row lg:items-start">
+      <div className="flex flex-col gap-3 rounded-lg border border-border bg-card p-5 shadow-panel lg:w-[45%]">
         <OutlineFields outline={outline} onChange={setOutline} maxVertices={MAX_VERTICES} circleOutlineShown={circle.kind === "drawn"} legendKey="ansp.editor.area" />
         {circle.kind === "refused" && (
           <p role="status" className="m-0 text-xs" data-testid="circle-outline-refused">
@@ -125,14 +134,14 @@ export function RestrictionEditorPage() {
           <EnumField name="lower_ref" labelKey="ansp.field.lower_ref" values={VERTICAL_REFS} i18nPrefix="ansp.vertical_ref" required />
           <NumberField name="upper_m" labelKey="ansp.field.upper_m" unit="form.unit.m" required />
           <EnumField name="upper_ref" labelKey="ansp.field.upper_ref" values={VERTICAL_REFS} i18nPrefix="ansp.vertical_ref" required />
-          <p className="m-0 text-xs text-[var(--us-text-muted)]" data-testid="agl-unavailable">
+          <p className="m-0 text-xs text-muted-foreground" data-testid="agl-unavailable">
             {t("ansp.editor.agl_unavailable")}
           </p>
           <UTCDateTimeField name="starts_at" labelKey="ansp.field.starts_at" required />
           <UTCDateTimeField name="ends_at" labelKey="ansp.field.ends_at" required />
           <TextField name="reason_text" labelKey="ansp.field.reason_text" hintKey="ansp.field.reason_text.hint" required />
           {chain.length > 0 && (
-            <div role="alert" className="flex flex-col gap-1 rounded border border-[var(--us-danger)] p-2 text-sm" data-testid="chain-proposal">
+            <div role="alert" className="flex flex-col gap-1 rounded-lg border border-status-critical-border bg-status-critical-soft p-3 text-sm" data-testid="chain-proposal">
               <p className="m-0 font-semibold">{t("ansp.editor.chain.title", { count: chain.length })}</p>
               <ol className="m-0 ps-5">
                 {chain.map((c) => (
@@ -166,8 +175,13 @@ export function RestrictionEditorPage() {
           }}
         />
       </div>
-      <div className="flex flex-1 flex-col gap-1">
-        <ConsoleMap restrictions={views} className="h-[70vh]">
+      <MapPanel
+        title={t("ansp.map.title")}
+        className="min-w-0 flex-1 lg:sticky lg:top-20"
+        mapClassName="h-[70vh]"
+        footer={<p className="m-0 text-xs text-muted-foreground">{t("ansp.editor.map_hint")}</p>}
+      >
+        <ConsoleMap restrictions={views} fill>
           <DrawLayer
             id="ansp-draw"
             outline={outline}
@@ -176,8 +190,8 @@ export function RestrictionEditorPage() {
             circleOutline={circle.kind === "drawn" ? circle.outline : null}
           />
         </ConsoleMap>
-        <p className="m-0 text-xs text-[var(--us-text-muted)]">{t("ansp.editor.map_hint")}</p>
-      </div>
+      </MapPanel>
+    </div>
     </div>
   );
 }

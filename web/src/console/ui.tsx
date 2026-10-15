@@ -4,11 +4,15 @@
 // its UTC value on hover, a state badge, the API's refusal shown in
 // full, the confirm-with-a-reason act every audited operation goes
 // through, and the empty state that says why it is empty.
+import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { useState, useSyncExternalStore, type ReactNode } from "react";
 import { fmtTimeUTC, LOCALES, useLang, useT } from "@rootxkit/uspace-ui/i18n";
 import { ConfirmDialog } from "@rootxkit/uspace-ui/form";
-import { Button } from "@rootxkit/uspace-ui/ui";
+import type { StatusTone } from "@rootxkit/uspace-ui/theme";
+import { Button, PageHeader, Panel, StatusBadge, type Crumb, type LinkRenderer } from "@rootxkit/uspace-ui/ui";
 import { failureOf, type CallFailure } from "../api/client";
+import { navItemOf } from "./roles";
 
 function noSubscribe(): () => void {
   return () => undefined;
@@ -72,36 +76,67 @@ export function timesShown(vars: Record<string, string | number>, lang: "ka" | "
   return out;
 }
 
-export type Tone = "ok" | "pending" | "attention" | "ended" | "unknown";
-
-/** The badge's classes per tone (the kit's tokens). Display-only. */
-export const TONE_CLASS: Record<Tone, string> = {
-  ok: "border-[var(--us-border)] bg-[var(--us-surface-raised)] text-[var(--us-text)]",
-  pending: "border-[var(--us-border)] bg-[var(--us-surface)] text-[var(--us-text-muted)]",
-  attention: "border-[var(--us-danger)] bg-[var(--us-surface-raised)] text-[var(--us-danger)] font-semibold",
-  ended: "border-[var(--us-border)] bg-[var(--us-surface)] text-[var(--us-text-muted)]",
-  unknown: "border-dashed border-[var(--us-border)] text-[var(--us-text)]",
-};
-
-const RESTRICTION_TONE: Record<string, Tone> = {
-  planned: "pending",
-  active: "attention",
-  ended: "ended",
-  cancelled: "ended",
+/**
+ * The kit's tone per restriction state. A tone repeats the state the
+ * badge says in words (WCAG 1.4.1); it is not a legend colour and judges
+ * nothing. Display-only.
+ */
+export const RESTRICTION_TONE: Readonly<Record<string, StatusTone>> = {
+  planned: "info",
+  active: "warning",
+  ended: "neutral",
+  cancelled: "neutral",
 };
 
 /** A restriction's state as a badge; a state this console does not know is shown as sent. */
 export function StateBadge({ state }: { state: string }) {
   const t = useT();
-  const tone = RESTRICTION_TONE[state] ?? "unknown";
+  const tone = RESTRICTION_TONE[state];
   return (
-    <span
-      data-state={state}
-      data-testid="restriction-state"
-      className={`inline-block rounded border px-1.5 py-0.5 text-xs ${TONE_CLASS[tone]}`}
-    >
-      {tone === "unknown" ? state : t(`ansp.restriction.state.${state}`)}
-    </span>
+    <StatusBadge tone={tone ?? "neutral"} variant={tone === undefined ? "outline" : "soft"} data-state={state} data-testid="restriction-state">
+      {tone === undefined ? state : t(`ansp.restriction.state.${state}`)}
+    </StatusBadge>
+  );
+}
+
+/** next/link for the kit's frame components. */
+export const renderLink: LinkRenderer = (p) => <Link {...p} />;
+
+/**
+ * The top of a console page: the kit's PageHeader with the trail from
+ * the sidebar's group to this page, the page's h1, what it is about, and
+ * its actions. `title` replaces the catalogue title (a restriction's
+ * identifier); the trail then links the list it belongs to.
+ */
+export function ConsolePageHeader(props: {
+  titleKey: string;
+  title?: ReactNode;
+  descriptionKey?: string;
+  description?: ReactNode;
+  meta?: ReactNode;
+  actions?: ReactNode;
+}) {
+  const t = useT();
+  const { lang } = useLang();
+  const pathname = usePathname();
+  const path = pathname.replace(/^\/(ka|en)(?=\/|$)/, "");
+  const item = navItemOf(path);
+  const crumbs: Crumb[] = [];
+  if (item !== null) {
+    crumbs.push({ label: t(`ansp.nav.group.${item.group}`) });
+    if (path === item.path) crumbs.push({ label: t(item.labelKey) });
+    else crumbs.push({ label: t(item.labelKey), href: `/${lang}${item.path}` }, { label: props.title ?? t(props.titleKey) });
+  }
+  const description = props.description ?? (props.descriptionKey === undefined ? undefined : t(props.descriptionKey));
+  return (
+    <PageHeader
+      title={props.title ?? t(props.titleKey)}
+      breadcrumbs={crumbs}
+      renderLink={renderLink}
+      {...(description === undefined ? {} : { description })}
+      {...(props.meta === undefined ? {} : { meta: props.meta })}
+      {...(props.actions === undefined ? {} : { actions: props.actions })}
+    />
   );
 }
 
@@ -129,13 +164,18 @@ export function ProblemNotice({ failure }: { failure: CallFailure }) {
               ? t("ansp.problem.cis_stale")
               : t("ansp.problem.refused", { status: failure.status });
   return (
-    <div role="alert" data-status={failure.status} data-slug={failure.slug ?? ""} className="rounded border border-[var(--us-danger)] p-3 text-sm">
-      <p className="m-0 font-semibold text-[var(--us-danger)]">{lead}</p>
+    <div
+      role="alert"
+      data-status={failure.status}
+      data-slug={failure.slug ?? ""}
+      className="rounded-lg border border-status-critical-border bg-status-critical-soft p-3 text-sm text-foreground"
+    >
+      <p className="m-0 font-semibold text-status-critical">{lead}</p>
       {p !== null && (
         <p className="m-0 mt-1">
           <span>{p.title}</span>
           {p.detail !== null && p.detail !== "" && <span>: {p.detail}</span>}
-          <span className="ms-2 text-xs text-[var(--us-text-muted)]">({failure.status})</span>
+          <span className="ms-2 text-xs text-muted-foreground">({failure.status})</span>
         </p>
       )}
       {p !== null && p.errors.length > 0 && (
@@ -236,14 +276,33 @@ export function ReasonAction(props: {
   );
 }
 
-/** A section with a heading. */
-export function Section({ titleKey, vars, children }: { titleKey: string; vars?: Record<string, string | number>; children: ReactNode }) {
+/** A section of a page: the kit's Panel, named by its heading (an h2 under the page's h1). */
+export function Section({
+  titleKey,
+  vars,
+  descriptionKey,
+  actions,
+  children,
+  className,
+}: {
+  titleKey: string;
+  vars?: Record<string, string | number>;
+  descriptionKey?: string;
+  actions?: ReactNode;
+  children: ReactNode;
+  className?: string;
+}) {
   const t = useT();
   return (
-    <section className="flex flex-col gap-2">
-      <h3 className="m-0 text-base font-semibold">{t(titleKey, vars)}</h3>
+    <Panel
+      title={t(titleKey, vars)}
+      {...(descriptionKey === undefined ? {} : { description: t(descriptionKey) })}
+      {...(actions === undefined ? {} : { actions })}
+      {...(className === undefined ? {} : { className })}
+      bodyClassName="flex flex-col gap-2"
+    >
       {children}
-    </section>
+    </Panel>
   );
 }
 
@@ -251,7 +310,7 @@ export function Section({ titleKey, vars, children }: { titleKey: string; vars?:
 export function Loading() {
   const t = useT();
   return (
-    <p role="status" className="m-0 text-sm text-[var(--us-text-muted)]">
+    <p role="status" className="m-0 animate-pulse text-sm text-muted-foreground motion-reduce:animate-none">
       {t("ansp.loading")}
     </p>
   );
@@ -261,7 +320,7 @@ export function Loading() {
 export function Empty({ textKey, vars, testId }: { textKey: string; vars?: Record<string, string | number>; testId?: string }) {
   const t = useT();
   return (
-    <p role="status" data-testid={testId} className="m-0 rounded border border-dashed border-[var(--us-border)] p-3 text-sm">
+    <p role="status" data-testid={testId} className="m-0 rounded-lg border border-dashed border-border-strong bg-surface-sunken px-4 py-3 text-sm">
       {t(textKey, vars)}
     </p>
   );

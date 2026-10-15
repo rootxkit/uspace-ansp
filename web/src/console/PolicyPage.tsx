@@ -20,7 +20,7 @@ import type { ApiAuditEvent } from "./audit";
 import { useConsole, useLoad } from "./context";
 import { changes, formOf, historyVersions, policyAuditEntity, policyBody, THRESHOLDS, unitOf, ZONE_TYPES, type ApiPolicy, type ApiPolicyUpdate, type FormProblem, type PolicyForm } from "./policy";
 import { mayAdminister } from "./roles";
-import { Empty, Loading, ProblemNotice, Section, Time } from "./ui";
+import { ConsolePageHeader, Empty, Loading, ProblemNotice, Section, Time } from "./ui";
 
 function History({ current }: { current: number }) {
   const t = useT();
@@ -112,7 +112,7 @@ function Editor({ policy, onSaved }: { policy: ApiPolicy; onSaved(p: ApiPolicy):
           <div key={k} className="flex flex-col gap-0.5">
             <Label htmlFor={`policy-${k}`}>{t("ansp.policy.field", { name: t(`ansp.policy.name.${k}`), unit: t(`ansp.policy.unit.${unitOf(k)}`) })}</Label>
             <Input id={`policy-${k}`} inputMode="decimal" value={form[k]} onChange={(e) => set(k, e.target.value)} data-testid={`policy-input-${k}`} />
-            {problemOf(k) !== undefined && <p className="m-0 text-xs text-[var(--us-danger)]">{t(`ansp.policy.problem.${problemOf(k)?.problem ?? "number"}`)}</p>}
+            {problemOf(k) !== undefined && <p className="m-0 text-xs text-status-critical">{t(`ansp.policy.problem.${problemOf(k)?.problem ?? "number"}`)}</p>}
           </div>
         ))}
         <div className="flex flex-col gap-0.5">
@@ -121,7 +121,7 @@ function Editor({ policy, onSaved }: { policy: ApiPolicy; onSaved(p: ApiPolicy):
             id="policy-zone"
             value={form.default_zone_type}
             onChange={(e) => set("default_zone_type", e.target.value)}
-            className="rounded border border-[var(--us-border)] bg-[var(--us-surface)] px-2 py-1"
+            className="h-9 rounded-md border border-border bg-card px-2 text-sm"
           >
             {ZONE_TYPES.map((z) => (
               <option key={z} value={z}>
@@ -133,10 +133,10 @@ function Editor({ policy, onSaved }: { policy: ApiPolicy; onSaved(p: ApiPolicy):
         <div className="flex flex-col gap-0.5">
           <Label htmlFor="policy-country">{t("ansp.policy.name.country")}</Label>
           <Input id="policy-country" value={form.country} onChange={(e) => set("country", e.target.value)} />
-          {problemOf("country") !== undefined && <p className="m-0 text-xs text-[var(--us-danger)]">{t("ansp.policy.problem.country")}</p>}
+          {problemOf("country") !== undefined && <p className="m-0 text-xs text-status-critical">{t("ansp.policy.problem.country")}</p>}
         </div>
       </div>
-      <p className="m-0 text-xs text-[var(--us-text-muted)]">{t("ansp.policy.no_reason")}</p>
+      <p className="m-0 text-xs text-muted-foreground">{t("ansp.policy.no_reason")}</p>
       <div>
         <Button type="button" size="sm" disabled={busy} onClick={review} data-testid="policy-review">
           {t("ansp.policy.change")}
@@ -171,37 +171,39 @@ export function PolicyPage() {
   const [latest, setLatest] = useState<ApiPolicy | null>(null);
   const policy = latest ?? loaded.data;
   return (
-    <div className="flex flex-col gap-4">
-      <h2 className="m-0 text-lg font-semibold">{t("ansp.policy.title")}</h2>
+    <div className="flex flex-col gap-6">
+      <ConsolePageHeader titleKey="ansp.policy.title" descriptionKey="ansp.policy.description" />
       {!mayAdminister(role) && <Empty textKey="ansp.policy.role" testId="policy-role" />}
       {loaded.failure !== null && <ProblemNotice failure={loaded.failure} />}
       {policy === null && loaded.failure === null && <Loading />}
       {policy !== null && (
         <>
-          <p className="m-0 text-sm" data-testid="policy-version">
+          <Section titleKey="ansp.policy.current_title">
+          <p className="m-0 text-sm text-muted-foreground" data-testid="policy-version">
             {t("ansp.policy.version", { version: policy.policy_version, by: policy.changed_by })} <Time iso={policy.changed_at} />
           </p>
-          <table className="text-sm" data-testid="policy-table">
+          <table className="w-full max-w-2xl border-collapse text-sm" data-testid="policy-table">
             <tbody>
               {THRESHOLDS.map((k) => (
-                <tr key={k} data-threshold={k}>
-                  <td className="pe-4">{t(`ansp.policy.name.${k}`)}</td>
-                  <td className="pe-1 text-end font-mono">{policy[k].toLocaleString(lang)}</td>
+                <tr key={k} data-threshold={k} className="border-b border-border">
+                  <td className="py-2 pe-4">{t(`ansp.policy.name.${k}`)}</td>
+                  <td className="py-2 pe-1 text-end font-mono">{policy[k].toLocaleString(lang)}</td>
                   <td>{t(`ansp.policy.unit.${unitOf(k)}`)}</td>
                 </tr>
               ))}
-              <tr>
-                <td className="pe-4">{t("ansp.policy.name.default_zone_type")}</td>
+              <tr className="border-b border-border">
+                <td className="py-2 pe-4">{t("ansp.policy.name.default_zone_type")}</td>
                 <td colSpan={2}>{t(`ansp.zone_type.${policy.default_zone_type}`)}</td>
               </tr>
               <tr>
-                <td className="pe-4">{t("ansp.policy.name.country")}</td>
+                <td className="py-2 pe-4">{t("ansp.policy.name.country")}</td>
                 <td colSpan={2} className="font-mono">
                   {policy.country}
                 </td>
               </tr>
             </tbody>
           </table>
+          </Section>
           {mayAdminister(role) && (
             <Section titleKey="ansp.policy.change_title">
               <Editor key={policy.policy_version} policy={policy} onSaved={setLatest} />

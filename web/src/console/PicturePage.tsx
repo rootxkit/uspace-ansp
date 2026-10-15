@@ -17,6 +17,7 @@ import { subscribeFrame, useNowMs } from "@rootxkit/uspace-ui/live";
 import { useBBoxSubscription } from "@rootxkit/uspace-ui/map";
 import { DegradedBanner, FeedStatusBar } from "@rootxkit/uspace-ui/status";
 import { trackIconParts } from "@rootxkit/uspace-ui/symbology";
+import { MapPanel, Panel } from "@rootxkit/uspace-ui/ui";
 import { toView } from "./adapt";
 import { ConsoleMap } from "./ConsoleMap";
 import { useConsole } from "./context";
@@ -24,7 +25,7 @@ import { compareShown, drawnOf, type Aircraft, type Drawn } from "./manned";
 import { MannedLayer, STATE_TOKEN, type MannedFeature } from "./MannedLayer";
 import { adaptersLine, adapterText, altitudeText, identText, LabelCache, labelText, motionText, stateText, symbolOf } from "./picture";
 import { streamSilent, type StreamStatus } from "./stream";
-import { Empty, timesShown } from "./ui";
+import { ConsolePageHeader, Empty, timesShown } from "./ui";
 import { useMannedStream } from "./useManned";
 import { useRestrictions } from "./useRestrictions";
 
@@ -85,17 +86,17 @@ export function PictureStatus({ status, nowMs, counters }: { status: StreamStatu
       data-testid="picture-status"
       data-connection={status.connection}
       data-silent={silent}
-      className="flex flex-col gap-1 rounded border border-[var(--us-border)] bg-[var(--us-surface-sunken)] p-2 text-xs"
+      className="flex flex-col gap-1.5 rounded-lg border border-border bg-card px-4 py-3 text-xs shadow-panel"
     >
       <FeedStatusBar status={status} nowMs={nowMs} />
       {status.connection === "down" && (
-        <p role="alert" className="m-0 font-semibold text-[var(--us-danger)]" data-testid="picture-down">
+        <p role="alert" className="m-0 font-semibold text-status-critical" data-testid="picture-down">
           {t("ansp.picture.status.down", timesShown({ since: new Date(status.sinceMs).toISOString() }, lang))}
         </p>
       )}
-      {status.refused !== null && <p className="m-0 text-[var(--us-danger)]">{t("ansp.picture.status.refused", { reason: status.refused })}</p>}
+      {status.refused !== null && <p className="m-0 text-status-critical">{t("ansp.picture.status.refused", { reason: status.refused })}</p>}
       {silent && status.lastStatusAtMs !== null && (
-        <p role="alert" className="m-0 font-semibold text-[var(--us-danger)]" data-testid="picture-silent">
+        <p role="alert" className="m-0 font-semibold text-status-critical" data-testid="picture-silent">
           {t("ansp.picture.status.silent", { age: fmtAge((nowMs - status.lastStatusAtMs) / 1000, lang), threshold: status.staleAfterS ?? "—" })}
         </p>
       )}
@@ -124,7 +125,7 @@ export function PictureStatus({ status, nowMs, counters }: { status: StreamStatu
           {status.adapters.map((a) => (
             <li
               key={a.id}
-              className={`list-none ${a.state === "live" ? "" : "font-semibold text-[var(--us-danger)]"}`}
+              className={`list-none ${a.state === "live" ? "" : "font-semibold text-status-critical"}`}
               data-adapter={a.id}
               data-state={a.state}
             >
@@ -134,7 +135,7 @@ export function PictureStatus({ status, nowMs, counters }: { status: StreamStatu
         </ul>
       )}
       {(counters.refused > 0 || counters.outOfOrder > 0 || counters.evicted > 0 || status.adaptersMalformed > 0) && (
-        <p className="m-0 text-[var(--us-text-muted)]" data-testid="picture-counters">
+        <p className="m-0 text-muted-foreground" data-testid="picture-counters">
           {t("ansp.picture.status.counters", {
             refused: counters.refused,
             out_of_order: counters.outOfOrder,
@@ -185,23 +186,26 @@ export function PicturePage() {
   const relevant = shown.filter((x) => x.a.relevant === true).length;
 
   return (
-    <div className="flex flex-col gap-3">
-      <h2 className="m-0 text-lg font-semibold">{t("ansp.picture.title")}</h2>
+    <div className="flex flex-col gap-6">
+      <ConsolePageHeader titleKey="ansp.picture.title" descriptionKey="ansp.picture.description" />
       <PictureStatus status={status} nowMs={nowMs} counters={stream.picture.counters} />
       {status.connection !== "live" && shown.length > 0 && (
-        <p role="alert" className="m-0 text-sm font-semibold text-[var(--us-danger)]" data-testid="picture-held">
+        <p role="alert" className="m-0 text-sm font-semibold text-status-critical" data-testid="picture-held">
           {t("ansp.picture.held", { count: shown.length })}
         </p>
       )}
-      <div className="flex flex-col gap-3 lg:flex-row">
-        <div className="flex flex-col gap-1 lg:w-[60%]">
-          <ConsoleMap restrictions={views} className="h-[65vh]">
+      <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
+        <MapPanel
+          title={t("ansp.map.title")}
+          mapClassName="h-[65vh]"
+          footer={<p className="m-0 text-xs text-muted-foreground">{t("ansp.picture.map_note")}</p>}
+        >
+          <ConsoleMap restrictions={views} fill>
             <MannedLayer aircraft={features} />
             <SubscribeOnView send={onBBox} />
           </ConsoleMap>
-          <p className="m-0 text-xs text-[var(--us-text-muted)]">{t("ansp.picture.map_note")}</p>
-        </div>
-        <div className="flex flex-1 flex-col gap-2">
+        </MapPanel>
+        <Panel title={t("ansp.picture.list_title")} bodyClassName="flex flex-col gap-2">
           {shown.length === 0 &&
             (status.connection === "live" ? (
               <Empty textKey="ansp.picture.empty" vars={{ adapters: adaptersLine(status, t, lang) }} testId="picture-empty" />
@@ -223,7 +227,7 @@ export function PicturePage() {
                 {shown.slice(0, LIST_ROWS).map(({ a, d }) => (
                   <li
                     key={a.icao24}
-                    className={`flex list-none items-start gap-2 rounded border p-1.5 text-xs ${a.relevant === true ? "border-[var(--us-border-strong)]" : "border-[var(--us-border)] opacity-80"}`}
+                    className={`flex list-none items-start gap-2.5 rounded-md border p-2 text-xs ${a.relevant === true ? "border-border-strong bg-card" : "border-border bg-surface-sunken"}`}
                     data-aircraft={a.icao24}
                     data-state={d.state}
                     data-relevant={a.relevant === null ? "unstated" : String(a.relevant)}
@@ -235,13 +239,13 @@ export function PicturePage() {
                       <span>{motionText(a, lang)}</span>
                       <span
                         data-testid="aircraft-state"
-                        className={d.state === "live" ? "" : "font-semibold text-[var(--us-danger)]"}
+                        className={d.state === "live" ? "" : "font-semibold text-status-critical"}
                       >
                         {stateText(a, d, status.sources, status.staleAfterS, t, lang)}
                       </span>
-                      <span className="text-[var(--us-text-muted)]">
+                      <span className="text-muted-foreground">
                         {t(`ansp.picture.relevance.${a.relevant === null ? "unstated" : a.relevant ? "relevant" : "other"}`)} · {a.sourceInstance}
-                        {a.emergency === true && <strong className="ms-1 text-[var(--us-danger)]">{t("ansp.picture.emergency")}</strong>}
+                        {a.emergency === true && <strong className="ms-1 text-status-critical">{t("ansp.picture.emergency")}</strong>}
                       </span>
                     </div>
                   </li>
@@ -250,7 +254,7 @@ export function PicturePage() {
               {shown.length > LIST_ROWS && <p className="m-0 text-xs">{t("ansp.picture.more", { count: shown.length - LIST_ROWS })}</p>}
             </>
           )}
-        </div>
+        </Panel>
       </div>
     </div>
   );

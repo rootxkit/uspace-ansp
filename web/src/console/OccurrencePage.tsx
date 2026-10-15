@@ -34,14 +34,14 @@ import {
   type OccurrenceForm,
 } from "./occurrence";
 import { maySupervise } from "./roles";
-import { Empty, ProblemNotice, Section, Time, timesShown } from "./ui";
+import { ConsolePageHeader, Empty, ProblemNotice, Section, Time, timesShown } from "./ui";
 
 function Problems({ problems, field }: { problems: FormProblem[]; field: string }) {
   const t = useT();
   const mine = problems.filter((p) => p.field === field || p.field.startsWith(`${field}[`) || p.field.startsWith(`${field}.`));
   if (mine.length === 0) return null;
   return (
-    <ul className="m-0 ps-4 text-xs text-[var(--us-danger)]">
+    <ul className="m-0 ps-4 text-xs text-status-critical">
       {mine.map((p) => (
         <li key={`${p.field}-${p.problem}`}>
           <code>{p.field}</code>: {t(`ansp.occurrence.problem.${p.problem}`)}
@@ -62,8 +62,8 @@ function UndeliveredAlarms() {
   return (
     <ul className="m-0 flex flex-col gap-1 p-0" data-testid="occurrence-undelivered">
       {open.map((a) => (
-        <li key={a.id} role="alert" className="list-none rounded border border-[var(--us-danger)] p-2 text-sm">
-          <p className="m-0 font-semibold text-[var(--us-danger)]">{t("ansp.occurrence.undelivered", timesShown({ since: a.since }, lang))}</p>
+        <li key={a.id} role="alert" className="list-none rounded-lg border border-status-critical-border bg-status-critical-soft p-3 text-sm">
+          <p className="m-0 font-semibold text-status-critical">{t("ansp.occurrence.undelivered", timesShown({ since: a.since }, lang))}</p>
           <p className="m-0">{a.detail}</p>
         </li>
       ))}
@@ -142,11 +142,10 @@ export function OccurrencePage() {
   );
 
   return (
-    <div className="flex max-w-4xl flex-col gap-4">
-      <h2 className="m-0 text-lg font-semibold">{t("ansp.occurrence.title")}</h2>
-      <p className="m-0 text-xs text-[var(--us-text-muted)]">{t("ansp.occurrence.intro")}</p>
+    <div className="flex max-w-5xl flex-col gap-6">
+      <ConsolePageHeader titleKey="ansp.occurrence.title" descriptionKey="ansp.occurrence.intro" />
       {queued !== null && (
-        <div role="status" className="rounded border border-[var(--us-border-strong)] p-3 text-sm" data-testid="occurrence-queued" data-state={queued.state}>
+        <div role="status" className="rounded-lg border border-status-info-border bg-status-info-soft p-3 text-sm" data-testid="occurrence-queued" data-state={queued.state}>
           <p className="m-0 font-semibold">{t("ansp.occurrence.queued", { ref: queued.report_ref })}</p>
           <p className="m-0">
             {t("ansp.occurrence.deadline_api")} <Time iso={queued.deadline_at} />
@@ -155,7 +154,7 @@ export function OccurrencePage() {
         </div>
       )}
       <form
-        className="flex flex-col gap-3"
+        className="flex flex-col gap-4 rounded-lg border border-border bg-card p-5 shadow-panel"
         onSubmit={(e) => {
           e.preventDefault();
           if (!busy && (!unknown || resendAnyway)) void submit();
@@ -164,7 +163,7 @@ export function OccurrencePage() {
         <div className="grid gap-3 md:grid-cols-2">
           <div className="flex flex-col gap-0.5">
             <Label htmlFor="occ-channel">{t("ansp.occurrence.channel")}</Label>
-            <select id="occ-channel" value={form.channel} onChange={(e) => set("channel", e.target.value)} className="rounded border border-[var(--us-border)] bg-[var(--us-surface)] px-2 py-1">
+            <select id="occ-channel" value={form.channel} onChange={(e) => set("channel", e.target.value)} className="h-9 rounded-md border border-border bg-card px-2 text-sm">
               {CHANNELS.map((c) => (
                 <option key={c} value={c}>
                   {t(`ansp.occurrence.channel.${c}`)}
@@ -174,7 +173,7 @@ export function OccurrencePage() {
           </div>
           <div className="flex flex-col gap-0.5">
             <Label htmlFor="occ-category">{t("ansp.occurrence.category")}</Label>
-            <select id="occ-category" value={form.category} onChange={(e) => set("category", e.target.value)} className="rounded border border-[var(--us-border)] bg-[var(--us-surface)] px-2 py-1">
+            <select id="occ-category" value={form.category} onChange={(e) => set("category", e.target.value)} className="h-9 rounded-md border border-border bg-card px-2 text-sm">
               {CATEGORIES.map((c) => (
                 <option key={c} value={c}>
                   {t(`ansp.occurrence.category.${c}`)}
@@ -189,7 +188,7 @@ export function OccurrencePage() {
           {deadline === null ? t("ansp.occurrence.deadline_none") : t("ansp.occurrence.deadline", timesShown({ at: deadline }, lang))}
         </p>
 
-        <fieldset className="flex flex-col gap-2 rounded border border-[var(--us-border)] p-2">
+        <fieldset className="flex flex-col gap-2 rounded-lg border border-border p-3">
           <legend className="px-1 text-sm font-semibold">{t("ansp.occurrence.aircraft")}</legend>
           {form.aircraft.map((a, i) => (
             <div key={i} className="grid gap-2 md:grid-cols-4" data-testid="occ-aircraft-row">
@@ -213,7 +212,7 @@ export function OccurrencePage() {
           </div>
         </fieldset>
 
-        <fieldset className="flex flex-col gap-2 rounded border border-[var(--us-border)] p-2">
+        <fieldset className="flex flex-col gap-2 rounded-lg border border-border p-3">
           <legend className="px-1 text-sm font-semibold">{t("ansp.occurrence.manned")}</legend>
           {form.manned.map((m, i) => (
             <div key={i} className="grid gap-2 md:grid-cols-2" data-testid="occ-manned-row">
@@ -241,7 +240,7 @@ export function OccurrencePage() {
           <Problems problems={problems} field="intent_refs" />
         </div>
 
-        <fieldset className="grid gap-2 rounded border border-[var(--us-border)] p-2 md:grid-cols-3">
+        <fieldset className="grid gap-2 rounded-lg border border-border p-3 md:grid-cols-3">
           <legend className="px-1 text-sm font-semibold">{t("ansp.occurrence.min_separation")}</legend>
           <div className="flex flex-col gap-0.5">
             <Label htmlFor="occ-min-h">{t("ansp.occurrence.min_h_m")}</Label>
@@ -263,10 +262,10 @@ export function OccurrencePage() {
           <Problems problems={problems} field="narrative" />
         </div>
 
-        <div className="flex flex-col gap-0.5 rounded border border-dashed border-[var(--us-danger)] p-2" data-testid="occ-reporter">
+        <div className="flex flex-col gap-0.5 rounded-lg border border-dashed border-status-critical-border p-3" data-testid="occ-reporter">
           <Label htmlFor="occ-reporter">
             {t("ansp.occurrence.reporter")}{" "}
-            <span className="rounded border border-[var(--us-danger)] px-1 text-xs font-semibold text-[var(--us-danger)]" data-testid="occ-reporter-protected">
+            <span className="rounded-md border border-status-critical-border px-1.5 text-xs font-semibold text-status-critical" data-testid="occ-reporter-protected">
               {t("ansp.occurrence.protected")}
             </span>
           </Label>
@@ -278,12 +277,12 @@ export function OccurrencePage() {
             spellCheck={false}
             maxLength={REPORTER_REF_MAX_CHARS}
           />
-          <p className="m-0 text-xs text-[var(--us-text-muted)]">{t("ansp.occurrence.reporter_hint")}</p>
+          <p className="m-0 text-xs text-muted-foreground">{t("ansp.occurrence.reporter_hint")}</p>
           <Problems problems={problems} field="reporter_person_ref" />
         </div>
 
         {unknown && (
-          <div role="alert" className="flex flex-col gap-1 rounded border border-[var(--us-danger)] p-2 text-sm" data-testid="occurrence-unknown">
+          <div role="alert" className="flex flex-col gap-1 rounded-lg border border-status-critical-border bg-status-critical-soft p-3 text-sm" data-testid="occurrence-unknown">
             <p className="m-0 font-semibold">{t("ansp.occurrence.unknown")}</p>
             <label className="flex items-center gap-2">
               <input type="checkbox" checked={resendAnyway} onChange={(e) => setResendAnyway(e.target.checked)} data-testid="occ-resend" />
