@@ -3,7 +3,8 @@
 // takes every adapter's track/manned/v1 from man.v1.> (core), keeps the
 // live picture (internal/picture), serves GET /v1/manned-traffic/
 // snapshot and the WebSocket GET /v1/manned-traffic/stream to the USSPs,
-// the authority and the console (internal/feed), and writes every valid
+// the authority and the console, and GET /v1/manned-traffic/summary (the
+// picture counted) to the console (internal/feed), and writes every valid
 // sample to manned_tracks from the MAN_MIRROR stream, acknowledging only
 // after the commit (B-07). It follows the policy, the source switches
 // and the live console sessions from NATS KV and never opens the

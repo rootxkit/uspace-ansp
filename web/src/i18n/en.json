@@ -611,5 +611,9 @@
   "ansp.overview.kpi.occurrences_queued_one": "{count} queued to the authority",
   "ansp.overview.kpi.occurrences_queued_other": "{count} queued to the authority",
   "ansp.overview.kpi.occurrences_sent": "All sent",
-  "ansp.overview.kpi.occurrences_none": "None submitted"
+  "ansp.overview.kpi.occurrences_none": "None submitted",
+  "ansp.overview.kpi.manned": "Manned aircraft in the picture",
+  "ansp.overview.kpi.manned_hint": "{live} live, {stale} stale, {source_disabled} source disabled; {relevant} relevant to U-space",
+  "ansp.overview.kpi.manned_degraded": "Degraded: {list}",
+  "ansp.overview.kpi.manned_ok": "Nothing degraded"
 }

@@ -2327,6 +2327,30 @@ type MannedStreamFrame struct {
 	union json.RawMessage
 }
 
+// MannedSummary The manned picture counted (GET /v1/manned-traffic/summary): no
+// icao24, callsign or position. total is live + stale +
+// source_disabled; relevant is of those. max_aircraft is the
+// picture's bound (past it the aircraft heard longest ago is
+// evicted, counted picture_evicted_capacity).
+type MannedSummary struct {
+	ByState struct {
+		Live           int `json:"live"`
+		SourceDisabled int `json:"source_disabled"`
+		Stale          int `json:"stale"`
+	} `json:"by_state"`
+
+	// CountedAt RFC 3339 UTC with Z, millisecond precision (02 §1).
+	CountedAt     Timestamp `json:"counted_at"`
+	Degraded      []string  `json:"degraded"`
+	MaxAircraft   int       `json:"max_aircraft"`
+	PolicyVersion string    `json:"policy_version"`
+
+	// Relevance The relevance filter's status line (SC-22), as console/status/v1 carries it.
+	Relevance string `json:"relevance"`
+	Relevant  int    `json:"relevant"`
+	Total     int    `json:"total"`
+}
+
 // MannedTrack The body of track/manned/v1 (04 §3.1, schemas/track/manned/v1.json
 // owned here): one manned aircraft as handed to U-space under
 // ATS.OR.127(a). alt_pressure_m is pressure altitude (ISA 1013.25
@@ -4523,6 +4547,21 @@ type ClientInterface interface {
 	// Corresponds with GET /v1/manned-traffic/stream (the `StreamMannedTraffic` operationId).
 	StreamMannedTraffic(ctx context.Context, params *StreamMannedTrafficParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// GetMannedTrafficSummary How many manned aircraft the picture holds
+	//
+	// The live manned picture of manned-feed counted for the console's
+	// overview, from the picture itself (not from a stream): every
+	// aircraft shown, by state (live, stale, source_disabled), and how
+	// many of them are relevant to U-space. An aircraft known only from
+	// backlog samples is not shown and not counted (T-04). Counts only,
+	// no icao24 or callsign; the picture is bounded by max_aircraft.
+	// degraded says why the count may be low or empty (adapters_silent,
+	// cis_projection_stale, nats) and relevance how relevance was
+	// judged (SC-22). counted_at is manned-feed's clock.
+	//
+	// Corresponds with GET /v1/manned-traffic/summary (the `GetMannedTrafficSummary` operationId).
+	GetMannedTrafficSummary(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// CreateOccurrenceWithBody Report an occurrence
 	//
 	// An occurrence report of ANSP staff (Reg. (EU) 376/2014 Art.
@@ -5633,6 +5672,31 @@ func (c *Client) GetMannedTrafficSnapshot(ctx context.Context, params *GetManned
 // Corresponds with GET /v1/manned-traffic/stream (the `StreamMannedTraffic` operationId).
 func (c *Client) StreamMannedTraffic(ctx context.Context, params *StreamMannedTrafficParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewStreamMannedTrafficRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetMannedTrafficSummary How many manned aircraft the picture holds
+//
+// The live manned picture of manned-feed counted for the console's
+// overview, from the picture itself (not from a stream): every
+// aircraft shown, by state (live, stale, source_disabled), and how
+// many of them are relevant to U-space. An aircraft known only from
+// backlog samples is not shown and not counted (T-04). Counts only,
+// no icao24 or callsign; the picture is bounded by max_aircraft.
+// degraded says why the count may be low or empty (adapters_silent,
+// cis_projection_stale, nats) and relevance how relevance was
+// judged (SC-22). counted_at is manned-feed's clock.
+//
+// Corresponds with GET /v1/manned-traffic/summary (the `GetMannedTrafficSummary` operationId).
+func (c *Client) GetMannedTrafficSummary(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetMannedTrafficSummaryRequest(c.Server)
 	if err != nil {
 		return nil, err
 	}
@@ -7426,6 +7490,33 @@ func NewStreamMannedTrafficRequest(server string, params *StreamMannedTrafficPar
 	return req, nil
 }
 
+// NewGetMannedTrafficSummaryRequest constructs an http.Request for the GetMannedTrafficSummary method
+func NewGetMannedTrafficSummaryRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/manned-traffic/summary")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewCreateOccurrenceRequest calls the generic CreateOccurrence builder with application/json body
 func NewCreateOccurrenceRequest(server string, params *CreateOccurrenceParams, body CreateOccurrenceJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -9076,6 +9167,23 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with GET /v1/manned-traffic/stream (the `StreamMannedTraffic` operationId).
 	StreamMannedTrafficWithResponse(ctx context.Context, params *StreamMannedTrafficParams, reqEditors ...RequestEditorFn) (*StreamMannedTrafficResponse, error)
+
+	// GetMannedTrafficSummaryWithResponse How many manned aircraft the picture holds
+	//
+	// The live manned picture of manned-feed counted for the console's
+	// overview, from the picture itself (not from a stream): every
+	// aircraft shown, by state (live, stale, source_disabled), and how
+	// many of them are relevant to U-space. An aircraft known only from
+	// backlog samples is not shown and not counted (T-04). Counts only,
+	// no icao24 or callsign; the picture is bounded by max_aircraft.
+	// degraded says why the count may be low or empty (adapters_silent,
+	// cis_projection_stale, nats) and relevance how relevance was
+	// judged (SC-22). counted_at is manned-feed's clock.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/manned-traffic/summary (the `GetMannedTrafficSummary` operationId).
+	GetMannedTrafficSummaryWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetMannedTrafficSummaryResponse, error)
 
 	// CreateOccurrenceWithBodyWithResponse Report an occurrence
 	//
@@ -11309,6 +11417,68 @@ func (r StreamMannedTrafficResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r StreamMannedTrafficResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// GetMannedTrafficSummaryResponse401Headers the declared response headers of an HTTP 401 response for GetMannedTrafficSummary
+type GetMannedTrafficSummaryResponse401Headers struct {
+	WWWAuthenticate *string
+}
+
+type GetMannedTrafficSummaryResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *MannedSummary
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *Unauthorized
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *Forbidden
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *GetMannedTrafficSummaryResponse401Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetMannedTrafficSummaryResponse) GetJSON200() *MannedSummary {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r GetMannedTrafficSummaryResponse) GetApplicationproblemJSON401() *Unauthorized {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r GetMannedTrafficSummaryResponse) GetApplicationproblemJSON403() *Forbidden {
+	return r.ApplicationproblemJSON403
+}
+
+// GetBody returns the raw response body bytes
+func (r GetMannedTrafficSummaryResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetMannedTrafficSummaryResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetMannedTrafficSummaryResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetMannedTrafficSummaryResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -14304,6 +14474,29 @@ func (c *ClientWithResponses) StreamMannedTrafficWithResponse(ctx context.Contex
 	return ParseStreamMannedTrafficResponse(rsp)
 }
 
+// GetMannedTrafficSummaryWithResponse How many manned aircraft the picture holds
+//
+// The live manned picture of manned-feed counted for the console's
+// overview, from the picture itself (not from a stream): every
+// aircraft shown, by state (live, stale, source_disabled), and how
+// many of them are relevant to U-space. An aircraft known only from
+// backlog samples is not shown and not counted (T-04). Counts only,
+// no icao24 or callsign; the picture is bounded by max_aircraft.
+// degraded says why the count may be low or empty (adapters_silent,
+// cis_projection_stale, nats) and relevance how relevance was
+// judged (SC-22). counted_at is manned-feed's clock.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/manned-traffic/summary (the `GetMannedTrafficSummary` operationId).
+func (c *ClientWithResponses) GetMannedTrafficSummaryWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetMannedTrafficSummaryResponse, error) {
+	rsp, err := c.GetMannedTrafficSummary(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetMannedTrafficSummaryResponse(rsp)
+}
+
 // CreateOccurrenceWithBodyWithResponse Report an occurrence
 //
 // An occurrence report of ANSP staff (Reg. (EU) 376/2014 Art.
@@ -16625,6 +16818,59 @@ func ParseStreamMannedTrafficResponse(rsp *http.Response) (*StreamMannedTrafficR
 	return response, nil
 }
 
+// ParseGetMannedTrafficSummaryResponse parses an HTTP response from a GetMannedTrafficSummaryWithResponse call
+func ParseGetMannedTrafficSummaryResponse(rsp *http.Response) (*GetMannedTrafficSummaryResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetMannedTrafficSummaryResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest MannedSummary
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers GetMannedTrafficSummaryResponse401Headers
+		if values := rsp.Header.Values("WWW-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "WWW-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WWWAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
 // ParseCreateOccurrenceResponse parses an HTTP response from a CreateOccurrenceWithResponse call
 func ParseCreateOccurrenceResponse(rsp *http.Response) (*CreateOccurrenceResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -18926,6 +19172,9 @@ type ServerInterface interface {
 	// StreamMannedTraffic The manned traffic stream (WebSocket)
 	// (GET /v1/manned-traffic/stream)
 	StreamMannedTraffic(w http.ResponseWriter, r *http.Request, params StreamMannedTrafficParams)
+	// GetMannedTrafficSummary How many manned aircraft the picture holds
+	// (GET /v1/manned-traffic/summary)
+	GetMannedTrafficSummary(w http.ResponseWriter, r *http.Request)
 	// CreateOccurrence Report an occurrence
 	// (POST /v1/occurrences)
 	CreateOccurrence(w http.ResponseWriter, r *http.Request, params CreateOccurrenceParams)
@@ -19543,6 +19792,20 @@ func (siw *ServerInterfaceWrapper) StreamMannedTraffic(w http.ResponseWriter, r 
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.StreamMannedTraffic(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetMannedTrafficSummary operation middleware
+func (siw *ServerInterfaceWrapper) GetMannedTrafficSummary(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetMannedTrafficSummary(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -20470,6 +20733,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/coordination/inbox/{id}/acknowledge", wrapper.AcknowledgeCoordinationNotice)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/coordination/stream", wrapper.StreamCoordination)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/manned-traffic/snapshot", wrapper.GetMannedTrafficSnapshot)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/manned-traffic/summary", wrapper.GetMannedTrafficSummary)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/manned-traffic/stream", wrapper.StreamMannedTraffic)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/adapters", wrapper.ListAdapters)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/adapters/{id}", wrapper.GetAdapter)
@@ -22437,6 +22701,62 @@ func (response StreamMannedTraffic503ApplicationProblemPlusJSONResponse) VisitSt
 	w.Header().Set("Content-Type", "application/problem+json")
 	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
 	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetMannedTrafficSummaryRequestObject struct {
+}
+
+type GetMannedTrafficSummaryResponseObject interface {
+	VisitGetMannedTrafficSummaryResponse(w http.ResponseWriter) error
+}
+
+type GetMannedTrafficSummary200JSONResponse MannedSummary
+
+func (response GetMannedTrafficSummary200JSONResponse) VisitGetMannedTrafficSummaryResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetMannedTrafficSummary401ApplicationProblemPlusJSONResponse struct {
+	UnauthorizedApplicationProblemPlusJSONResponse
+}
+
+func (response GetMannedTrafficSummary401ApplicationProblemPlusJSONResponse) VisitGetMannedTrafficSummaryResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	if response.Headers.WWWAuthenticate != nil {
+		w.Header().Set("WWW-Authenticate", fmt.Sprint(*response.Headers.WWWAuthenticate))
+	}
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetMannedTrafficSummary403ApplicationProblemPlusJSONResponse struct {
+	ForbiddenApplicationProblemPlusJSONResponse
+}
+
+func (response GetMannedTrafficSummary403ApplicationProblemPlusJSONResponse) VisitGetMannedTrafficSummaryResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
 	_, err := buf.WriteTo(w)
 	return err
 }
@@ -25285,6 +25605,9 @@ type StrictServerInterface interface {
 	// StreamMannedTraffic The manned traffic stream (WebSocket)
 	// (GET /v1/manned-traffic/stream)
 	StreamMannedTraffic(ctx context.Context, request StreamMannedTrafficRequestObject) (StreamMannedTrafficResponseObject, error)
+	// GetMannedTrafficSummary How many manned aircraft the picture holds
+	// (GET /v1/manned-traffic/summary)
+	GetMannedTrafficSummary(ctx context.Context, request GetMannedTrafficSummaryRequestObject) (GetMannedTrafficSummaryResponseObject, error)
 	// CreateOccurrence Report an occurrence
 	// (POST /v1/occurrences)
 	CreateOccurrence(ctx context.Context, request CreateOccurrenceRequestObject) (CreateOccurrenceResponseObject, error)
@@ -25994,6 +26317,30 @@ func (sh *strictHandler) StreamMannedTraffic(w http.ResponseWriter, r *http.Requ
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(StreamMannedTrafficResponseObject); ok {
 		if err := validResponse.VisitStreamMannedTrafficResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetMannedTrafficSummary operation middleware
+func (sh *strictHandler) GetMannedTrafficSummary(w http.ResponseWriter, r *http.Request) {
+	var request GetMannedTrafficSummaryRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetMannedTrafficSummary(ctx, request.(GetMannedTrafficSummaryRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetMannedTrafficSummary")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetMannedTrafficSummaryResponseObject); ok {
+		if err := validResponse.VisitGetMannedTrafficSummaryResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

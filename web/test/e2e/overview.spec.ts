@@ -147,6 +147,8 @@ test("a viewer's overview has no accounts, requests or occurrence tile and the A
   await expect(page.getByTestId("kpi-users")).toHaveCount(0);
   await expect(page.getByTestId("kpi-requests")).toHaveCount(0);
   await expect(page.getByTestId("kpi-occurrences")).toHaveCount(0);
+  // The manned picture's count is every role's.
+  await expect(page.getByTestId("kpi-manned")).toHaveAttribute("data-value", "0");
   expect(await bffStatus(page, "/v1/users/summary")).toBe(403);
   expect(await bffStatus(page, "/v1/restriction-requests/summary")).toBe(403);
   expect(await bffStatus(page, "/v1/occurrences/summary")).toBe(403);
@@ -211,4 +213,29 @@ test("the supervisor's occurrence tile counts the reports by the state of their 
   await page.getByRole("navigation", { name: "Main navigation" }).getByRole("link", { name: "Overview" }).click();
   await expect(tile).toHaveAttribute("data-value", "2");
   await expect(tile).toContainText("1 failed or abandoned");
+});
+
+test("the manned tile counts the picture as manned-feed holds it, read through the BFF and not from a stream", async ({ page, request }) => {
+  await control(request, "/__mock/manned", { icao24: "4ca7b5", callsign: "TST123" });
+  await control(request, "/__mock/manned", { icao24: "4ca7b6", callsign: "OTH1", relevant: false });
+  await signIn(page, VIEWER);
+  const tile = page.getByTestId("kpi-manned");
+  await expect(tile).toHaveAttribute("data-value", "2");
+  await expect(tile).toContainText("Manned aircraft in the picture");
+  await expect(tile).toContainText("2 live, 0 stale, 0 source disabled; 1 relevant to U-space");
+  await expect(tile).toContainText("Nothing degraded");
+  await expect(tile).not.toContainText("TST123");
+  // The adapter switched off: the feed ages its aircraft and says the feed is degraded.
+  await control(request, "/__mock/adapter", { id: "replay-1", state: "disabled", who: "admin1" });
+  await control(request, "/__mock/manned", { icao24: "4ca7b5", state: "source_disabled" });
+  await page.reload();
+  await expect(tile).toContainText("1 live, 0 stale, 1 source disabled");
+  await expect(tile).toHaveAttribute("data-degraded", "adapters_silent");
+  await expect(tile).toContainText("Degraded: adapters_silent");
+  // Read from the feed's summary through the BFF with the session; the overview opens no manned stream.
+  const calls = (await (await request.get("/__mock/requests")).json()) as { method: string; path: string; authorization: boolean }[];
+  expect(calls).toContainEqual(expect.objectContaining({ method: "GET", path: "/v1/manned-traffic/summary", authorization: true }));
+  expect(calls.filter((c) => c.method === "WS" && c.path === "/v1/manned-traffic/stream")).toHaveLength(0);
+  expect(await bffStatus(page, "/v1/manned-traffic/summary", "POST")).toBe(405);
+  expect((await request.get("/_bff/api/v1/manned-traffic/summary")).status()).toBe(401);
 });

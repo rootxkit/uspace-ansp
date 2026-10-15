@@ -401,6 +401,57 @@ describe("summaries", () => {
   });
 });
 
+describe("the feed's summary", () => {
+  const cookie = "uspace_session=tok123; uspace_csrf=csrf456";
+  const FEED = "http://feed.internal:8080";
+  // Without a second argument the feed is FEED; with one, that value (undefined: unset).
+  const bffFeed = (f: typeof fetch, ...base: [string | undefined] | []) => {
+    const feedBase = base.length === 0 ? FEED : base[0];
+    return createBff({ apiBase: API, ...(feedBase === undefined ? {} : { feedBase }), sessionMaxAgeS: 43200, timeoutMs: 2000, mfaChallengeSecret: MFA_SECRET, trustedProxyHops: 1, fetch: f });
+  };
+
+  it("forwards GET /v1/manned-traffic/summary to manned-feed with the bearer, and the feed's 401 and 403 on", async () => {
+    for (const status of [200, 401, 403]) {
+      const up = mockApi(() => Response.json(status === 200 ? { total: 2 } : { status }, { status }));
+      const res = await bffFeed(up.fetch).proxy(req("/_bff/api/v1/manned-traffic/summary", { method: "GET", headers: { cookie } }));
+      expect(res.status).toBe(status);
+      expect(up.calls).toHaveLength(1);
+      expect(up.calls[0]?.url).toBe(`${FEED}/v1/manned-traffic/summary`);
+      expect(up.calls[0]?.headers.get("authorization")).toBe("Bearer tok123");
+    }
+  });
+
+  it("never sends another path to manned-feed, nor the summary to the API", async () => {
+    const up = mockApi(() => Response.json({ ok: true }));
+    const bff = bffFeed(up.fetch);
+    for (const p of ["/v1/manned-traffic/snapshot", "/v1/manned-traffic/summary/x", "/v1/manned-traffic/summaryX", "/v1/manned-traffic/stream"]) {
+      const res = await bff.proxy(req(`/_bff/api${p}`, { method: "GET", headers: { cookie } }));
+      expect(res.status).toBe(404);
+    }
+    expect(up.calls).toHaveLength(0);
+    await bff.proxy(req("/_bff/api/v1/auth/me", { method: "GET", headers: { cookie } }));
+    expect(up.calls[0]?.url).toBe(`${API}/v1/auth/me`);
+  });
+
+  it.each(["POST", "PUT", "DELETE", "HEAD"])("refuses %s on the summary 405 without calling manned-feed", async (method) => {
+    const up = mockApi(() => Response.json({ ok: true }));
+    const res = await bffFeed(up.fetch).proxy(req("/_bff/api/v1/manned-traffic/summary", { method, headers: { cookie, "x-csrf-token": "csrf456" } }));
+    expect(res.status).toBe(405);
+    expect(res.headers.get("allow")).toBe("GET");
+    expect(up.calls).toHaveLength(0);
+  });
+
+  it.each([undefined, "", "not a url", "ftp://feed.internal"])("answers 503 naming WEB_FEED_INTERNAL_URL when it is %s, and still serves the API", async (base) => {
+    const up = mockApi(() => Response.json({ ok: true }));
+    const bff = bffFeed(up.fetch, base);
+    const res = await bff.proxy(req("/_bff/api/v1/manned-traffic/summary", { method: "GET", headers: { cookie } }));
+    expect(res.status).toBe(503);
+    expect(await res.text()).toContain("WEB_FEED_INTERNAL_URL");
+    expect(up.calls).toHaveLength(0);
+    expect((await bff.proxy(req("/_bff/api/v1/auth/me", { method: "GET", headers: { cookie } }))).status).toBe(200);
+  });
+});
+
 describe("Idempotency-Key", () => {
   const cookie = "uspace_session=tok123; uspace_csrf=csrf456";
   const plan = (headers: Record<string, string>, p = "/_bff/api/v1/restrictions") =>

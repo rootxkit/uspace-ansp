@@ -193,6 +193,36 @@ func TestADisabledAdapterAgesOutAsSourceDisabledWithinOneTick(t *testing.T) {
 	}
 }
 
+// TestCountsByStateAndRelevance: the picture counted as the snapshot
+// holds it, live, stale and source_disabled, each relevant or not; a
+// backlog-only aircraft is counted apart, never relevant; an empty
+// picture is all zeros.
+func TestCountsByStateAndRelevance(t *testing.T) {
+	cis := StaticCIS{P: Projection{Volumes: []*zones.Zone{uspace(t)}, Version: "42", FetchedAt: t0}}
+	sw := &switches{off: map[string]sources.Decision{}}
+	p, c := newPicture(t, sw, cis)
+	if got := p.Counts(); got != (Counts{}) {
+		t.Fatalf("empty: %+v", got)
+	}
+	p.Observe(track("4ca7b1", "adsb-tbs", 41.72, 44.80, alt(900), t0)) // relevant
+	p.Observe(track("4ca7b2", "adsb-tbs", 42.50, 41.60, alt(900), t0)) // not relevant
+	p.Observe(track("4ca7b3", "adsb-kut", 41.72, 44.80, alt(900), t0)) // relevant, its source to be switched off
+	b := track("4ca7b4", "adsb-tbs", 41.72, 44.80, alt(900), t0)
+	b.Times.Backlog = true
+	p.Observe(b)
+	if got, want := p.Counts(), (Counts{Live: 3, BacklogOnly: 1, Relevant: 2}); got != want {
+		t.Fatalf("live: %+v, want %+v", got, want)
+	}
+	sw.disable("adsb-kut", "admin1", "maintenance")
+	p.Tick(t0.Add(time.Second))
+	c.Set(t0.Add(10 * time.Second))
+	p.Observe(track("4ca7b1", "adsb-tbs", 41.72, 44.80, alt(900), t0.Add(10*time.Second)))
+	p.Tick(t0.Add(16 * time.Second))
+	if got, want := p.Counts(), (Counts{Live: 1, Stale: 1, SourceDisabled: 1, BacklogOnly: 1, Relevant: 2}); got != want {
+		t.Fatalf("aged: %+v, want %+v (%+v)", got, want, p.Snapshot(nil))
+	}
+}
+
 // TestBacklogIsRecordedNotShownLive is T-04 and its twin.
 func TestBacklogIsRecordedNotShownLive(t *testing.T) {
 	p, _ := newPicture(t, nil, nil)

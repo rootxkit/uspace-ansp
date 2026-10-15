@@ -1,8 +1,9 @@
 "use client";
 
 // The overview's tiles that read a summary of the API (api/openapi.yaml
-// GET .../summary): one bounded read each, counted by the API on its
-// database clock, numbers only. A tile is drawn only for the role the
+// GET .../summary): one bounded read each, numbers only, counted by the
+// API on its database clock, or by manned-feed from its live picture
+// (never from a stream the browser holds). A tile is drawn only for the role the
 // operation's x-auth admits (a courtesy to the layout: the API answers
 // 403 to anyone else). Each is read again every READ_PERIOD_MS; an
 // unknown figure is a dash, never a zero, and a read that failed says
@@ -10,7 +11,7 @@
 import { useEffect } from "react";
 import { useLang, useT } from "@rootxkit/uspace-ui/i18n";
 import { StatTile, type StatTileStatus } from "@rootxkit/uspace-ui/ui";
-import { OccurrenceIcon, RequestIcon, UsersIcon } from "../components/icons";
+import { OccurrenceIcon, PictureIcon, RequestIcon, UsersIcon } from "../components/icons";
 import { useLoad, type Loaded } from "./context";
 import { timesShown } from "./ui";
 
@@ -118,6 +119,48 @@ export function OccurrencesTile() {
         label={t("ansp.overview.kpi.occurrences")}
         value={s === null ? null : s.truncated ? t("ansp.overview.kpi.at_least", { count: s.total }) : s.total}
         {...(s === null ? {} : { hint: t("ansp.overview.kpi.occurrences_hint", { ...s.by_state }) })}
+        {...status}
+      />
+    </div>
+  );
+}
+
+/**
+ * The manned aircraft the live picture holds (GET
+ * /v1/manned-traffic/summary on manned-feed, any console role): counted
+ * by the feed from the picture, with what is degraded so that an empty
+ * picture says why.
+ */
+export function MannedTile() {
+  const t = useT();
+  const manned = useSummary(async (c) => (await c.GET("/v1/manned-traffic/summary")).data ?? null, "summary:manned");
+  const s = manned.data;
+  let status = unread(t, manned.failure !== null);
+  if (manned.failure === null && s !== null) {
+    status = {
+      status:
+        s.degraded.length > 0
+          ? { tone: "warning", label: t("ansp.overview.kpi.manned_degraded", { list: s.degraded.join(", ") }) }
+          : { tone: "ok", label: t("ansp.overview.kpi.manned_ok") },
+    };
+  }
+  return (
+    <div data-testid="kpi-manned" data-value={s === null ? "" : s.total} data-degraded={s === null ? "" : s.degraded.join(" ")}>
+      <StatTile
+        className="h-full"
+        icon={<PictureIcon />}
+        label={t("ansp.overview.kpi.manned")}
+        value={s === null ? null : s.total}
+        {...(s === null
+          ? {}
+          : {
+              hint: t("ansp.overview.kpi.manned_hint", {
+                live: s.by_state.live,
+                stale: s.by_state.stale,
+                source_disabled: s.by_state.source_disabled,
+                relevant: s.relevant,
+              }),
+            })}
         {...status}
       />
     </div>

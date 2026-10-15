@@ -46,6 +46,7 @@ var Operations = []Operation{
 	{ID: "acknowledgeDeliveryAlarm", Method: "POST", Path: "/v1/delivery-alarms/{id}/acknowledge", Pattern: "POST /v1/delivery-alarms/{id}/acknowledge", Tag: "restrictions", Process: "api", Spec: "02 F2 failure rule", Auth: "session:watch_supervisor", WebSocket: false},
 	{ID: "getMannedTrafficSnapshot", Method: "GET", Path: "/v1/manned-traffic/snapshot", Pattern: "GET /v1/manned-traffic/snapshot", Tag: "manned-traffic", Process: "manned-feed", Spec: "02 F4", Auth: "token:ansp.traffic+mtls or session", WebSocket: false},
 	{ID: "streamMannedTraffic", Method: "GET", Path: "/v1/manned-traffic/stream", Pattern: "GET /v1/manned-traffic/stream", Tag: "manned-traffic", Process: "manned-feed", Spec: "02 F4, 04 §3.1 track/manned/v1", Auth: "token:ansp.traffic+mtls or session", WebSocket: true},
+	{ID: "getMannedTrafficSummary", Method: "GET", Path: "/v1/manned-traffic/summary", Pattern: "GET /v1/manned-traffic/summary", Tag: "manned-traffic", Process: "manned-feed", Spec: "02 F4", Auth: "session", WebSocket: false},
 	{ID: "createOccurrence", Method: "POST", Path: "/v1/occurrences", Pattern: "POST /v1/occurrences", Tag: "occurrences", Process: "api", Spec: "01 N4, 376/2014 Art. 4(8), 02 F7", Auth: "session:watch_supervisor", WebSocket: false},
 	{ID: "getOccurrenceSummary", Method: "GET", Path: "/v1/occurrences/summary", Pattern: "GET /v1/occurrences/summary", Tag: "occurrences", Process: "api", Spec: "01 N4, 376/2014 Art. 4(8), 02 F7", Auth: "session:watch_supervisor", WebSocket: false},
 	{ID: "getCircleOutline", Method: "GET", Path: "/v1/outlines/circle", Pattern: "GET /v1/outlines/circle", Tag: "outlines", Process: "api", Spec: "02 F2 (the restriction editor's map), uspace-ui DrawLayer", Auth: "session", WebSocket: false},
@@ -198,6 +199,11 @@ func (Unimplemented) GetMannedTrafficSnapshot(context.Context, GetMannedTrafficS
 // StreamMannedTraffic answers GET /v1/manned-traffic/stream with a *NotImplementedError.
 func (Unimplemented) StreamMannedTraffic(context.Context, StreamMannedTrafficRequestObject) (StreamMannedTrafficResponseObject, error) {
 	return nil, &NotImplementedError{Operation: "streamMannedTraffic"}
+}
+
+// GetMannedTrafficSummary answers GET /v1/manned-traffic/summary with a *NotImplementedError.
+func (Unimplemented) GetMannedTrafficSummary(context.Context, GetMannedTrafficSummaryRequestObject) (GetMannedTrafficSummaryResponseObject, error) {
+	return nil, &NotImplementedError{Operation: "getMannedTrafficSummary"}
 }
 
 // CreateOccurrence answers POST /v1/occurrences with a *NotImplementedError.

@@ -373,6 +373,43 @@ func (p *Picture) Snapshot(bbox *geodesy.BBox) []Entry {
 	return out
 }
 
+// Counts is the picture counted: the entries shown by state, how many of
+// them are relevant, and the backlog-only ones (never shown, T-04).
+type Counts struct {
+	Live           int
+	Stale          int
+	SourceDisabled int
+	BacklogOnly    int
+	// Relevant counts the live, stale and source_disabled entries
+	// flagged relevant.
+	Relevant int
+}
+
+// Counts counts the entries by state in one pass under the read lock,
+// copying none (bounded by MaxAircraft).
+func (p *Picture) Counts() Counts {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	var c Counts
+	for _, h := range p.entries {
+		switch h.state {
+		case StateLive:
+			c.Live++
+		case StateStale:
+			c.Stale++
+		case StateSourceDisabled:
+			c.SourceDisabled++
+		case StateBacklogOnly:
+			c.BacklogOnly++
+			continue
+		}
+		if h.relevance.Relevant {
+			c.Relevant++
+		}
+	}
+	return c
+}
+
 // Len is the number of entries.
 func (p *Picture) Len() int {
 	p.mu.RLock()

@@ -9,7 +9,8 @@
 // them, /v1/manned-traffic/stream as manned-feed does), and passes every
 // other request to Next.js with the X-Forwarded-*
 // headers Caddy sets, so the browser sees one origin, as in a deployment.
-// The BFF reaches the API here too (WEB_API_INTERNAL_URL).
+// The BFF reaches the API here too (WEB_API_INTERNAL_URL), and manned-feed
+// for the picture's summary (WEB_FEED_INTERNAL_URL).
 //
 //   MOCK_PORT=3000 MOCK_UPSTREAM=http://127.0.0.1:3100 node test/mock-api.mjs
 //
@@ -867,6 +868,27 @@ async function api(req, res, url) {
     state.policy = { ...state.policy, ...body, policy_version: state.policy.policy_version + 1, changed_by: session.account.id, changed_at: iso() };
     audit(session.account, "ansp_policy", String(state.policy.policy_version), "policy_updated", "threshold change (INV-03)", state.policy);
     return json(res, 200, state.policy);
+  }
+  // GET /v1/manned-traffic/summary (manned-feed, any session; the BFF
+  // reaches it through WEB_FEED_INTERNAL_URL, here this server too): the
+  // aircraft held counted by state, none named.
+  if (path === "/v1/manned-traffic/summary" && req.method === "GET") {
+    const by = { live: 0, stale: 0, source_disabled: 0 };
+    let relevant = 0;
+    for (const a of state.aircraft.values()) {
+      by[a.state] += 1;
+      if (a.relevant) relevant += 1;
+    }
+    return json(res, 200, {
+      counted_at: iso(),
+      total: by.live + by.stale + by.source_disabled,
+      by_state: by,
+      relevant,
+      max_aircraft: 5000,
+      relevance: "evaluated against CIS version 42 (synthetic)",
+      degraded: state.adapters.some((a) => a.state === "live") ? [] : ["adapters_silent"],
+      policy_version: "1",
+    });
   }
   // GET /v1/users/summary (admin): the accounts counted, no name.
   if (path === "/v1/users/summary" && req.method === "GET") {

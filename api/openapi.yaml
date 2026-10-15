@@ -2882,6 +2882,52 @@ components:
               minimum: 0
             policy_version:
               type: string
+    MannedSummary:
+      type: object
+      description: |
+        The manned picture counted (GET /v1/manned-traffic/summary): no
+        icao24, callsign or position. total is live + stale +
+        source_disabled; relevant is of those. max_aircraft is the
+        picture's bound (past it the aircraft heard longest ago is
+        evicted, counted picture_evicted_capacity).
+      required: [counted_at, total, by_state, relevant, max_aircraft, relevance, degraded, policy_version]
+      properties:
+        counted_at:
+          $ref: "#/components/schemas/Timestamp"
+        total:
+          type: integer
+          minimum: 0
+        by_state:
+          type: object
+          additionalProperties: false
+          required: [live, stale, source_disabled]
+          properties:
+            live:
+              type: integer
+              minimum: 0
+            stale:
+              type: integer
+              minimum: 0
+            source_disabled:
+              type: integer
+              minimum: 0
+        relevant:
+          type: integer
+          minimum: 0
+        max_aircraft:
+          type: integer
+          minimum: 1
+        relevance:
+          type: string
+          description: The relevance filter's status line (SC-22), as console/status/v1 carries it.
+        degraded:
+          type: array
+          uniqueItems: true
+          items:
+            type: string
+            pattern: "^[a-z][a-z0-9_]*$"
+        policy_version:
+          type: string
     MannedStreamFrame:
       description: One server frame of GET /v1/manned-traffic/stream, dispatched on schema.
       oneOf:
@@ -4120,6 +4166,50 @@ paths:
           $ref: "#/components/responses/RateLimited"
         "503":
           $ref: "#/components/responses/Unavailable"
+
+  /v1/manned-traffic/summary:
+    get:
+      operationId: getMannedTrafficSummary
+      tags: [manned-traffic]
+      summary: How many manned aircraft the picture holds
+      x-process: manned-feed
+      x-spec: 02 F4
+      x-auth: session
+      description: |
+        The live manned picture of manned-feed counted for the console's
+        overview, from the picture itself (not from a stream): every
+        aircraft shown, by state (live, stale, source_disabled), and how
+        many of them are relevant to U-space. An aircraft known only from
+        backlog samples is not shown and not counted (T-04). Counts only,
+        no icao24 or callsign; the picture is bounded by max_aircraft.
+        degraded says why the count may be low or empty (adapters_silent,
+        cis_projection_stale, nats) and relevance how relevance was
+        judged (SC-22). counted_at is manned-feed's clock.
+      security:
+        - consoleSession: []
+      responses:
+        "200":
+          description: The counts.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MannedSummary"
+              example:
+                counted_at: "2026-10-02T12:00:00.000Z"
+                total: 12
+                by_state:
+                  live: 10
+                  stale: 1
+                  source_disabled: 1
+                relevant: 7
+                max_aircraft: 5000
+                relevance: "relevance: CIS version 42, 3 volumes, age 12 s"
+                degraded: []
+                policy_version: "1"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
 
   /v1/manned-traffic/stream:
     get:

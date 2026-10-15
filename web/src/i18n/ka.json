@@ -611,5 +611,9 @@
   "ansp.overview.kpi.occurrences_queued_one": "{count} რიგშია უწყებისთვის",
   "ansp.overview.kpi.occurrences_queued_other": "{count} რიგშია უწყებისთვის",
   "ansp.overview.kpi.occurrences_sent": "ყველა გაგზავნილია",
-  "ansp.overview.kpi.occurrences_none": "არცერთი არ გაგზავნილა"
+  "ansp.overview.kpi.occurrences_none": "არცერთი არ გაგზავნილა",
+  "ansp.overview.kpi.manned": "პილოტირებული საჰაერო ხომალდები სურათში",
+  "ansp.overview.kpi.manned_hint": "{live} ცოცხალი, {stale} მოძველებული, {source_disabled} წყარო გამორთული; {relevant} U-space-ისთვის რელევანტური",
+  "ansp.overview.kpi.manned_degraded": "შეზღუდული მუშაობა: {list}",
+  "ansp.overview.kpi.manned_ok": "შეფერხება არ არის"
 }

@@ -110,6 +110,12 @@ complete.
 
 ### Added
 
+- `GET /v1/manned-traffic/summary` (manned-feed, any console session,
+  additive): the live manned picture counted from the picture itself
+  (live, stale, source_disabled; how many relevant), with `degraded[]`
+  and the relevance line so an empty count says why; no `icao24`. The
+  BFF forwards that one path, GET only, to `WEB_FEED_INTERNAL_URL`
+  (unset: 503 naming it); the overview shows every role the count.
 - `GET /v1/occurrences/summary` (watch_supervisor, additive): the
   occurrence reports counted by the state of their delivery to the
   authority (queued, sent, failed, abandoned, cancelled), the newest

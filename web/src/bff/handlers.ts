@@ -28,6 +28,12 @@
 //   operations and drops it from every other call. Any other header
 //   stays the kit's decision.
 //
+// - feed: GET /v1/manned-traffic/summary is manned-feed's (the live
+//   picture's owner, x-process manned-feed), so the BFF forwards that one
+//   path, GET only, with the kit's `forward` to WEB_FEED_INTERNAL_URL;
+//   unset or not a URL, that path alone answers 503 naming it and every
+//   other route is served (the console's other pages do not need it).
+//
 // The WebSockets are not proxied: the browser upgrades /v1/restrictions/
 // stream, /v1/coordination/stream and /v1/manned-traffic/stream
 // same-origin and the cookie rides the upgrade (M22, docs/PLAN.md section
@@ -38,6 +44,7 @@
 import {
   BFF_API_PREFIX,
   bffHandlers,
+  forward,
   MIN_CHALLENGE_SECRET_BYTES,
   type BffHandlers,
   type SessionCookieOptions,
@@ -56,6 +63,13 @@ export const API_LOGOUT_PATH = "/v1/auth/logout";
  * path is not on the list. The API's x-auth decides who reads each.
  */
 export const SUMMARY_READS: readonly RegExp[] = [/^\/v1\/users\/summary$/, /^\/v1\/restriction-requests\/summary$/, /^\/v1\/occurrences\/summary$/];
+
+/**
+ * The summaries manned-feed serves (api/openapi.yaml x-process
+ * manned-feed): exact paths, GET only, forwarded to WEB_FEED_INTERNAL_URL
+ * and never to the API. They are not on PROXY_ALLOW_PATHS.
+ */
+export const FEED_READS: readonly RegExp[] = [/^\/v1\/manned-traffic\/summary$/];
 
 /**
  * What the proxy may reach: the console's operations and nothing else.
@@ -87,6 +101,11 @@ export const IDEMPOTENT_OPERATIONS: readonly { method: string; path: RegExp }[] 
 export interface BffConfig {
   /** The API as the web container reaches it (WEB_API_INTERNAL_URL). */
   apiBase: string;
+  /**
+   * manned-feed as the web container reaches it (WEB_FEED_INTERNAL_URL),
+   * for FEED_READS only; unset, those paths answer 503 naming it.
+   */
+  feedBase?: string;
   /** The cookie's Max-Age ceiling, seconds (WEB_SESSION_MAX_AGE_S). */
   sessionMaxAgeS: number;
   /** The upstream timeout of every call, ms (WEB_UPSTREAM_TIMEOUT_MS). */
@@ -173,23 +192,55 @@ export function createBff(cfg: BffConfig): Bff {
     ...(cfg.fetch === undefined ? {} : { fetch: cfg.fetch }),
   });
 
+  const feed = feedUrl(cfg.feedBase);
+  // A FEED_READS path goes to manned-feed through the kit's forward (its
+  // CSRF, header, redirect and timeout rules), with that path alone on
+  // its allow-list.
+  const toFeed = (req: NextRequest, path: string): Promise<Response> => {
+    if (feed === null) {
+      return Promise.resolve(problem(503, "feed_unavailable", "Manned picture unavailable", "WEB_FEED_INTERNAL_URL is not set or not a URL"));
+    }
+    const target = new URL(path, feed);
+    target.search = req.nextUrl.search;
+    return forward(req, target, {
+      session,
+      allowPaths: [...FEED_READS],
+      timeoutMs: cfg.timeoutMs,
+      ...(cfg.trustedProxyHops > 0 ? { trustedProxyHops: cfg.trustedProxyHops } : {}),
+      ...(cfg.fetch === undefined ? {} : { fetch: cfg.fetch }),
+    });
+  };
+
   // The kit's proxy forwards the client's Idempotency-Key (uspace-ui
   // 1.0.0). The console keeps its narrower rule: a key of the contract's
   // shape on an operation that takes one, and no key anywhere else. A
   // summary is read with GET and nothing else.
   const proxy: Handler = (req) => {
     const apiPath = req.nextUrl.pathname.startsWith(`${BFF_API_PREFIX}/`) ? req.nextUrl.pathname.slice(BFF_API_PREFIX.length) : null;
-    if (apiPath !== null && req.method !== "GET" && SUMMARY_READS.some((p) => p.test(apiPath))) {
+    const fromFeed = apiPath !== null && FEED_READS.some((p) => p.test(apiPath));
+    if (apiPath !== null && req.method !== "GET" && (fromFeed || SUMMARY_READS.some((p) => p.test(apiPath)))) {
       const res = problem(405, "method_not_allowed", "Method not allowed", "a summary is read with GET only");
       res.headers.set("Allow", "GET");
       return Promise.resolve(res);
     }
+    if (fromFeed) return toFeed(req, apiPath);
     const key = req.headers.get(IDEMPOTENCY_HEADER);
     if (key === null) return kit.proxy(req);
     const takesKey = apiPath !== null && IDEMPOTENT_OPERATIONS.some((o) => o.method === req.method && o.path.test(apiPath));
     return kit.proxy(takesKey && IDEMPOTENCY_KEY.test(key) ? req : withoutIdempotencyKey(req));
   };
   return { login: kit.login, logout: kit.logout, proxy };
+}
+
+/** WEB_FEED_INTERNAL_URL as an http(s) origin, or null when unset or not one. */
+export function feedUrl(raw: string | undefined): URL | null {
+  if (raw === undefined || raw === "") return null;
+  try {
+    const u = new URL(raw);
+    return u.protocol === "http:" || u.protocol === "https:" ? u : null;
+  } catch {
+    return null;
+  }
 }
 
 function positiveInt(name: string, fallback: number): number {
@@ -226,6 +277,7 @@ export function configFromEnv(): BffConfig | null {
   if (hops === null) return null;
   return {
     apiBase: process.env["WEB_API_INTERNAL_URL"] ?? "",
+    feedBase: process.env["WEB_FEED_INTERNAL_URL"] ?? "",
     mfaChallengeSecret: process.env["WEB_MFA_CHALLENGE_SECRET"] ?? "",
     // Display-side ceiling only: the API's session lifetime (<= 12 h)
     // shortens it through expires_at.

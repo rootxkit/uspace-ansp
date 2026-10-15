@@ -99,6 +99,26 @@ type MannedSnapshot struct {
 	GeneratedAt   string         `json:"generated_at"`
 }
 
+// MannedSummary is the answer of GET /v1/manned-traffic/summary: the
+// picture counted, no aircraft named.
+type MannedSummary struct {
+	CountedAt     string            `json:"counted_at"`
+	Total         int               `json:"total"`
+	ByState       MannedStateCounts `json:"by_state"`
+	Relevant      int               `json:"relevant"`
+	MaxAircraft   int               `json:"max_aircraft"`
+	Relevance     string            `json:"relevance"`
+	Degraded      []string          `json:"degraded"`
+	PolicyVersion string            `json:"policy_version"`
+}
+
+// MannedStateCounts are the aircraft shown, by state.
+type MannedStateCounts struct {
+	Live           int `json:"live"`
+	Stale          int `json:"stale"`
+	SourceDisabled int `json:"source_disabled"`
+}
+
 // Subscribe is the client's console/subscribe/v1 body.
 type Subscribe struct {
 	BBox   *geodesy.BBox

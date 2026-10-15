@@ -151,6 +151,12 @@ func (s exampleStub) StreamMannedTraffic(_ context.Context, request gen.StreamMa
 
 func (c canned) VisitStreamMannedTrafficResponse(w http.ResponseWriter) error { return c.visit(w) }
 
+func (s exampleStub) GetMannedTrafficSummary(_ context.Context, request gen.GetMannedTrafficSummaryRequestObject) (gen.GetMannedTrafficSummaryResponseObject, error) {
+	return s.answer("getMannedTrafficSummary", request), nil
+}
+
+func (c canned) VisitGetMannedTrafficSummaryResponse(w http.ResponseWriter) error { return c.visit(w) }
+
 func (s exampleStub) CreateOccurrence(_ context.Context, request gen.CreateOccurrenceRequestObject) (gen.CreateOccurrenceResponseObject, error) {
 	return s.answer("createOccurrence", request), nil
 }

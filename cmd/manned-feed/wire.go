@@ -67,7 +67,7 @@ type wiring struct {
 	pic    *picture.Picture
 }
 
-// feedServer is the generated server interface of manned-feed: the two
+// feedServer is the generated server interface of manned-feed: the three
 // manned-traffic operations; every other operation is another
 // process's and is not served here (auth.Routes).
 type feedServer struct {
@@ -78,6 +78,11 @@ type feedServer struct {
 // GetMannedTrafficSnapshot serves GET /v1/manned-traffic/snapshot.
 func (s feedServer) GetMannedTrafficSnapshot(w http.ResponseWriter, r *http.Request, _ gen.GetMannedTrafficSnapshotParams) {
 	s.svc.ServeSnapshot(w, r)
+}
+
+// GetMannedTrafficSummary serves GET /v1/manned-traffic/summary.
+func (s feedServer) GetMannedTrafficSummary(w http.ResponseWriter, r *http.Request) {
+	s.svc.ServeSummary(w, r)
 }
 
 // StreamMannedTraffic serves GET /v1/manned-traffic/stream.
