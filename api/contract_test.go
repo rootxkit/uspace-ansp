@@ -777,3 +777,48 @@ func TestComponentsMirrorTheSchemas(t *testing.T) {
 		}
 	}
 }
+
+// TestUserIDParameterMatchesTheColumn ties the account id the spec
+// declares to the column that holds it: users.id is uuid
+// (migrations/relational), so the UserID path parameter is the UUID
+// schema in its canonical lower-case form, never the ULID one (which
+// the console's BFF would otherwise 404 every real account on).
+func TestUserIDParameterMatchesTheColumn(t *testing.T) {
+	sql, err := os.ReadFile("../migrations/relational/0020_auth_accounts.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	table := regexp.MustCompile(`(?s)CREATE TABLE users \((.*?)\n\);`).FindSubmatch(sql)
+	if table == nil {
+		t.Fatal("CREATE TABLE users not found in 0020_auth_accounts.sql")
+	}
+	if !regexp.MustCompile(`(?m)^\s+id\s+uuid\s+PRIMARY KEY`).Match(table[1]) {
+		t.Fatal("users.id is no longer uuid; the UserID parameter and the BFF pattern must follow")
+	}
+
+	param := spec(t).Components.Parameters["UserID"]
+	if param == nil || param.Value == nil || param.Value.Schema == nil {
+		t.Fatal("components.parameters.UserID is missing")
+	}
+	if param.Value.Schema.Ref != "#/components/schemas/UUID" {
+		t.Fatalf("UserID schema = %q, want #/components/schemas/UUID", param.Value.Schema.Ref)
+	}
+	schema := param.Value.Schema.Value
+	const pattern = "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+	if schema.Format != "uuid" || schema.Pattern != pattern {
+		t.Fatalf("UUID schema format %q pattern %q, want uuid %q", schema.Format, schema.Pattern, pattern)
+	}
+	re := regexp.MustCompile(schema.Pattern)
+	if !re.MatchString("e51308a8-8db3-46ed-884e-c18db1d97d9c") {
+		t.Error("a canonical UUID does not match the declared pattern")
+	}
+	for _, bad := range []string{"01K6NZ8Q2W3E4R5T6Y7V8W9X0Z", "E51308A8-8DB3-46ED-884E-C18DB1D97D9C", "e51308a88db346ed884ec18db1d97d9c", "e51308a8-8db3-46ed-884e-c18db1d97d9c\n"} {
+		if re.MatchString(bad) {
+			t.Errorf("%q matches the declared pattern", bad)
+		}
+	}
+	user := spec(t).Components.Schemas["User"].Value.Properties["id"]
+	if user.Ref != "#/components/schemas/UUID" {
+		t.Errorf("User.id = %q, want the UUID schema", user.Ref)
+	}
+}

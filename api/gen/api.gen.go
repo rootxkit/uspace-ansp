@@ -2445,8 +2445,10 @@ type MannedTrackMessageTimeSource string
 // Me defines model for Me.
 type Me struct {
 	// CreatedAt RFC 3339 UTC with Z, millisecond precision (02 §1).
-	CreatedAt   Timestamp  `json:"created_at"`
-	Id          string     `json:"id"`
+	CreatedAt Timestamp `json:"created_at"`
+
+	// Id A UUID in its canonical lower-case hyphenated form (the relational uuid columns, e.g. users.id).
+	Id          UUID       `json:"id"`
 	LastLoginAt *time.Time `json:"last_login_at"`
 
 	// Role A console role (01 §4).
@@ -3299,11 +3301,16 @@ type Timestamp = time.Time
 // ULID Crockford base32, 26 characters (04 §2).
 type ULID = string
 
+// UUID A UUID in its canonical lower-case hyphenated form (the relational uuid columns, e.g. users.id).
+type UUID = openapi_types.UUID
+
 // User defines model for User.
 type User struct {
 	// CreatedAt RFC 3339 UTC with Z, millisecond precision (02 §1).
-	CreatedAt   Timestamp  `json:"created_at"`
-	Id          string     `json:"id"`
+	CreatedAt Timestamp `json:"created_at"`
+
+	// Id A UUID in its canonical lower-case hyphenated form (the relational uuid columns, e.g. users.id).
+	Id          UUID       `json:"id"`
 	LastLoginAt *time.Time `json:"last_login_at"`
 
 	// Role A console role (01 §4).
@@ -3408,8 +3415,8 @@ type SourceInstance = string
 // SourceType defines model for SourceType.
 type SourceType string
 
-// UserID Crockford base32, 26 characters (04 §2).
-type UserID = ULID
+// UserID A UUID in its canonical lower-case hyphenated form (the relational uuid columns, e.g. users.id).
+type UserID = UUID
 
 // Version defines model for Version.
 type Version = int64
@@ -8750,7 +8757,7 @@ func NewDisableUserRequest(server string, id UserID) (*http.Request, error) {
 
 	var pathParam0 string
 
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
 	if err != nil {
 		return nil, err
 	}
@@ -8784,7 +8791,7 @@ func NewResetUserMfaRequest(server string, id UserID) (*http.Request, error) {
 
 	var pathParam0 string
 
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
 	if err != nil {
 		return nil, err
 	}
@@ -20674,7 +20681,7 @@ func (siw *ServerInterfaceWrapper) DisableUser(w http.ResponseWriter, r *http.Re
 	// ------------- Path parameter "id" -------------
 	var id UserID
 
-	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: true})
 	if err != nil {
 		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
 		return
@@ -20700,7 +20707,7 @@ func (siw *ServerInterfaceWrapper) ResetUserMfa(w http.ResponseWriter, r *http.R
 	// ------------- Path parameter "id" -------------
 	var id UserID
 
-	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: true})
 	if err != nil {
 		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
 		return

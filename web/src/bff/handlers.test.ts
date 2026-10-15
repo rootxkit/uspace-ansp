@@ -1,11 +1,11 @@
 // The BFF's three routes against a mocked API (fetch). Each refusal has
 // its acceptance twin that differs in one thing (E-01).
-import { readdirSync, statSync } from "node:fs";
+import { readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { NextRequest } from "next/server";
 import { describe, expect, it, vi } from "vitest";
-import { configFromEnv, configProblem, createBff, type BffConfig } from "./handlers";
+import { configFromEnv, configProblem, createBff, USER_ID_PATTERN, type BffConfig } from "./handlers";
 
 const ORIGIN = "https://ansp.test";
 const API = "http://api.internal:8080";
@@ -403,8 +403,18 @@ describe("summaries", () => {
 });
 
 describe("account administration", () => {
+  it("matches a user id with the pattern api/openapi.yaml declares for the path parameter", () => {
+    const spec = readFileSync(path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../api/openapi.yaml"), "utf8");
+    const param = /^ {4}UserID:\n(?: {6}.*\n)+/m.exec(spec)?.[0] ?? "";
+    expect(param).toContain('$ref: "#/components/schemas/UUID"');
+    const schema = /^ {4}UUID:\n(?: {6}.*\n)+/m.exec(spec)?.[0] ?? "";
+    const declared = /pattern: "(.*)"/.exec(schema)?.[1];
+    expect(declared).toBe(`^${USER_ID_PATTERN}$`);
+  });
+
   const cookie = "uspace_session=tok123; uspace_csrf=csrf456";
-  const ID = "01K6NZ8Q2W3E4R5T6Y7V8W9X0Z";
+  const ID = "e51308a8-8db3-46ed-884e-c18db1d97d9c";
+  const OLD_ULID = "01K6NZ8Q2W3E4R5T6Y7V8W9X0Z";
   const OPERATIONS = [
     ["GET", "/v1/users"],
     ["POST", "/v1/users"],
@@ -474,10 +484,13 @@ describe("account administration", () => {
     `/v1/users/${ID}/disable/x`,
     `/v1/users/${ID}/disableX`,
     `/v1/users/${ID}/reset-password`,
-    `/v1/users/${ID.toLowerCase()}/disable`,
+    `/v1/users/${ID.toUpperCase()}/disable`,
     `/v1/users/${ID.slice(1)}/disable`,
     `/v1/users/${ID}0/disable`,
-    `/v1/users/8${ID.slice(1)}/disable`,
+    `/v1/users/${ID.replaceAll("-", "")}/disable`,
+    `/v1/users/${ID}%0A/disable`,
+    `/v1/users/${OLD_ULID}/disable`,
+    `/v1/users/${OLD_ULID}/reset-mfa`,
     "/v1/users/x/reset-mfa",
     "/v1/users//disable",
   ])("refuses %s, a neighbour of the account operations, 404 without calling the API", async (p) => {

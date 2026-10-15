@@ -92,13 +92,17 @@ export const SUMMARY_READS: readonly RegExp[] = [
  * listed path with another method is 405 before any upstream call; a
  * longer, shorter or other path is not on the list (404). The BFF never
  * reads the role: the API answers anyone but an admin 403. The id is a
- * ULID (components.schemas.ULID).
+ * UUID, matched with the pattern the API declares for the path
+ * parameter (components.schemas.UUID; handlers.test.ts pins the two
+ * equal to the file).
  */
+export const USER_ID_PATTERN = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
+
 export const USER_OPERATIONS: readonly { method: string; path: RegExp }[] = [
   { method: "GET", path: /^\/v1\/users$/ },
   { method: "POST", path: /^\/v1\/users$/ },
-  { method: "POST", path: /^\/v1\/users\/[0-7][0-9A-HJKMNP-TV-Z]{25}\/reset-mfa$/ },
-  { method: "POST", path: /^\/v1\/users\/[0-7][0-9A-HJKMNP-TV-Z]{25}\/disable$/ },
+  { method: "POST", path: new RegExp(`^\/v1\/users\/${USER_ID_PATTERN}\/reset-mfa$`) },
+  { method: "POST", path: new RegExp(`^\/v1\/users\/${USER_ID_PATTERN}\/disable$`) },
 ];
 
 /** The methods USER_OPERATIONS lists for a path, or null when the path is not one of them. */
