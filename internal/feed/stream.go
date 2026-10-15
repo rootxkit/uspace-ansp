@@ -92,23 +92,6 @@ func (s *Service) ServeSnapshot(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(b)
 }
 
-// ServeSummary answers GET /v1/manned-traffic/summary (any console
-// session; the route's x-auth): the picture counted (Summary).
-func (s *Service) ServeSummary(w http.ResponseWriter, r *http.Request) {
-	if _, ok := viewerOf(r); !ok {
-		apierr.WriteError(w, r, apierr.Unauthenticated("no authenticated caller"))
-		return
-	}
-	b, err := json.Marshal(s.Summary())
-	if err != nil {
-		apierr.WriteInternal(w, r, fmt.Errorf("encode the summary: %w", err))
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Cache-Control", "no-store")
-	_, _ = w.Write(b)
-}
-
 // ServeStream serves GET /v1/manned-traffic/stream (WebSocket). The
 // guard has judged the token or the session cookie and its Origin before
 // this runs (M22); the caps are judged here, before the upgrade.

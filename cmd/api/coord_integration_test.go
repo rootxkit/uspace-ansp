@@ -71,6 +71,10 @@ type coordStack struct {
 	mu        sync.Mutex
 	listed    []string
 	projected bool
+	// summarySubject is where the stack's api asks for the picture's
+	// count: unique per stack, so a manned-feed of another package's
+	// test on the same NATS never answers it.
+	summarySubject string
 }
 
 func (s *coordStack) setList(projected bool, ids ...string) {
@@ -194,7 +198,9 @@ func newCoordStack(t *testing.T, runTicker bool) *coordStack {
 		go func() { defer wg.Done(); fn(runCtx) }()
 	}
 	mux := http.NewServeMux()
-	if _, err := mountParts(mux, aw.guard, apiParts{auth: aw.handlers, rs: rw.api, co: co.api}, aw.realIP); err != nil {
+	s.summarySubject = fmt.Sprintf("%s.test.%d", bus.SubjectMannedSummary, time.Now().UnixNano())
+	ms := &mannedSummaryAPI{ask: busAsk(b, s.summarySubject)}
+	if _, err := mountParts(mux, aw.guard, apiParts{auth: aw.handlers, rs: rw.api, co: co.api, ms: ms}, aw.realIP); err != nil {
 		t.Fatal(err)
 	}
 	s.api = httptest.NewServer(mux)

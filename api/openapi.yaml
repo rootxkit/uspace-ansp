@@ -4172,12 +4172,14 @@ paths:
       operationId: getMannedTrafficSummary
       tags: [manned-traffic]
       summary: How many manned aircraft the picture holds
-      x-process: manned-feed
+      x-process: api
       x-spec: 02 F4
       x-auth: session
       description: |
         The live manned picture of manned-feed counted for the console's
-        overview, from the picture itself (not from a stream): every
+        overview. api verifies the console session and asks manned-feed
+        on the bus (ctl.manned.summary); manned-feed counts from the
+        picture itself (not from a stream): every
         aircraft shown, by state (live, stale, source_disabled), and how
         many of them are relevant to U-space. An aircraft known only from
         backlog samples is not shown and not counted (T-04). Counts only,
@@ -4210,6 +4212,8 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "503":
+          $ref: "#/components/responses/Unavailable"
 
   /v1/manned-traffic/stream:
     get:
