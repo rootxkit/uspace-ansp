@@ -13,7 +13,6 @@ import (
 
 	"github.com/nats-io/nats.go"
 	"github.com/prometheus/client_golang/prometheus"
-	coreauth "github.com/rootxkit/uspace-core/auth"
 	"github.com/rootxkit/uspace-core/core"
 
 	"github.com/rootxkit/uspace-ansp/api/gen"
@@ -156,6 +155,9 @@ func wire(ctx context.Context, cfg config.Config, b *bus.Bus, db *store.Timeseri
 		return nil, err
 	}
 	w := &wiring{mux: http.NewServeMux(), pic: pic}
+	if g.Sessions == nil {
+		logger.Warn("console sessions are refused (401): ANSP_SESSION_PUBLIC_KEY_FILE is not set; the stream and the snapshot serve machine tokens only")
+	}
 
 	var recorder *feed.Recorder
 	var products *feed.ProductQueue
@@ -248,10 +250,14 @@ func wire(ctx context.Context, cfg config.Config, b *bus.Bus, db *store.Timeseri
 
 // wireGuard builds the guard of the feed's routes: machine tokens when
 // ANSP_TOKEN_ISSUERS is set, console sessions (the cookie on a
-// same-origin upgrade, M22) when ANSP_SESSION_KEY_FILE is set, checked
-// against the live-session projection, and the certificate binding of
+// same-origin upgrade, M22) when ANSP_SESSION_PUBLIC_KEY_FILE is set,
+// verified with that public key alone (signature, expiry, audience,
+// realm console) and checked against the live-session projection
+// (revoked or ended is refused), and the certificate binding of
 // ANSP_MTLS_MODE (the subject header believed only from
-// ANSP_TRUSTED_PROXIES).
+// ANSP_TRUSTED_PROXIES). manned-feed is the USSP-facing surface and
+// never holds the session signing key: ANSP_SESSION_KEY_FILE refuses
+// the start (docs/PLAN.md section 15 row 54).
 func wireGuard(ctx context.Context, cfg config.Config, b *bus.Bus, reg prometheus.Registerer) (*auth.Guard, *auth.KVSessionChecker, error) {
 	proxies, err := auth.ParseTrustedProxies(cfg.TrustedProxies)
 	if err != nil {
@@ -278,23 +284,23 @@ func wireGuard(ctx context.Context, cfg config.Config, b *bus.Bus, reg prometheu
 			return nil, nil, err
 		}
 	}
-	if cfg.SessionKeyFile == "" {
+	if cfg.SessionKeyFile != "" {
+		return nil, nil, core.Fieldf("ANSP_SESSION_KEY_FILE",
+			"is api's session signing key and is never given to manned-feed; set ANSP_SESSION_PUBLIC_KEY_FILE to its public part")
+	}
+	if cfg.SessionPublicKeyFile == "" {
 		return g, nil, nil
 	}
 	if cfg.PublicBaseURL == "" || len(cfg.Audiences) == 0 {
-		return nil, nil, core.Fieldf("ANSP_SESSION_KEY_FILE", "needs ANSP_PUBLIC_BASE_URL and ANSP_AUDIENCES to verify console sessions")
+		return nil, nil, core.Fieldf("ANSP_SESSION_PUBLIC_KEY_FILE", "needs ANSP_PUBLIC_BASE_URL and ANSP_AUDIENCES to verify console sessions")
 	}
-	sk, err := auth.LoadKeyFile("ANSP_SESSION_KEY_FILE", cfg.SessionKeyFile)
-	if err != nil {
-		return nil, nil, err
-	}
-	ring, err := coreauth.NewKeyRing(sk)
+	pub, err := auth.LoadPublicKeyFile("ANSP_SESSION_PUBLIC_KEY_FILE", cfg.SessionPublicKeyFile)
 	if err != nil {
 		return nil, nil, err
 	}
 	checker := &auth.KVSessionChecker{Up: func() bool { s, _ := b.Status(); return s == obs.StateOK }}
 	sessions, err := auth.NewSessionVerifier(ctx, auth.SessionVerifierConfig{
-		Issuer: strings.TrimSuffix(cfg.PublicBaseURL, "/"), Ring: ring, Audiences: cfg.Audiences, Checker: checker,
+		Issuer: strings.TrimSuffix(cfg.PublicBaseURL, "/"), PublicKey: pub, Audiences: cfg.Audiences, Checker: checker,
 	})
 	if err != nil {
 		return nil, nil, err

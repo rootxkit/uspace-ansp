@@ -89,7 +89,11 @@
 // Verifier (this system's keys, no network), then the shape, then the
 // row through a short bounded cache: logout and admin changes end a
 // session at once in this process and within the cache TTL in others.
-// The old shape (scope = the role) is refused. PublicKeys serves
+// The old shape (scope = the role) is refused. manned-feed, which must
+// never hold the signing key, verifies with its public part alone
+// (SessionVerifierConfig.PublicKey, LoadPublicKeyFile,
+// ANSP_SESSION_PUBLIC_KEY_FILE) and checks the session on the
+// sessions_live projection (KVSessionChecker). PublicKeys serves
 // /.well-known/jwks.json from one place: the session key here, the
 // delivery-signing key when WP-8 adds its ring.
 //

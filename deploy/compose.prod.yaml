@@ -20,8 +20,11 @@
 #                                migrate, manned-feed), db.env
 #                                (POSTGRES_PASSWORD), web.env, nats/<process>.nk,
 #                                nats/nats-users.conf, keys/ (session.pem,
-#                                secrets.key, delivery.pem, admin.pw,
-#                                ansp-01.secret, mtls-bindings.json)
+#                                session.pub.pem, secrets.key, delivery.pem,
+#                                admin.pw, ansp-01.secret, mtls-bindings.json).
+#                                session.pub.pem is session.pem's public part
+#                                (openssl pkey -in session.pem -pubout), the
+#                                only key manned-feed mounts
 #   ANSP_DATA_DIR                pgdata/ and nats/ of this system
 #   ANSP_GROUND_DIR              the pinned geoid grid, read-only
 #   ANSP_REPLAY_DIR              staging: the replay files (default ../testdata/replay)
@@ -211,9 +214,16 @@ services:
       <<: *env
       ANSP_PROCESS: manned-feed
       ANSP_INSTANCE: ${ANSP_INSTANCE_NAME:-production}
+      # The public part of api's session key: manned-feed verifies the
+      # console's session on the picture's stream with it (and against
+      # sessions_live, so an ended session is refused) and never holds
+      # the signing key, which it refuses (PLAN section 15 row 54).
+      ANSP_SESSION_PUBLIC_KEY_FILE: /run/secrets/ansp/session.pub.pem
       GOMEMLIMIT: 76MiB
     volumes:
       - ${ANSP_SECRETS_DIR}/nats/manned-feed.nk:/run/secrets/nats.nk:ro
+      # This one file of keys/, never the directory: session.pem stays api's.
+      - ${ANSP_SECRETS_DIR}/keys/session.pub.pem:/run/secrets/ansp/session.pub.pem:ro
     depends_on:
       migrate: {condition: service_completed_successfully}
       nats: {condition: service_healthy}
@@ -296,7 +306,8 @@ services:
     environment:
       # Every BFF path, the live picture's count included: api serves GET
       # /v1/manned-traffic/summary and asks manned-feed on the bus, so the
-      # console never reaches manned-feed, which verifies no session.
+      # BFF never reaches manned-feed. The browser's picture stream does,
+      # through Caddy, with the session cookie (ANSP_SESSION_PUBLIC_KEY_FILE).
       WEB_API_INTERNAL_URL: http://ansp-api:8080
       # Caddy, one hop in front of Next.js, appends to X-Forwarded-For.
       WEB_TRUSTED_PROXY_HOPS: "1"

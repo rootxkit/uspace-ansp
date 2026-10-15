@@ -10,7 +10,9 @@
 #      file is a non-empty file under a directory api mounts, and no
 #      setting of the deployment empties it; each process gets only the
 #      database DSN it opens; ANSP_TRUSTED_PROXIES names single hosts
-#      (the edge Caddy), never a range;
+#      (the edge Caddy), never a range; manned-feed verifies console
+#      sessions with the session key's public part and mounts no other
+#      key, and is never given the signing key;
 #   4. deploy/caddy/proof.sh against the pinned Caddy.
 #
 # Needs docker, jq and, for step 1, shellcheck: without shellcheck step 1
@@ -46,7 +48,7 @@ printf 'ANSP_RELATIONAL_DSN=postgres://ansp:placeholder@timescaledb:5432/ansp\n'
 printf 'ANSP_TIMESERIES_DSN=postgres://ansp:placeholder@timescaledb:5432/ansp_ts\n' > "$tmp/secrets/timeseries.env"
 printf 'POSTGRES_PASSWORD=placeholder\n' > "$tmp/secrets/db.env"
 : > "$tmp/secrets/web.env"
-for k in session.pem secrets.key delivery.pem ansp-01.secret mtls-bindings.json; do
+for k in session.pem session.pub.pem secrets.key delivery.pem ansp-01.secret mtls-bindings.json; do
   printf 'placeholder\n' > "$tmp/secrets/keys/$k"
 done
 
@@ -171,5 +173,21 @@ if (secret_file_ok "$tmp/rendered.json") >/dev/null 2>&1; then
 fi
 printf 'placeholder\n' > "$tmp/secrets/keys/ansp-01.secret"
 echo "check-deploy: an empty ansp-01.secret is refused"
+
+# manned-feed verifies the console's session on the picture's stream
+# with the public part of the session key (PLAN section 15 row 54): it is
+# given ANSP_SESSION_PUBLIC_KEY_FILE, mounts that one file and no other
+# from keys/, and is never given ANSP_SESSION_KEY_FILE.
+render "$tmp/rendered.json"
+feed_pub="$(jq -j '.services["manned-feed"].environment.ANSP_SESSION_PUBLIC_KEY_FILE // ""' "$tmp/rendered.json")"
+[ "$feed_pub" = /run/secrets/ansp/session.pub.pem ] || fail "manned-feed's ANSP_SESSION_PUBLIC_KEY_FILE renders '$feed_pub'"
+[ -z "$(jq -j '.services["manned-feed"].environment.ANSP_SESSION_KEY_FILE // ""' "$tmp/rendered.json")" ] ||
+  fail "manned-feed is given ANSP_SESSION_KEY_FILE, the session signing key"
+feed_keys="$(MSYS_NO_PATHCONV=1 jq -j '[.services["manned-feed"].volumes[] | select(.type == "bind" and (.source | test("/keys(/|$)")))
+  | "\(.source | sub(".*/keys"; "keys")) \(.target)"] | join("\n")' "$tmp/rendered.json" | tr -d '\r')"
+[ "$feed_keys" = "keys/session.pub.pem $feed_pub" ] || fail "manned-feed mounts from keys/:
+$feed_keys
+want only keys/session.pub.pem at $feed_pub"
+echo "check-deploy: manned-feed verifies sessions with keys/session.pub.pem alone (no signing key)"
 
 deploy/caddy/proof.sh
