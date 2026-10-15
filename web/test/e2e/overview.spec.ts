@@ -217,7 +217,7 @@ test("the supervisor's occurrence tile counts the reports by the state of their 
   await expect(tile).toContainText("1 failed or abandoned");
 });
 
-test("the manned tile counts the picture as manned-feed holds it, read through the BFF and not from a stream", async ({ page, request }) => {
+test("the manned tile counts the picture as manned-feed holds it, read from the API through the BFF and not from a stream", async ({ page, request }) => {
   await control(request, "/__mock/manned", { icao24: "4ca7b5", callsign: "TST123" });
   await control(request, "/__mock/manned", { icao24: "4ca7b6", callsign: "OTH1", relevant: false });
   await signIn(page, VIEWER);
@@ -234,10 +234,101 @@ test("the manned tile counts the picture as manned-feed holds it, read through t
   await expect(tile).toContainText("1 live, 0 stale, 1 source disabled");
   await expect(tile).toHaveAttribute("data-degraded", "adapters_silent");
   await expect(tile).toContainText("Degraded: adapters_silent");
-  // Read from the feed's summary through the BFF with the session; the overview opens no manned stream.
+  // Read from the API's summary through the BFF with the session; the overview opens no manned stream.
   const calls = (await (await request.get("/__mock/requests")).json()) as { method: string; path: string; authorization: boolean }[];
   expect(calls).toContainEqual(expect.objectContaining({ method: "GET", path: "/v1/manned-traffic/summary", authorization: true }));
   expect(calls.filter((c) => c.method === "WS" && c.path === "/v1/manned-traffic/stream")).toHaveLength(0);
   expect(await bffStatus(page, "/v1/manned-traffic/summary", "POST")).toBe(405);
   expect((await request.get("/_bff/api/v1/manned-traffic/summary")).status()).toBe(401);
+});
+
+type Recorded = { method: string; path: string; authorization: boolean };
+
+async function recorded(request: APIRequestContext): Promise<Recorded[]> {
+  return (await (await request.get("/__mock/requests")).json()) as Recorded[];
+}
+
+/** How many times the API was asked GET `path`. */
+async function asked(request: APIRequestContext, path: string): Promise<number> {
+  return (await recorded(request)).filter((c) => c.method === "GET" && c.path === path).length;
+}
+
+/** The session cookie the browser holds, or null. */
+async function sessionCookie(page: Page): Promise<string | null> {
+  const c = (await page.context().cookies()).find((k) => k.name === "uspace_session");
+  return c === undefined || c.value === "" ? null : c.value;
+}
+
+// The live regression of 2026-10-15: one data route answering 401 (the
+// manned summary) or 501 (the adapters) ended the whole session. Each
+// route now fails in its own tile; the session is asked about on GET
+// /v1/auth/me and stays.
+test("a summary answering 401 and the adapters answering 501 while the session is live leave the admin signed in", async ({ page, request }) => {
+  await signIn(page, ADMIN);
+  const before = await sessionCookie(page);
+  expect(before).not.toBeNull();
+  await control(request, "/__mock/fail", { path: "/v1/manned-traffic/summary", status: 401 });
+  await control(request, "/__mock/fail", { path: "/v1/adapters", status: 501 });
+  const meBefore = await asked(request, "/v1/auth/me");
+  await page.reload();
+
+  // Each tile says what it could not read; neither is a sign-out.
+  const manned = page.getByTestId("kpi-manned");
+  await expect(manned).toContainText("Could not be read");
+  await expect(manned).toHaveAttribute("data-value", "");
+  const adapters = page.getByTestId("kpi-adapters");
+  await expect(adapters).toHaveAttribute("data-failure", "501");
+  await expect(adapters).toContainText("Not served by this API yet");
+  await expect(page.getByTestId("overview-adapters-not-served")).toContainText("does not serve this operation yet");
+  // The other tiles are read as usual.
+  await expect(page.getByTestId("kpi-users")).toHaveAttribute("data-value", "3");
+
+  // The 401 asked the session's own read, which accepted it, and the
+  // summary is read again on its period: still signed in after it.
+  await expect.poll(() => asked(request, "/v1/auth/me"), { timeout: 15_000 }).toBeGreaterThan(meBefore + 1);
+  const firstReads = await asked(request, "/v1/manned-traffic/summary");
+  await expect.poll(() => asked(request, "/v1/manned-traffic/summary"), { timeout: 15_000 }).toBeGreaterThan(firstReads);
+  await expect(page.getByTestId("signed-out")).toHaveCount(0);
+  await expect(page.getByTestId("account")).toContainText("admin1");
+  expect(await sessionCookie(page)).toBe(before);
+  expect(await bffStatus(page, "/v1/auth/me")).toBe(200);
+  // The BFF passes each answer on as the API gave it, and the cookie stays.
+  expect(await bffStatus(page, "/v1/manned-traffic/summary")).toBe(401);
+  expect(await bffStatus(page, "/v1/adapters")).toBe(501);
+  expect(await sessionCookie(page)).toBe(before);
+
+  // The console goes on: another page, and the summary back.
+  await page.getByRole("navigation", { name: "Main navigation" }).getByRole("link", { name: "Restrictions", exact: true }).click();
+  await expect(page).toHaveURL(/\/en\/restrictions$/);
+  await expect(page.getByTestId("signed-out")).toHaveCount(0);
+  await control(request, "/__mock/fail", { path: "/v1/manned-traffic/summary", status: null });
+  await page.getByRole("navigation", { name: "Main navigation" }).getByRole("link", { name: "Overview" }).click();
+  await expect(manned).toHaveAttribute("data-value", "0");
+});
+
+// Presence (E-01): the session really ends. The same data route's 401,
+// now with the session gone from the API, signs the console out and the
+// BFF clears the cookie: fail closed.
+test("a real session expiry still signs the user out without a reload, and the cookie goes", async ({ page, request }) => {
+  await signIn(page, ADMIN);
+  expect(await sessionCookie(page)).not.toBeNull();
+  await control(request, "/__mock/expire", {});
+  // No reload: the next periodic read of a summary finds the session gone.
+  await expect(page.getByTestId("signed-out")).toContainText("Signed out: your session has ended.", { timeout: 15_000 });
+  await expect.poll(() => sessionCookie(page)).toBeNull();
+  expect(await bffStatus(page, "/v1/auth/me")).toBe(401);
+  await page.getByRole("link", { name: "Sign in again" }).click();
+  await expect(page).toHaveURL(/\/en\/login$/);
+});
+
+test("a real session expiry signs out even while a data route answers 501", async ({ page, request }) => {
+  await signIn(page, VIEWER);
+  await control(request, "/__mock/fail", { path: "/v1/adapters", status: 501 });
+  await page.reload();
+  await expect(page.getByTestId("kpi-adapters")).toHaveAttribute("data-failure", "501");
+  await expect(page.getByTestId("signed-out")).toHaveCount(0);
+  await control(request, "/__mock/expire", {});
+  await page.reload();
+  await expect(page.getByTestId("signed-out")).toContainText("Signed out");
+  await expect.poll(() => sessionCookie(page)).toBeNull();
 });

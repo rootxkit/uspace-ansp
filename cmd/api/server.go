@@ -48,6 +48,9 @@ type apiServer struct {
 	// co is the coordination inbox and the occurrence outbox (WP-10);
 	// nil without the relational database (its operations answer 503).
 	co *coordAPI
+	// ms is the picture's count, asked of manned-feed on the bus; nil,
+	// the operation answers 503.
+	ms *mannedSummaryAPI
 }
 
 // apiParts are the served parts of api.
@@ -57,6 +60,7 @@ type apiParts struct {
 	src  *sourcesAPI
 	cis  http.Handler
 	co   *coordAPI
+	ms   *mannedSummaryAPI
 }
 
 func newAPIServer(p apiParts) apiServer {
@@ -64,7 +68,7 @@ func newAPIServer(p apiParts) apiServer {
 		RequestErrorHandlerFunc:  requestError,
 		ResponseErrorHandlerFunc: responseError,
 	})
-	return apiServer{ServerInterface: strict, auth: p.auth, rs: p.rs, src: p.src, cis: p.cis, co: p.co}
+	return apiServer{ServerInterface: strict, auth: p.auth, rs: p.rs, src: p.src, cis: p.cis, co: p.co, ms: p.ms}
 }
 
 // mountAPI registers every operation of api on mux through the

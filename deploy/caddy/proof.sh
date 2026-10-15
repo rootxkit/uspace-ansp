@@ -148,6 +148,7 @@ expect "api"  200 "upstream=api"  /v1/restrictions
 expect "api"  200 "upstream=api"  /.well-known/jwks.json
 expect "api"  200 "upstream=api"  /v1/coordination/notices
 expect "feed" 200 "upstream=feed" /v1/manned-traffic/stream
+expect "api, the count" 200 "upstream=api subject=[]" /v1/manned-traffic/summary
 expect "web"  200 "upstream=web"  /
 expect "web"  200 "upstream=web"  /_bff/session
 expect "web"  200 "upstream=web"  /ka/login
@@ -173,6 +174,7 @@ expect "forged, no cert" 200 "upstream=web subject=[]"  / "${forged[@]}"
 # replaces a forged one.
 expect "cert" 200 "upstream=api subject=[CN=authority-01,O=proof]"  /v1/coordination/notices "${cert[@]}"
 expect "cert" 200 "upstream=feed subject=[CN=authority-01,O=proof]" /v1/manned-traffic/stream "${cert[@]}"
+expect "cert, the count" 200 "upstream=api subject=[]" /v1/manned-traffic/summary "${cert[@]}" "${forged[@]}"
 expect "cert + forged" 200 "upstream=api subject=[CN=authority-01,O=proof]" /v1/coordination/notices "${cert[@]}" "${forged[@]}"
 
 # A certificate is never forwarded outside the two groups.

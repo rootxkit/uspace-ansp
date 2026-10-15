@@ -27,8 +27,6 @@ export default defineConfig({
       env: {
         NEXT_TELEMETRY_DISABLED: "1",
         WEB_API_INTERNAL_URL: `http://127.0.0.1:${ORIGIN_PORT}`,
-        // manned-feed's summary, answered by the same fixture server.
-        WEB_FEED_INTERNAL_URL: `http://127.0.0.1:${ORIGIN_PORT}`,
         // The fixture restrictions' area; test configuration, not a default.
         NEXT_PUBLIC_MAP_CENTER: "44.80,41.715",
         NEXT_PUBLIC_MAP_ZOOM: "12",

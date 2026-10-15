@@ -592,6 +592,7 @@
   "ansp.overview.stream.restrictions": "Restriction stream",
   "ansp.overview.stream.coordination": "Coordination stream",
   "ansp.overview.kpi.unread": "Could not be read",
+  "ansp.overview.kpi.not_served": "Not served by this API yet",
   "ansp.overview.kpi.users": "Active console accounts",
   "ansp.overview.kpi.users_hint": "{disabled} disabled, {admins} admins, {total} in all",
   "ansp.overview.kpi.users_hint_truncated": "{disabled} disabled, {admins} admins among the first {total} counted",

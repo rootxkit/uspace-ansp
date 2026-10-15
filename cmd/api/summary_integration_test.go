@@ -9,6 +9,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/nats-io/nats.go"
+
+	"github.com/rootxkit/uspace-ansp/internal/bus"
 	"github.com/rootxkit/uspace-ansp/internal/coord"
 	"github.com/rootxkit/uspace-ansp/internal/restriction"
 	"github.com/rootxkit/uspace-ansp/internal/store"
@@ -234,5 +237,47 @@ func TestIntegrationOccurrenceSummary(t *testing.T) {
 	}
 	if c, err = (store.CoordRepo{DB: s.db}).OccurrenceCounts(s.ctx, 2); err != nil || c.Total != 2 || c.Truncated {
 		t.Fatalf("at the bound: %+v %v", c, err)
+	}
+}
+
+// GET /v1/manned-traffic/summary against real NATS: with no manned-feed
+// on the bus every role's session is answered 503 naming why, and the
+// session is not refused (GET /v1/auth/me 200 after it); with a
+// responder answering as manned-feed does, every role reads the count
+// in the contract's shape; no session 401, before the bus is asked.
+func TestIntegrationMannedSummaryThroughAPI(t *testing.T) {
+	s := newCoordStack(t, false)
+	for role, tok := range s.tokens() {
+		code, raw := s.c.do(http.MethodGet, "/v1/manned-traffic/summary", tok, nil, nil)
+		if code != http.StatusServiceUnavailable || !strings.Contains(string(raw), "no responder") {
+			t.Fatalf("%s without manned-feed: %d %s", role, code, raw)
+		}
+		if code, raw := s.c.do(http.MethodGet, "/v1/auth/me", tok, nil, nil); code != http.StatusOK {
+			t.Fatalf("%s's session after the 503: %d %s", role, code, raw)
+		}
+	}
+	asked := make(chan struct{}, 16)
+	sub, err := s.b.Conn().QueueSubscribe(s.summarySubject, bus.QueueMannedSummary, func(m *nats.Msg) {
+		asked <- struct{}{}
+		_ = m.Respond([]byte(`{"counted_at":"2026-10-16T10:00:00.000Z","total":1,"by_state":{"live":1,"stale":0,"source_disabled":0},` +
+			`"relevant":1,"max_aircraft":5000,"relevance":"relevance: synthetic","degraded":[],"policy_version":"1"}`))
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = sub.Unsubscribe() })
+	for role, tok := range s.tokens() {
+		code, raw := s.c.do(http.MethodGet, "/v1/manned-traffic/summary", tok, nil, nil)
+		if code != http.StatusOK || !strings.Contains(string(raw), `"total":1`) {
+			t.Fatalf("%s: %d %s", role, code, raw)
+		}
+		validateResponse(t, http.MethodGet, "/v1/manned-traffic/summary", code, raw)
+	}
+	before := len(asked)
+	if code, raw := s.c.do(http.MethodGet, "/v1/manned-traffic/summary", "", nil, nil); code != http.StatusUnauthorized {
+		t.Fatalf("without a session: %d %s", code, raw)
+	}
+	if len(asked) != before {
+		t.Fatal("the bus was asked for a caller without a session")
 	}
 }

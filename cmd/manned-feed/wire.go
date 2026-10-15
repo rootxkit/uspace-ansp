@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -48,6 +49,11 @@ const (
 const (
 	counterSamplesRefused = "feed_samples_refused"
 	counterLiveDropped    = "feed_live_dropped"
+	// counterSummaryAnswered and counterSummaryUnanswered count api's
+	// requests for the picture's count: answered, and not answered (the
+	// summary could not be encoded or the reply not sent).
+	counterSummaryAnswered   = "feed_summary_answered"
+	counterSummaryUnanswered = "feed_summary_unanswered"
 )
 
 // Readiness check names beside obs's (docs/WORKPACKAGES/WP-6.md).
@@ -67,9 +73,11 @@ type wiring struct {
 	pic    *picture.Picture
 }
 
-// feedServer is the generated server interface of manned-feed: the three
-// manned-traffic operations; every other operation is another
-// process's and is not served here (auth.Routes).
+// feedServer is the generated server interface of manned-feed: the
+// snapshot and the stream; every other operation is another process's
+// and is not served here (auth.Routes). The picture's count (GET
+// /v1/manned-traffic/summary) is api's: it asks this process on
+// bus.SubjectMannedSummary (answerSummary).
 type feedServer struct {
 	gen.ServerInterface
 	svc *feed.Service
@@ -78,11 +86,6 @@ type feedServer struct {
 // GetMannedTrafficSnapshot serves GET /v1/manned-traffic/snapshot.
 func (s feedServer) GetMannedTrafficSnapshot(w http.ResponseWriter, r *http.Request, _ gen.GetMannedTrafficSnapshotParams) {
 	s.svc.ServeSnapshot(w, r)
-}
-
-// GetMannedTrafficSummary serves GET /v1/manned-traffic/summary.
-func (s feedServer) GetMannedTrafficSummary(w http.ResponseWriter, r *http.Request) {
-	s.svc.ServeSummary(w, r)
 }
 
 // StreamMannedTraffic serves GET /v1/manned-traffic/stream.
@@ -218,6 +221,7 @@ func wire(ctx context.Context, cfg config.Config, b *bus.Bus, db *store.Timeseri
 		func(ctx context.Context) { followSources(ctx, b, src, logger) },
 		func(ctx context.Context) { followCIS(ctx, b, cisF, logger) },
 		func(ctx context.Context) { subscribe(ctx, b, svc, adapters, own, logger) },
+		func(ctx context.Context) { answerSummary(ctx, b, svc.Summary, own, logger) },
 		svc.Run,
 	)
 	if checker != nil {
@@ -523,6 +527,38 @@ func subscribe(ctx context.Context, b *bus.Bus, svc *feed.Service, adapters *fee
 			}
 		}
 	}
+}
+
+// answerSummary answers api's requests on bus.SubjectMannedSummary with
+// the picture counted, in the queue group so one instance answers each,
+// until ctx ends. The request carries no credential: the bus is this
+// system's own, with one NKey per process (docs/PLAN.md section 8), and
+// api has verified the console session before it asks. The reply holds
+// counts only, never an aircraft.
+func answerSummary(ctx context.Context, b *bus.Bus, summary func() feed.MannedSummary, own *core.Counters, logger *slog.Logger) {
+	nc := b.Conn()
+	if nc == nil {
+		logger.Error("the picture's count is not answered: the bus is not configured; api's summary answers 503")
+		return
+	}
+	sub, err := nc.QueueSubscribe(bus.SubjectMannedSummary, bus.QueueMannedSummary, func(m *nats.Msg) {
+		raw, err := json.Marshal(summary())
+		if err == nil {
+			err = m.Respond(raw)
+		}
+		if err != nil {
+			own.Inc(counterSummaryUnanswered)
+			logger.Error("ctl.manned.summary: not answered", slog.String("error", err.Error()))
+			return
+		}
+		own.Inc(counterSummaryAnswered)
+	})
+	if err != nil {
+		logger.Error("ctl.manned.summary: subscribe", slog.String("error", err.Error()))
+		return
+	}
+	<-ctx.Done()
+	_ = sub.Unsubscribe()
 }
 
 func sleep(ctx context.Context, d time.Duration) bool {

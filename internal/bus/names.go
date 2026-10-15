@@ -25,6 +25,15 @@ const (
 	// open manned-feed stream keeps in use, at most once a minute per
 	// stream; api moves its last_seen_at (docs/PLAN.md section 15 row 21).
 	SubjectSessionsSeen = "ctl.sessions.seen"
+	// SubjectMannedSummary is a core request and reply: api asks with an
+	// empty body and manned-feed answers with the picture counted (the
+	// body of GET /v1/manned-traffic/summary). The console's count is
+	// read through api, which verifies the console session; the picture
+	// stays manned-feed's (docs/PLAN.md section 15 row 54).
+	SubjectMannedSummary = "ctl.manned.summary"
+	// QueueMannedSummary is the queue group manned-feed answers the
+	// summary in: one reply per request however many instances run.
+	QueueMannedSummary = "manned-feed"
 )
 
 // JetStream streams.

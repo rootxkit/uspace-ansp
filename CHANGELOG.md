@@ -33,6 +33,16 @@ complete.
 
 ### Fixed
 
+- The console signed out right after sign-in (2026-10-15): the
+  overview's `GET /v1/manned-traffic/summary` reached manned-feed, which
+  verifies no console session where deployed, and its 401 made the kit's
+  BFF clear the session cookie. The count is now api's: api verifies the
+  session and asks manned-feed on `ctl.manned.summary` (503 naming why
+  when it does not answer); `WEB_FEED_INTERNAL_URL` is gone. The session
+  ends only on the session's own answer: a 401 of any other path is
+  checked against `GET /v1/auth/me` by the BFF (cookies kept on 2xx,
+  cleared otherwise) and by the console before it signs out. A 501 (the
+  adapters, not yet served by api) is said in its tile as not served.
 - H-2 review: an end was delivered directly only when an alarm was
   already open at an earlier version. When the activation reached the
   CISP and the CISP then went down, the end was neither published nor

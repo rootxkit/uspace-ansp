@@ -32,11 +32,19 @@
 //   operations, path and method; another method on one of those paths
 //   is 405 without an upstream call. The API decides who (admin only).
 //
-// - feed: GET /v1/manned-traffic/summary is manned-feed's (the live
-//   picture's owner, x-process manned-feed), so the BFF forwards that one
-//   path, GET only, with the kit's `forward` to WEB_FEED_INTERNAL_URL;
-//   unset or not a URL, that path alone answers 503 naming it and every
-//   other route is served (the console's other pages do not need it).
+// - the session ends on the session's own answer only. The kit's
+//   `forward` clears both cookies on any upstream 401 (uspace-ui 1.1.1
+//   src/auth/server/forward.ts: `if (upstream.status === 401)
+//   clearSession(res, opts.session)`). A 401 from GET /v1/auth/me is the
+//   session refused and passes as the kit wrote it. A 401 from any other
+//   path asks GET /v1/auth/me with the same cookie before the answer
+//   leaves: 2xx, the session is live and the kit's cookie clearing is
+//   dropped (the 401 itself is passed on unchanged); anything else (401,
+//   5xx, no answer) keeps the clearing (fail closed). The BFF still
+//   verifies no token: the API decides every request.
+// - every summary is api's, the manned picture's count included (api
+//   verifies the session and asks manned-feed on the bus): the BFF
+//   reaches the API and nothing else.
 //
 // The WebSockets are not proxied: the browser upgrades /v1/restrictions/
 // stream, /v1/coordination/stream and /v1/manned-traffic/stream
@@ -50,6 +58,7 @@ import {
   bffHandlers,
   forward,
   MIN_CHALLENGE_SECRET_BYTES,
+  readSessionToken,
   type BffHandlers,
   type SessionCookieOptions,
 } from "@rootxkit/uspace-ui/auth/server";
@@ -60,20 +69,22 @@ export const API_LOGIN_PATH = "/v1/auth/login";
 export const API_MFA_PATH = "/v1/auth/mfa";
 export const API_LOGOUT_PATH = "/v1/auth/logout";
 
-/**
- * The overview's summaries (api/openapi.yaml, one tile each), each one
- * exact path that the proxy forwards for GET only: another method on
- * one of them is 405 before any upstream call, and a longer or shorter
- * path is not on the list. The API's x-auth decides who reads each.
- */
-export const SUMMARY_READS: readonly RegExp[] = [/^\/v1\/users\/summary$/, /^\/v1\/restriction-requests\/summary$/, /^\/v1\/occurrences\/summary$/];
+/** The session's own read (api/openapi.yaml getMe): the one answer whose 401 ends the session. */
+export const API_ME_PATH = "/v1/auth/me";
 
 /**
- * The summaries manned-feed serves (api/openapi.yaml x-process
- * manned-feed): exact paths, GET only, forwarded to WEB_FEED_INTERNAL_URL
- * and never to the API. They are not on PROXY_ALLOW_PATHS.
+ * The overview's summaries (api/openapi.yaml, one tile each, every one
+ * x-process api), each one exact path that the proxy forwards for GET
+ * only: another method on one of them is 405 before any upstream call,
+ * and a longer or shorter path is not on the list. The API's x-auth
+ * decides who reads each.
  */
-export const FEED_READS: readonly RegExp[] = [/^\/v1\/manned-traffic\/summary$/];
+export const SUMMARY_READS: readonly RegExp[] = [
+  /^\/v1\/users\/summary$/,
+  /^\/v1\/restriction-requests\/summary$/,
+  /^\/v1\/occurrences\/summary$/,
+  /^\/v1\/manned-traffic\/summary$/,
+];
 
 /**
  * The account administration (api/openapi.yaml tag auth, every one
@@ -127,11 +138,6 @@ export const IDEMPOTENT_OPERATIONS: readonly { method: string; path: RegExp }[] 
 export interface BffConfig {
   /** The API as the web container reaches it (WEB_API_INTERNAL_URL). */
   apiBase: string;
-  /**
-   * manned-feed as the web container reaches it (WEB_FEED_INTERNAL_URL),
-   * for FEED_READS only; unset, those paths answer 503 naming it.
-   */
-  feedBase?: string;
   /** The cookie's Max-Age ceiling, seconds (WEB_SESSION_MAX_AGE_S). */
   sessionMaxAgeS: number;
   /** The upstream timeout of every call, ms (WEB_UPSTREAM_TIMEOUT_MS). */
@@ -218,61 +224,65 @@ export function createBff(cfg: BffConfig): Bff {
     ...(cfg.fetch === undefined ? {} : { fetch: cfg.fetch }),
   });
 
-  const feed = feedUrl(cfg.feedBase);
-  // A FEED_READS path goes to manned-feed through the kit's forward (its
-  // CSRF, header, redirect and timeout rules), with that path alone on
-  // its allow-list.
-  const toFeed = (req: NextRequest, path: string): Promise<Response> => {
-    if (feed === null) {
-      return Promise.resolve(problem(503, "feed_unavailable", "Manned picture unavailable", "WEB_FEED_INTERNAL_URL is not set or not a URL"));
+  // Is the request's session live? GET /v1/auth/me with its cookie,
+  // through the kit's forward (its header, redirect and timeout rules; a
+  // GET takes no CSRF pair). Only a 2xx says yes.
+  const sessionLive = async (req: NextRequest): Promise<boolean> => {
+    const headers = new Headers(req.headers);
+    for (const h of ["content-length", "content-type", "transfer-encoding", IDEMPOTENCY_HEADER]) headers.delete(h);
+    const ask = new NextRequest(new URL(`${BFF_API_PREFIX}${API_ME_PATH}`, req.nextUrl), { method: "GET", headers });
+    try {
+      const me = await forward(ask, new URL(API_ME_PATH, cfg.apiBase), {
+        session,
+        allowPaths: [/^\/v1\/auth\/me$/],
+        timeoutMs: cfg.timeoutMs,
+        ...(cfg.trustedProxyHops > 0 ? { trustedProxyHops: cfg.trustedProxyHops } : {}),
+        ...(cfg.fetch === undefined ? {} : { fetch: cfg.fetch }),
+      });
+      await me.body?.cancel().catch(() => undefined);
+      return me.ok;
+    } catch {
+      return false;
     }
-    const target = new URL(path, feed);
-    target.search = req.nextUrl.search;
-    return forward(req, target, {
-      session,
-      allowPaths: [...FEED_READS],
-      timeoutMs: cfg.timeoutMs,
-      ...(cfg.trustedProxyHops > 0 ? { trustedProxyHops: cfg.trustedProxyHops } : {}),
-      ...(cfg.fetch === undefined ? {} : { fetch: cfg.fetch }),
-    });
+  };
+
+  // The kit's answer; for a 401 of a path other than the session's own
+  // read, whose session GET /v1/auth/me still accepts, the same answer
+  // without the kit's cookie clearing (the only Set-Cookie on a proxied
+  // answer: the kit drops the API's).
+  const keepLiveSession = async (req: NextRequest, apiPath: string | null, res: Response): Promise<Response> => {
+    if (res.status !== 401 || apiPath === API_ME_PATH || !res.headers.has("set-cookie")) return res;
+    // No session cookie: nothing to keep, and nothing to ask about.
+    if (readSessionToken(req, session) === null) return res;
+    if (!(await sessionLive(req))) return res;
+    const headers = new Headers(res.headers);
+    headers.delete("set-cookie");
+    return new NextResponse(res.body, { status: res.status, statusText: res.statusText, headers });
   };
 
   // The kit's proxy forwards the client's Idempotency-Key (uspace-ui
   // 1.0.0). The console keeps its narrower rule: a key of the contract's
   // shape on an operation that takes one, and no key anywhere else. A
   // summary is read with GET and nothing else.
-  const proxy: Handler = (req) => {
+  const proxy: Handler = async (req) => {
     const apiPath = req.nextUrl.pathname.startsWith(`${BFF_API_PREFIX}/`) ? req.nextUrl.pathname.slice(BFF_API_PREFIX.length) : null;
-    const fromFeed = apiPath !== null && FEED_READS.some((p) => p.test(apiPath));
-    if (apiPath !== null && req.method !== "GET" && (fromFeed || SUMMARY_READS.some((p) => p.test(apiPath)))) {
+    if (apiPath !== null && req.method !== "GET" && SUMMARY_READS.some((p) => p.test(apiPath))) {
       const res = problem(405, "method_not_allowed", "Method not allowed", "a summary is read with GET only");
       res.headers.set("Allow", "GET");
-      return Promise.resolve(res);
+      return res;
     }
     const userMethods = apiPath === null ? null : userMethodsOf(apiPath);
     if (userMethods !== null && !userMethods.includes(req.method)) {
       const res = problem(405, "method_not_allowed", "Method not allowed", `an account operation takes ${userMethods.join(" or ")} only`);
       res.headers.set("Allow", userMethods.join(", "));
-      return Promise.resolve(res);
+      return res;
     }
-    if (fromFeed) return toFeed(req, apiPath);
     const key = req.headers.get(IDEMPOTENCY_HEADER);
-    if (key === null) return kit.proxy(req);
     const takesKey = apiPath !== null && IDEMPOTENT_OPERATIONS.some((o) => o.method === req.method && o.path.test(apiPath));
-    return kit.proxy(takesKey && IDEMPOTENCY_KEY.test(key) ? req : withoutIdempotencyKey(req));
+    const res = await kit.proxy(key === null || (takesKey && IDEMPOTENCY_KEY.test(key)) ? req : withoutIdempotencyKey(req));
+    return keepLiveSession(req, apiPath, res);
   };
   return { login: kit.login, logout: kit.logout, proxy };
-}
-
-/** WEB_FEED_INTERNAL_URL as an http(s) origin, or null when unset or not one. */
-export function feedUrl(raw: string | undefined): URL | null {
-  if (raw === undefined || raw === "") return null;
-  try {
-    const u = new URL(raw);
-    return u.protocol === "http:" || u.protocol === "https:" ? u : null;
-  } catch {
-    return null;
-  }
 }
 
 function positiveInt(name: string, fallback: number): number {
@@ -309,7 +319,6 @@ export function configFromEnv(): BffConfig | null {
   if (hops === null) return null;
   return {
     apiBase: process.env["WEB_API_INTERNAL_URL"] ?? "",
-    feedBase: process.env["WEB_FEED_INTERNAL_URL"] ?? "",
     mfaChallengeSecret: process.env["WEB_MFA_CHALLENGE_SECRET"] ?? "",
     // Display-side ceiling only: the API's session lifetime (<= 12 h)
     // shortens it through expires_at.

@@ -12,32 +12,101 @@ import type { paths } from "./types";
 
 /** What the client tells the console about the session. */
 export interface SessionEvents {
-  /** A call answered 401: the session is gone. */
+  /**
+   * The session is gone: GET /v1/auth/me answered 401, or another call
+   * answered 401 and GET /v1/auth/me, asked again, did not answer 2xx.
+   */
   onUnauthorized(): void;
   /** A call answered 2xx: the session is good (again, after a sign-in). */
   onAuthorized?(): void;
 }
 
+/** The session's own read (api/openapi.yaml getMe): the one answer that says whether it is live. */
+export const SESSION_PATH = "/v1/auth/me";
+
 /**
  * The console's client, on the BFF. `test` is for unit tests only: a
  * fetch and the origin a relative URL needs outside a browser.
+ *
+ * Who decides that the session is gone (fail closed): a 401 from GET
+ * /v1/auth/me is the session refused and signs the console out. A 401
+ * from any other operation is that operation's answer, which need not
+ * be about the session; the console asks GET /v1/auth/me once (one
+ * question at a time however many calls answered 401) and signs out
+ * unless that answers 2xx. An unreachable API or any other answer to the
+ * question also signs out. A 5xx or 501 from a data route is that
+ * route's failure and never touches the session. The kit's own
+ * `onUnauthorized` (any 401, uspace-ui src/api/client.ts) is not used.
  */
 export function consoleClient(lang: () => Lang, session: SessionEvents, test?: { fetch: typeof fetch; origin: string }) {
+  const baseUrl = `${test?.origin ?? ""}${BFF_API_PREFIX}`;
+  const doFetch: typeof fetch = test?.fetch ?? ((input, init) => fetch(input, init));
   const client = createClient<paths>({
-    baseUrl: `${test?.origin ?? ""}${BFF_API_PREFIX}`,
+    baseUrl,
     csrfToken: () => csrfToken(),
-    onUnauthorized: () => session.onUnauthorized(),
     lang,
     ...(test === undefined ? {} : { fetch: test.fetch }),
   });
-  // A 2xx is a session the API accepted: the console is signed in (again).
+  // One sign-out per run of refusals: a page of ten requests that all
+  // find the session gone signs out once; a 2xx in between re-arms it.
+  let armed = true;
+  const signedOut = (): void => {
+    if (!armed) return;
+    armed = false;
+    session.onUnauthorized();
+  };
+  // Counts the 2xx answers: a question asked before the latest 2xx is
+  // answered about an older session (a sign-in in another tab since), and
+  // its "no" is not the session's state any more.
+  let accepted = 0;
+  let asking: Promise<void> | null = null;
+  const confirmSession = (): Promise<void> => {
+    asking ??= (async () => {
+      const askedAt = accepted;
+      const no = (): void => {
+        if (accepted === askedAt) signedOut();
+      };
+      try {
+        const res = await doFetch(`${baseUrl}${SESSION_PATH}`, {
+          credentials: "same-origin",
+          cache: "no-store",
+          headers: { Accept: "application/json", "Accept-Language": lang() },
+        });
+        await res.body?.cancel().catch(() => undefined);
+        if (!res.ok) no();
+      } catch {
+        no();
+      } finally {
+        asking = null;
+      }
+    })();
+    return asking;
+  };
+  // Runs before the kit's middleware (openapi-fetch calls onResponse in
+  // reverse order), which rejects every non-2xx with an ApiError.
   client.use({
-    onResponse({ response }) {
-      if (response.ok) session.onAuthorized?.();
+    onResponse({ response, schemaPath }) {
+      if (response.ok) {
+        // A 2xx is a session the API accepted: signed in (again).
+        accepted += 1;
+        armed = true;
+        session.onAuthorized?.();
+      } else if (response.status === 401) {
+        if (schemaPath === SESSION_PATH) signedOut();
+        else void confirmSession();
+      }
       return undefined;
     },
   });
-  return client;
+  return Object.assign(client, {
+    /**
+     * Asks GET /v1/auth/me whether the session is live and signs out
+     * unless it answers 2xx: for a refusal that is not the session's own
+     * answer (a 401 of another call, a 4401 close of a stream that is not
+     * the API's restriction stream).
+     */
+    confirmSession,
+  });
 }
 
 export type ConsoleClient = ReturnType<typeof consoleClient>;

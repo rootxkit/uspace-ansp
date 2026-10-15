@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -113,7 +112,6 @@ func newFixture(t *testing.T, cfg Config, cis picture.CIS) *fixture {
 		}
 	}
 	mux.HandleFunc("GET /v1/manned-traffic/snapshot", inject(f.svc.ServeSnapshot))
-	mux.HandleFunc("GET /v1/manned-traffic/summary", inject(f.svc.ServeSummary))
 	mux.HandleFunc("GET /v1/manned-traffic/stream", inject(f.svc.ServeStream))
 	f.srv = httptest.NewServer(mux)
 	t.Cleanup(f.srv.Close)
@@ -532,27 +530,27 @@ func TestSnapshotOfAnEmptyPictureSaysWhy(t *testing.T) {
 
 // TestSummaryCountsThePictureAndSaysWhyItIsEmpty: an empty picture is
 // zero with adapters_silent and the relevance line; with aircraft the
-// counts are the picture's by state, backlog-only left out, none named;
-// no caller 401.
+// counts are the picture's by state, backlog-only left out, none named.
+// Each answer is the reply manned-feed puts on the bus, and it decodes
+// with the decoder api reads it with.
 func TestSummaryCountsThePictureAndSaysWhyItIsEmpty(t *testing.T) {
 	f := newFixture(t, Config{}, picture.NoCIS{})
-	get := func(principal string) (int, MannedSummary, string) {
-		r, _ := http.NewRequest(http.MethodGet, f.srv.URL+"/v1/manned-traffic/summary", nil)
-		r.Header.Set("X-Test-Principal", principal)
-		resp, err := http.DefaultClient.Do(r)
+	get := func() (MannedSummary, string) {
+		t.Helper()
+		raw, err := json.Marshal(f.svc.Summary())
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer resp.Body.Close()
-		raw, _ := io.ReadAll(resp.Body)
-		var s MannedSummary
-		_ = json.Unmarshal(raw, &s)
-		return resp.StatusCode, s, string(raw)
+		s, err := DecodeSummary(raw)
+		if err != nil {
+			t.Fatalf("the reply does not decode: %v: %s", err, raw)
+		}
+		return s, string(raw)
 	}
-	code, s, _ := get("session:user-1")
-	if code != http.StatusOK || s.Total != 0 || !contains(s.Degraded, DegradedAdaptersSilent) || s.Relevance != picture.StatusNoProjection ||
+	s, raw := get()
+	if s.Total != 0 || !contains(s.Degraded, DegradedAdaptersSilent) || s.Relevance != picture.StatusNoProjection ||
 		s.MaxAircraft != picture.DefaultLimits().MaxAircraft || s.PolicyVersion != "3" || s.CountedAt != manned.FormatTime(t0) {
-		t.Fatalf("empty %d %+v", code, s)
+		t.Fatalf("empty %s", raw)
 	}
 	f.adapters.Observe("adsb-tbs", statusMsg("adsb-tbs", AdapterLive, true, t0), t0)
 	f.svc.Ingest(sample("4ca7b5", "adsb-tbs", 41.72, 44.80, t0))
@@ -560,16 +558,40 @@ func TestSummaryCountsThePictureAndSaysWhyItIsEmpty(t *testing.T) {
 	backlog := sample("4ca7b7", "adsb-tbs", 41.74, 44.82, t0)
 	backlog.Times.Backlog = true
 	f.svc.Ingest(backlog)
-	code, s, raw := get("session:user-1")
+	s, raw = get()
 	want := MannedStateCounts{Live: 2}
-	if code != http.StatusOK || s.Total != 2 || s.ByState != want || s.Relevant != 2 || contains(s.Degraded, DegradedAdaptersSilent) {
-		t.Fatalf("two %d %s", code, raw)
+	if s.Total != 2 || s.ByState != want || s.Relevant != 2 || contains(s.Degraded, DegradedAdaptersSilent) {
+		t.Fatalf("two %s", raw)
 	}
 	if strings.Contains(raw, "4ca7b5") {
 		t.Fatalf("the summary names an aircraft: %s", raw)
 	}
-	if code, _, _ := get(""); code != http.StatusUnauthorized {
-		t.Fatalf("no caller %d", code)
+}
+
+// TestDecodeSummaryRefusesWhatIsNotTheSummary: the reply as manned-feed
+// writes it decodes; every malformed one is refused with its field,
+// never served as a count (E-01: the acceptance first).
+func TestDecodeSummaryRefusesWhatIsNotTheSummary(t *testing.T) {
+	good := `{"counted_at":"2026-10-16T10:00:00.000Z","total":3,"by_state":{"live":1,"stale":1,"source_disabled":1},` +
+		`"relevant":1,"max_aircraft":5000,"relevance":"r","degraded":[],"policy_version":"1"}`
+	s, err := DecodeSummary([]byte(good))
+	if err != nil || s.Total != 3 || s.Degraded == nil {
+		t.Fatalf("good: %+v %v", s, err)
+	}
+	for name, raw := range map[string]string{
+		"unknown member":  strings.Replace(good, `"relevant":1`, `"relevant":1,"icao24":"4ca7b5"`, 1),
+		"no counted_at":   strings.Replace(good, `"counted_at":"2026-10-16T10:00:00.000Z",`, ``, 1),
+		"no policy":       strings.Replace(good, `,"policy_version":"1"`, ``, 1),
+		"no degraded":     strings.Replace(good, `"degraded":[],`, ``, 1),
+		"negative":        strings.Replace(good, `"relevant":1`, `"relevant":-1`, 1),
+		"total not a sum": strings.Replace(good, `"total":3`, `"total":4`, 1),
+		"trailing":        good + `{}`,
+		"not json":        `<html>`,
+		"too long":        `{"relevance":"` + strings.Repeat("x", MaxSummaryBytes) + `"}`,
+	} {
+		if _, err := DecodeSummary([]byte(raw)); err == nil {
+			t.Errorf("%s: decoded", name)
+		}
 	}
 }
 

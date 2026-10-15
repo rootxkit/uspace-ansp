@@ -14,6 +14,7 @@
 #   {$ANSP_WEB_UPSTREAM}   web, e.g. ansp-web:3000
 #
 # Route groups:
+#   /v1/manned-traffic/summary  api      the console's count; api asks manned-feed
 #   /v1/manned-traffic/*   manned-feed   mTLS group: verified subject forwarded
 #   /v1/coordination/*     api           mTLS group: verified subject forwarded
 #   /uss/*, /v1/*, /.well-known/*, /healthz   api
@@ -43,6 +44,14 @@
 	# request, and set again below only from a verified client
 	# certificate on the two mTLS route groups.
 	request_header -X-Client-Cert-Subject
+
+	# The picture's count is api's (x-process api: it verifies the
+	# console session and asks manned-feed on the bus), so it leaves the
+	# manned-feed group before either of its handles; no subject is
+	# forwarded, as the operation takes a console session only.
+	handle /v1/manned-traffic/summary {
+		reverse_proxy {$ANSP_API_UPSTREAM}
+	}
 
 	# Without a client certificate the placeholder is null in CEL, and
 	# null != "" is true: the null test keeps a request without a

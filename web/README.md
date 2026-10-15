@@ -76,7 +76,7 @@ The BFF is three routes and nothing else, on the kit's helpers:
 |---|---|
 | `POST /_bff/login` | `{username, password}` → `POST /v1/auth/login`; the API's challenge is sealed (AES-GCM under `WEB_MFA_CHALLENGE_SECRET`) into the `HttpOnly` `uspace_mfa` cookie (`Path=/_bff`) and the page gets `{status: "mfa_required", enrolment?}`. Then `{username, otp}` → `POST /v1/auth/mfa {mfa_token, code}`; its session sets `uspace_session` (`HttpOnly; Secure; SameSite=Strict`) and the readable `uspace_csrf`. The sign-in requires a same-origin `Origin`. |
 | `POST /_bff/logout` | the CSRF pair checked, `POST /v1/auth/logout` with the bearer, both cookies cleared whatever the API answers |
-| `/_bff/api/*` | the cookie forwarded as `Authorization: Bearer`; every unsafe method needs `X-CSRF-Token` equal to `uspace_csrf`; only `/v1/restrictions*`, `/v1/restriction-requests` (the list), `/v1/restriction-requests/{id}` and its `/accept` and `/decline`, `/v1/delivery-alarms*`, `/v1/adapters*`, `/v1/sources*`, `/v1/coordination/inbox*`, `/v1/occurrences`, `/v1/policy`, `/v1/audit` and `/v1/auth/me` are reached (not the machine intake `/v1/coordination/notices`), and the overview's summaries, each one exact path for `GET` only (`SUMMARY_READS`: `/v1/users/summary`, `/v1/restriction-requests/summary`, `/v1/occurrences/summary`), any other method on one answered 405 without an upstream call; and the account administration, each one exact path and method (`USER_OPERATIONS`: `GET` and `POST /v1/users`, `POST /v1/users/{id}/reset-mfa`, `POST /v1/users/{id}/disable`, the id a ULID), another method on one of those paths answered 405 and a neighbouring path 404, neither reaching the API, which answers anyone but an admin 403. `GET /v1/manned-traffic/summary` alone goes to manned-feed (`FEED_READS`, `WEB_FEED_INTERNAL_URL`) through the kit's `forward`, GET only. An `Idempotency-Key` of the contract's shape is passed on `POST /v1/restrictions` (the kit forwards a fixed header list without it). |
+| `/_bff/api/*` | the cookie forwarded as `Authorization: Bearer`; every unsafe method needs `X-CSRF-Token` equal to `uspace_csrf`; only `/v1/restrictions*`, `/v1/restriction-requests` (the list), `/v1/restriction-requests/{id}` and its `/accept` and `/decline`, `/v1/delivery-alarms*`, `/v1/adapters*`, `/v1/sources*`, `/v1/coordination/inbox*`, `/v1/occurrences`, `/v1/policy`, `/v1/audit` and `/v1/auth/me` are reached (not the machine intake `/v1/coordination/notices`), and the overview's summaries, each one exact path for `GET` only (`SUMMARY_READS`: `/v1/users/summary`, `/v1/restriction-requests/summary`, `/v1/occurrences/summary`, `/v1/manned-traffic/summary`, every one api's: it asks manned-feed for the picture's count on the bus), any other method on one answered 405 without an upstream call; and the account administration, each one exact path and method (`USER_OPERATIONS`: `GET` and `POST /v1/users`, `POST /v1/users/{id}/reset-mfa`, `POST /v1/users/{id}/disable`, the id a ULID), another method on one of those paths answered 405 and a neighbouring path 404, neither reaching the API, which answers anyone but an admin 403. A `401` of any path but `/v1/auth/me` asks `GET /v1/auth/me` with the same cookie before it leaves: a 2xx keeps both cookies (the kit's `forward` clears them on any 401), anything else clears them (fail closed). An `Idempotency-Key` of the contract's shape is passed on `POST /v1/restrictions` (the kit forwards a fixed header list without it). |
 
 The BFF never verifies a token: the API decides every request. There is
 no ticket route: the three streams are opened same-origin and the
@@ -86,8 +86,12 @@ allow-list): `WS /v1/restrictions/stream` and `WS
 status bar says whether each is live and how many notices are escalated
 or awaiting), and `WS /v1/manned-traffic/stream` on manned-feed, opened
 by the picture page with `console/subscribe/v1 {bbox, layers:
-[manned]}` from the kit's bbox hook. A `4401` close of any of them, like
-a `401` answer, is shown as "signed out, sign in again".
+[manned]}` from the kit's bbox hook. "Signed out, sign in again" is the
+session's own answer: a `401` of `GET /v1/auth/me` or a `4401` close of
+the restriction stream. A `401` of another call, or a `4401` close of
+another stream, asks `GET /v1/auth/me` first and signs out unless it
+answers 2xx (`src/api/client.ts`); a `501` or `503` of a data route is
+shown in that route's tile or panel and never signs out.
 
 The manned stream runs on `src/console/stream.ts`, not the kit's
 `useFeed`: the kit (`1.0.0` as `0.1.0-rc.1`) passes on neither the status frame's
@@ -137,7 +141,6 @@ unknown `ANSP_*` names.
 | Variable | Meaning |
 |---|---|
 | `WEB_API_INTERNAL_URL` | the API as the BFF reaches it (`http://api:8080` in compose); unset, every BFF route answers 503 naming it |
-| `WEB_FEED_INTERNAL_URL` | manned-feed as the BFF reaches it (`http://ansp-manned-feed:8080` in `deploy/compose.prod.yaml`), for `GET /v1/manned-traffic/summary` only (`FEED_READS`); unset or not an http(s) URL, that path answers 503 naming it and the rest of the console is served |
 | `WEB_MFA_CHALLENGE_SECRET` | seals the MFA challenge between the two sign-in steps; at least 32 bytes from the deployment's secret store; unset or shorter, every BFF route answers 503 naming it |
 | `WEB_TRUSTED_PROXY_HOPS` | reverse proxies in front of Next.js that append to `X-Forwarded-For`: required, 1 behind Caddy, 0 with none (the API then gets no client address); unset or not 0 to 8, every `/_bff/*` route answers 503 naming it; the API lists the web container in `ANSP_TRUSTED_PROXIES` |
 | `WEB_SESSION_MAX_AGE_S` | ceiling of the session cookie's `Max-Age` (43200); the API's `expires_at` shortens it |

@@ -4550,7 +4550,9 @@ type ClientInterface interface {
 	// GetMannedTrafficSummary How many manned aircraft the picture holds
 	//
 	// The live manned picture of manned-feed counted for the console's
-	// overview, from the picture itself (not from a stream): every
+	// overview. api verifies the console session and asks manned-feed
+	// on the bus (ctl.manned.summary); manned-feed counts from the
+	// picture itself (not from a stream): every
 	// aircraft shown, by state (live, stale, source_disabled), and how
 	// many of them are relevant to U-space. An aircraft known only from
 	// backlog samples is not shown and not counted (T-04). Counts only,
@@ -5685,7 +5687,9 @@ func (c *Client) StreamMannedTraffic(ctx context.Context, params *StreamMannedTr
 // GetMannedTrafficSummary How many manned aircraft the picture holds
 //
 // The live manned picture of manned-feed counted for the console's
-// overview, from the picture itself (not from a stream): every
+// overview. api verifies the console session and asks manned-feed
+// on the bus (ctl.manned.summary); manned-feed counts from the
+// picture itself (not from a stream): every
 // aircraft shown, by state (live, stale, source_disabled), and how
 // many of them are relevant to U-space. An aircraft known only from
 // backlog samples is not shown and not counted (T-04). Counts only,
@@ -9171,7 +9175,9 @@ type ClientWithResponsesInterface interface {
 	// GetMannedTrafficSummaryWithResponse How many manned aircraft the picture holds
 	//
 	// The live manned picture of manned-feed counted for the console's
-	// overview, from the picture itself (not from a stream): every
+	// overview. api verifies the console session and asks manned-feed
+	// on the bus (ctl.manned.summary); manned-feed counts from the
+	// picture itself (not from a stream): every
 	// aircraft shown, by state (live, stale, source_disabled), and how
 	// many of them are relevant to U-space. An aircraft known only from
 	// backlog samples is not shown and not counted (T-04). Counts only,
@@ -11428,6 +11434,11 @@ type GetMannedTrafficSummaryResponse401Headers struct {
 	WWWAuthenticate *string
 }
 
+// GetMannedTrafficSummaryResponse503Headers the declared response headers of an HTTP 503 response for GetMannedTrafficSummary
+type GetMannedTrafficSummaryResponse503Headers struct {
+	RetryAfter int
+}
+
 type GetMannedTrafficSummaryResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -11437,8 +11448,12 @@ type GetMannedTrafficSummaryResponse struct {
 	ApplicationproblemJSON401 *Unauthorized
 	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
 	ApplicationproblemJSON403 *Forbidden
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *Unavailable
 	// Headers401 the parsed response headers for an HTTP 401 response
 	Headers401 *GetMannedTrafficSummaryResponse401Headers
+	// Headers503 the parsed response headers for an HTTP 503 response
+	Headers503 *GetMannedTrafficSummaryResponse503Headers
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -11454,6 +11469,11 @@ func (r GetMannedTrafficSummaryResponse) GetApplicationproblemJSON401() *Unautho
 // GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
 func (r GetMannedTrafficSummaryResponse) GetApplicationproblemJSON403() *Forbidden {
 	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r GetMannedTrafficSummaryResponse) GetApplicationproblemJSON503() *Unavailable {
+	return r.ApplicationproblemJSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -14477,7 +14497,9 @@ func (c *ClientWithResponses) StreamMannedTrafficWithResponse(ctx context.Contex
 // GetMannedTrafficSummaryWithResponse How many manned aircraft the picture holds
 //
 // The live manned picture of manned-feed counted for the console's
-// overview, from the picture itself (not from a stream): every
+// overview. api verifies the console session and asks manned-feed
+// on the bus (ctl.manned.summary); manned-feed counts from the
+// picture itself (not from a stream): every
 // aircraft shown, by state (live, stale, source_disabled), and how
 // many of them are relevant to U-space. An aircraft known only from
 // backlog samples is not shown and not counted (T-04). Counts only,
@@ -16853,6 +16875,13 @@ func ParseGetMannedTrafficSummaryResponse(rsp *http.Response) (*GetMannedTraffic
 		}
 		response.ApplicationproblemJSON403 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
 	}
 
 	switch {
@@ -16866,6 +16895,16 @@ func ParseGetMannedTrafficSummaryResponse(rsp *http.Response) (*GetMannedTraffic
 			headers.WWWAuthenticate = &value
 		}
 		response.Headers401 = &headers
+	case rsp.StatusCode == 503:
+		var headers GetMannedTrafficSummaryResponse503Headers
+		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.RetryAfter = value
+		}
+		response.Headers503 = &headers
 	}
 
 	return response, nil
@@ -22757,6 +22796,23 @@ func (response GetMannedTrafficSummary403ApplicationProblemPlusJSONResponse) Vis
 	}
 	w.Header().Set("Content-Type", "application/problem+json")
 	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetMannedTrafficSummary503ApplicationProblemPlusJSONResponse struct {
+	UnavailableApplicationProblemPlusJSONResponse
+}
+
+func (response GetMannedTrafficSummary503ApplicationProblemPlusJSONResponse) VisitGetMannedTrafficSummaryResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
+	w.WriteHeader(503)
 	_, err := buf.WriteTo(w)
 	return err
 }

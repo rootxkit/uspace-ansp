@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/rsa"
-	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -14,7 +13,6 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
-	"github.com/getkin/kin-openapi/openapi3"
 	coreauth "github.com/rootxkit/uspace-core/auth"
 
 	"github.com/rootxkit/uspace-ansp/api/gen"
@@ -184,17 +182,15 @@ func TestMTLSRequiredBindsTheSubjectFromTrustedProxiesOnly(t *testing.T) {
 	}
 }
 
-// TestSummaryIsAConsoleSessionsOnly: GET /v1/manned-traffic/summary
-// answers a console session 200 in the contract's shape, a machine
-// token 403 even with ansp.traffic (a USSP is served the snapshot and
-// the stream, not the console's count), and no credential 401.
-func TestSummaryIsAConsoleSessionsOnly(t *testing.T) {
+// TestSummaryIsNotServedHere: GET /v1/manned-traffic/summary is api's
+// (x-process api; api asks this process on ctl.manned.summary), so a
+// console session that reads the snapshot here is answered 404 for the
+// summary rather than a 401 that would read as its session refused.
+func TestSummaryIsNotServedHere(t *testing.T) {
 	srv, tok := feedRoutes(t, config.MTLSOff, nil, nil)
-	get := func(token string) (int, []byte) {
-		r, _ := http.NewRequest(http.MethodGet, srv.URL+"/v1/manned-traffic/summary", nil)
-		if token != "" {
-			r.Header.Set("Authorization", "Bearer "+token)
-		}
+	get := func(path string) (int, []byte) {
+		r, _ := http.NewRequest(http.MethodGet, srv.URL+path, nil)
+		r.Header.Set("Authorization", "Bearer "+tok)
 		resp, err := http.DefaultClient.Do(r)
 		if err != nil {
 			t.Fatal(err)
@@ -203,28 +199,10 @@ func TestSummaryIsAConsoleSessionsOnly(t *testing.T) {
 		raw, _ := io.ReadAll(resp.Body)
 		return resp.StatusCode, raw
 	}
-	code, raw := get(tok)
-	if code != http.StatusOK {
-		t.Fatalf("session: %d %s", code, raw)
+	if code, raw := get("/v1/manned-traffic/snapshot"); code != http.StatusOK {
+		t.Fatalf("the session reads the snapshot: %d %s", code, raw)
 	}
-	loader := openapi3.NewLoader()
-	loader.IsExternalRefsAllowed = true
-	doc, err := loader.LoadFromFile("../../api/openapi.yaml")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var v any
-	if err := json.Unmarshal(raw, &v); err != nil {
-		t.Fatal(err)
-	}
-	schema := doc.Paths.Value("/v1/manned-traffic/summary").Get.Responses.Status(http.StatusOK).Value.Content.Get("application/json").Schema.Value
-	if err := schema.VisitJSON(v); err != nil {
-		t.Fatalf("the answer breaks the contract: %v\n%s", err, raw)
-	}
-	if code, raw := get("scopes:ansp.traffic"); code != http.StatusForbidden {
-		t.Fatalf("machine token: %d %s", code, raw)
-	}
-	if code, _ := get(""); code != http.StatusUnauthorized {
-		t.Fatalf("no credential: %d", code)
+	if code, raw := get("/v1/manned-traffic/summary"); code != http.StatusNotFound {
+		t.Fatalf("summary: %d %s", code, raw)
 	}
 }

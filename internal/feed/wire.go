@@ -1,6 +1,7 @@
 package feed
 
 import (
+	"bytes"
 	"encoding/json"
 	"strconv"
 	"strings"
@@ -117,6 +118,44 @@ type MannedStateCounts struct {
 	Live           int `json:"live"`
 	Stale          int `json:"stale"`
 	SourceDisabled int `json:"source_disabled"`
+}
+
+// MaxSummaryBytes bounds manned-feed's summary reply on the bus
+// (bus.SubjectMannedSummary): numbers, a relevance line and a few
+// degraded names, never an aircraft.
+const MaxSummaryBytes = 4 << 10
+
+// DecodeSummary decodes manned-feed's reply to bus.SubjectMannedSummary
+// strictly, bounded: unknown members, a missing counted_at or
+// policy_version, a missing degraded list, a negative count and a total
+// other than its states' sum are refused, so api never serves a
+// malformed count as the picture's.
+func DecodeSummary(data []byte) (MannedSummary, error) {
+	if len(data) > MaxSummaryBytes {
+		return MannedSummary{}, core.Fieldf("summary", "longer than %d bytes", MaxSummaryBytes)
+	}
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.DisallowUnknownFields()
+	var s MannedSummary
+	if err := dec.Decode(&s); err != nil {
+		return MannedSummary{}, core.Fieldf("summary", "not the summary's shape: %v", err)
+	}
+	if dec.More() {
+		return MannedSummary{}, core.Fieldf("summary", "trailing data")
+	}
+	switch {
+	case s.CountedAt == "":
+		return MannedSummary{}, core.Fieldf("counted_at", "missing")
+	case s.PolicyVersion == "":
+		return MannedSummary{}, core.Fieldf("policy_version", "missing")
+	case s.Degraded == nil:
+		return MannedSummary{}, core.Fieldf("degraded", "missing")
+	case s.Total < 0 || s.Relevant < 0 || s.MaxAircraft < 0 || s.ByState.Live < 0 || s.ByState.Stale < 0 || s.ByState.SourceDisabled < 0:
+		return MannedSummary{}, core.Fieldf("summary", "a count is negative")
+	case s.Total != s.ByState.Live+s.ByState.Stale+s.ByState.SourceDisabled:
+		return MannedSummary{}, core.Fieldf("total", "is not live + stale + source_disabled")
+	}
+	return s, nil
 }
 
 // Subscribe is the client's console/subscribe/v1 body.

@@ -146,7 +146,12 @@ func run(ctx context.Context, args, environ []string, stdout io.Writer) int {
 		logger.Error("live sessions refused", slog.String("error", err.Error()))
 		return 2
 	}
-	if _, err := mountParts(mux, aw.guard, apiParts{auth: aw.handlers, rs: rw.api, src: sw.api, cis: cw.receiver, co: co.api}, aw.realIP); err != nil {
+	ms, err := wireMannedSummary(b, reg)
+	if err != nil {
+		logger.Error("the picture's count refused", slog.String("error", err.Error()))
+		return 2
+	}
+	if _, err := mountParts(mux, aw.guard, apiParts{auth: aw.handlers, rs: rw.api, src: sw.api, cis: cw.receiver, co: co.api, ms: ms}, aw.realIP); err != nil {
 		logger.Error("routes refused", slog.String("error", err.Error()))
 		return 2
 	}
