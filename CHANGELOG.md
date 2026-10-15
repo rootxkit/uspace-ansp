@@ -33,6 +33,17 @@ complete.
 
 ### Fixed
 
+- The picture page's live manned stream was refused where deployed:
+  manned-feed verified no console session (row 54 (3)). It now verifies
+  them with the public part of the session key alone,
+  `ANSP_SESSION_PUBLIC_KEY_FILE` (PEM, `openssl pkey -pubout`):
+  signature, expiry, audience, realm `console`, then the live check on
+  `sessions_live`, so an ended or revoked session is refused. Unset, every
+  console session is refused there, as before, and the log says so.
+  manned-feed refuses to start with `ANSP_SESSION_KEY_FILE`, the signing
+  key, which stays api's; `deploy/compose.prod.yaml` mounts
+  `keys/session.pub.pem` alone into manned-feed and `make check-deploy`
+  checks it.
 - The console signed out right after sign-in (2026-10-15): the
   overview's `GET /v1/manned-traffic/summary` reached manned-feed, which
   verifies no console session where deployed, and its 401 made the kit's
