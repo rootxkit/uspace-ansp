@@ -11,7 +11,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { inputToUtc } from "@rootxkit/uspace-ui/form";
 import { useLang, useT } from "@rootxkit/uspace-ui/i18n";
-import { Button, Input, Label, MapPanel } from "@rootxkit/uspace-ui/ui";
+import { Button, cn, Input, Label, MapPanel, TABLE_NOWRAP } from "@rootxkit/uspace-ui/ui";
 import { toView } from "./adapt";
 import { ConsoleMap } from "./ConsoleMap";
 import { useConsole, useLoad } from "./context";
@@ -304,7 +304,7 @@ export function RestrictionDetailPage({ id }: { id: string }) {
             <tbody>
               {versions.data.map((v) => (
                 <tr key={v.version} className="border-b border-border">
-                  <td className="px-3 py-2">{v.version}</td>
+                  <td className={cn("px-3 py-2", TABLE_NOWRAP)}>{v.version}</td>
                   <td className="px-3 py-2">
                     <StateBadge state={v.state} />
                   </td>
@@ -312,7 +312,7 @@ export function RestrictionDetailPage({ id }: { id: string }) {
                   <td className="px-3 py-2">
                     <Time iso={v.changed_at} />
                   </td>
-                  <td className="px-3 py-2">{v.change_reason}</td>
+                  <td className="px-3 py-2 wrap-anywhere">{v.change_reason}</td>
                 </tr>
               ))}
             </tbody>

@@ -12,7 +12,7 @@ import { useSearchParams } from "next/navigation";
 import { useState } from "react";
 import { inputToUtc } from "@rootxkit/uspace-ui/form";
 import { useT } from "@rootxkit/uspace-ui/i18n";
-import { Button, Input, Label } from "@rootxkit/uspace-ui/ui";
+import { Button, cn, Input, Label, TABLE_NOWRAP } from "@rootxkit/uspace-ui/ui";
 import { failureOf, type CallFailure } from "../api/client";
 import { auditQuery, exportDocument, exportFileName, LIMIT_DEFAULT, shortHash, type ApiAuditEvent, type AuditQuery, type QueryProblem } from "./audit";
 import { useConsole } from "./context";
@@ -116,6 +116,7 @@ export function AuditPage() {
           {listing.events.length === 0 ? (
             <Empty textKey="ansp.audit.none" testId="audit-none" />
           ) : (
+            <div className="overflow-x-auto">
             <table className="w-full border-collapse text-xs" data-testid="audit-table">
               <thead>
                 <tr className="border-b border-border bg-panel-header text-muted-foreground">
@@ -132,30 +133,31 @@ export function AuditPage() {
               <tbody>
                 {listing.events.map((e) => (
                   <tr key={e.id} className="border-b border-border align-top" data-event={e.id}>
-                    <td className="px-3 py-2 font-mono">{e.id}</td>
+                    <td className={cn("px-3 py-2 font-mono", TABLE_NOWRAP)}>{e.id}</td>
                     <td className="px-3 py-2">
                       <Time iso={e.ts} />
                     </td>
-                    <td className="px-3 py-2 font-mono">
+                    <td className={cn("px-3 py-2 font-mono", TABLE_NOWRAP)}>
                       {e.actor_type}:{e.actor_id}
                     </td>
                     <td className="px-3 py-2">{e.purpose}</td>
-                    <td className="px-3 py-2 font-mono">
+                    <td className={cn("px-3 py-2 font-mono", TABLE_NOWRAP)}>
                       {e.entity_type}:{e.entity_id}
                     </td>
-                    <td className="px-3 py-2 font-mono">{e.event_type}</td>
+                    <td className={cn("px-3 py-2 font-mono", TABLE_NOWRAP)}>{e.event_type}</td>
                     <td className="px-3 py-2">
                       <pre className="m-0 max-w-[28rem] overflow-x-auto whitespace-pre-wrap break-all font-mono">{JSON.stringify(e.payload)}</pre>
                     </td>
                     <td className="px-3 py-2 font-mono">
-                      <span title={e.prev_hash}>{shortHash(e.prev_hash)}</span>
+                      <span title={e.prev_hash} className={TABLE_NOWRAP}>{shortHash(e.prev_hash)}</span>
                       {" → "}
-                      <span title={e.hash}>{shortHash(e.hash)}</span>
+                      <span title={e.hash} className={TABLE_NOWRAP}>{shortHash(e.hash)}</span>
                     </td>
                   </tr>
                 ))}
               </tbody>
             </table>
+            </div>
           )}
         </div>
       )}

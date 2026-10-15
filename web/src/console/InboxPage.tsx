@@ -18,7 +18,7 @@ import { useLang, useT } from "@rootxkit/uspace-ui/i18n";
 import { resolveColour, useLayer } from "@rootxkit/uspace-ui/layers";
 import { useNowMs } from "@rootxkit/uspace-ui/live";
 import { FeedStatusBar } from "@rootxkit/uspace-ui/status";
-import { Button, Label, MapPanel, Textarea } from "@rootxkit/uspace-ui/ui";
+import { Button, cn, Label, MapPanel, TABLE_NOWRAP, Textarea } from "@rootxkit/uspace-ui/ui";
 import { failureOf, type CallFailure } from "../api/client";
 import { toView } from "./adapt";
 import { ConsoleMap, LayerReady } from "./ConsoleMap";
@@ -174,6 +174,7 @@ function NoticeCard({ notice, selected, onSelect, onConflict }: { notice: ApiNot
         <p className="m-0 text-xs font-semibold text-status-critical">{t("ansp.inbox.sender_unverified")}</p>
       )}
       {intents.length > 0 && (
+        <div className="overflow-x-auto">
         <table className="text-xs">
           <thead>
             <tr>
@@ -186,8 +187,8 @@ function NoticeCard({ notice, selected, onSelect, onConflict }: { notice: ApiNot
           <tbody>
             {intents.map((i) => (
               <tr key={i.intentRef}>
-                <td className="pe-2 font-mono">{i.intentRef}</td>
-                <td className="pe-2 font-mono">{i.authorisationNumber}</td>
+                <td className={cn("pe-2 font-mono", TABLE_NOWRAP)}>{i.intentRef}</td>
+                <td className={cn("pe-2 font-mono", TABLE_NOWRAP)}>{i.authorisationNumber}</td>
                 <td className="pe-2">{i.state}</td>
                 <td>
                   <Time iso={i.timeStart} /> – <Time iso={i.timeEnd} />
@@ -196,6 +197,7 @@ function NoticeCard({ notice, selected, onSelect, onConflict }: { notice: ApiNot
             ))}
           </tbody>
         </table>
+        </div>
       )}
       {intents.length === 0 && (
         <p className="m-0 text-xs">

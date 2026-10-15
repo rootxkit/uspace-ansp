@@ -14,7 +14,7 @@
 import { useState } from "react";
 import { ConfirmDialog } from "@rootxkit/uspace-ui/form";
 import { useLang, useT } from "@rootxkit/uspace-ui/i18n";
-import { Button, Input, Label } from "@rootxkit/uspace-ui/ui";
+import { Button, cn, Input, Label, TABLE_NOWRAP } from "@rootxkit/uspace-ui/ui";
 import { failureOf, type CallFailure } from "../api/client";
 import type { ApiAuditEvent } from "./audit";
 import { useConsole, useLoad } from "./context";
@@ -46,7 +46,7 @@ function History({ current }: { current: number }) {
       <tbody>
         {history.data.map(({ v, event }) => (
           <tr key={v} className="align-top" data-version={v}>
-            <td className="pe-3">{v}</td>
+            <td className={cn("pe-3", TABLE_NOWRAP)}>{v}</td>
             {event === null ? (
               <td colSpan={3}>{t("ansp.policy.history_missing")}</td>
             ) : (
@@ -54,7 +54,7 @@ function History({ current }: { current: number }) {
                 <td className="pe-3">
                   <Time iso={event.ts} />
                 </td>
-                <td className="pe-3">
+                <td className={cn("pe-3", TABLE_NOWRAP)}>
                   {event.actor_type}:{event.actor_id}
                 </td>
                 <td className="font-mono">{THRESHOLDS.map((k) => `${k}=${String((event.payload as Record<string, unknown>)[k] ?? "—")}`).join(" ")}</td>
@@ -187,7 +187,7 @@ export function PolicyPage() {
               {THRESHOLDS.map((k) => (
                 <tr key={k} data-threshold={k} className="border-b border-border">
                   <td className="py-2 pe-4">{t(`ansp.policy.name.${k}`)}</td>
-                  <td className="py-2 pe-1 text-end font-mono">{policy[k].toLocaleString(lang)}</td>
+                  <td className={cn("py-2 pe-1 text-end font-mono", TABLE_NOWRAP)}>{policy[k].toLocaleString(lang)}</td>
                   <td>{t(`ansp.policy.unit.${unitOf(k)}`)}</td>
                 </tr>
               ))}

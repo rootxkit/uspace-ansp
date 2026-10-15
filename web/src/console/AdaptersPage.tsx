@@ -7,6 +7,7 @@
 // by their snake_case names. Read again every READ_PERIOD_MS.
 import { useEffect } from "react";
 import { useLang, useT } from "@rootxkit/uspace-ui/i18n";
+import { cn, TABLE_NOWRAP } from "@rootxkit/uspace-ui/ui";
 import { switchFor, statusLine } from "./adapters";
 import { useLoad } from "./context";
 import { ConsolePageHeader, Empty, Loading, ProblemNotice, Time, timesShown } from "./ui";
@@ -67,8 +68,8 @@ export function AdaptersPage() {
                     <tbody>
                       {counters.map(([name, n]) => (
                         <tr key={name}>
-                          <td className="pe-3 font-mono">{name}</td>
-                          <td className="text-end">{n.toLocaleString(lang)}</td>
+                          <td className={cn("pe-3 font-mono", TABLE_NOWRAP)}>{name}</td>
+                          <td className={cn("text-end", TABLE_NOWRAP)}>{n.toLocaleString(lang)}</td>
                         </tr>
                       ))}
                     </tbody>
