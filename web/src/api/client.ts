@@ -55,9 +55,17 @@ export function consoleClient(lang: () => Lang, session: SessionEvents, test?: {
     armed = false;
     session.onUnauthorized();
   };
+  // Counts the 2xx answers: a question asked before the latest 2xx is
+  // answered about an older session (a sign-in in another tab since), and
+  // its "no" is not the session's state any more.
+  let accepted = 0;
   let asking: Promise<void> | null = null;
   const confirmSession = (): Promise<void> => {
     asking ??= (async () => {
+      const askedAt = accepted;
+      const no = (): void => {
+        if (accepted === askedAt) signedOut();
+      };
       try {
         const res = await doFetch(`${baseUrl}${SESSION_PATH}`, {
           credentials: "same-origin",
@@ -65,9 +73,9 @@ export function consoleClient(lang: () => Lang, session: SessionEvents, test?: {
           headers: { Accept: "application/json", "Accept-Language": lang() },
         });
         await res.body?.cancel().catch(() => undefined);
-        if (!res.ok) signedOut();
+        if (!res.ok) no();
       } catch {
-        signedOut();
+        no();
       } finally {
         asking = null;
       }
@@ -80,6 +88,7 @@ export function consoleClient(lang: () => Lang, session: SessionEvents, test?: {
     onResponse({ response, schemaPath }) {
       if (response.ok) {
         // A 2xx is a session the API accepted: signed in (again).
+        accepted += 1;
         armed = true;
         session.onAuthorized?.();
       } else if (response.status === 401) {

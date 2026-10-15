@@ -160,6 +160,29 @@ describe("who says the session is gone", () => {
     expect(a.onUnauthorized).not.toHaveBeenCalled();
   });
 
+  it("a 2xx that arrives while the question is asked wins over its 401: signed in elsewhere since", async () => {
+    let answerMe: (r: Response) => void = () => undefined;
+    const onUnauthorized = vi.fn();
+    const f = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = new URL(new Request(input, init).url).pathname;
+      if (path === "/_bff/api/v1/auth/me") return new Promise<Response>((resolve) => (answerMe = resolve));
+      return path === "/_bff/api/v1/adapters" ? problem(401, "unauthenticated") : Response.json({ ok: true });
+    }) as unknown as typeof fetch;
+    const c = consoleClient(() => "en", { onUnauthorized }, { fetch: f, origin: "https://console.test" });
+    await failureFrom(c.GET("/v1/adapters"));
+    const asked = c.confirmSession();
+    await c.GET("/v1/sources");
+    answerMe(problem(401, "unauthenticated"));
+    await asked;
+    expect(onUnauthorized).not.toHaveBeenCalled();
+    // Presence: with no 2xx in between, the same 401 signs out.
+    await failureFrom(c.GET("/v1/adapters"));
+    const again = c.confirmSession();
+    answerMe(problem(401, "unauthenticated"));
+    await again;
+    expect(onUnauthorized).toHaveBeenCalledTimes(1);
+  });
+
   it("a stream's 4401 asks first: a live session stays signed in, an ended one signs out", async () => {
     const live = routed(200, 200);
     await live.c.confirmSession();
