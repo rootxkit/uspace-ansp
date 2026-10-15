@@ -27,8 +27,6 @@ that need a supervisor session are open in `docs/BACKLOG.md`.
 `docs/PLAN.md` is the implementation plan; `docs/WORKPACKAGES/` holds one
 brief per work package; `CLAUDE.md` holds the rules.
 
-Live demo: https://uspace-ansp.chikox.net
-
 Milestones (spec `07` Phase 5): N-M0 scaffold and contracts, N-M1
 restrictions and manned feed (first demo), N-M2 coordination and degraded
 paths, N-M3 release.
@@ -58,5 +56,4 @@ testdata/conformance/ what the lab's conformance suite runs against (make confor
 - Siblings: `uspace-authority`, `uspace-cisp`, `uspace-ussp`, `uspace-lab`
 
 Go 1.27, module `github.com/rootxkit/uspace-ansp`. Public repository: no
-secrets, keys or real traffic data are ever committed, and the only
-hostname is the public demo's, named above.
+secrets, keys, hostnames or real traffic data are ever committed.
