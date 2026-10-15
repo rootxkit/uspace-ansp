@@ -16,6 +16,23 @@ complete.
 
 ### Changed
 
+- Restrictions take AGL limits (docs/PLAN.md D3, §15 gap 3; the owner's
+  decision of 2026-10-16: DEMOU1 and the GCAA U-space airspaces are
+  0-120 m AGL, and no restriction could be planned in them). A limit is
+  compared with the airspace's in the same reference directly; across
+  references as AMSL over the restriction's area, the restriction at its
+  highest and the airspace at its lowest (AMSL against WGS84 is now
+  converted with the geoid instead of `reference_mismatch`). The F3548
+  volume of an AGL limit takes the lowest ground under the area (lower)
+  and the highest (upper) from `ANSP_TERRAIN_DIR` (uspace-core
+  `terrain.Store.RangeM`, v1.7.0), then the geoid's least and greatest
+  undulation; its derivation records the ground, datasets and spacing.
+  Ground that is not known everywhere under the area is 503
+  `terrain_unavailable`, counted `constraint_terrain_unavailable`.
+  Relational migration 0072 admits `AGL` in `restrictions.lower_ref` and
+  `upper_ref`; `VerticalRef` gains `AGL`; `/readyz` lists `terrain`; the
+  console offers AGL. The refusal text "AGL is not supported for a
+  dynamic restriction in this release" is gone.
 - The timeseries tree's retention and compression come from the
   configuration: `migrate timeseries` (api's and manned-feed's) sets
   manned_tracks' and feed_products' retention to
