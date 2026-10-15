@@ -213,10 +213,10 @@ components:
       name: id
       in: path
       required: true
-      description: The account id (ULID).
+      description: The account id (a UUID, users.id).
       schema:
-        $ref: "#/components/schemas/ULID"
-      example: 01K6NZ8Q2W3E4R5T6Y7V8W9X0Z
+        $ref: "#/components/schemas/UUID"
+      example: 6f1c2a4e-3b5d-4e7f-9a8b-0c1d2e3f4a5b
     BBox:
       name: bbox
       in: query
@@ -529,7 +529,7 @@ components:
     User:
       summary: A console account
       value: &User
-        id: 01K6NZ8Q2W3E4R5T6Y7V8W9X0Z
+        id: 6f1c2a4e-3b5d-4e7f-9a8b-0c1d2e3f4a5b
         username: supervisor1
         role: watch_supervisor
         status: active
@@ -986,6 +986,11 @@ components:
       type: string
       description: Crockford base32, 26 characters (04 §2).
       pattern: "^[0-7][0-9A-HJKMNP-TV-Z]{25}$"
+    UUID:
+      type: string
+      description: A UUID in its canonical lower-case hyphenated form (the relational uuid columns, e.g. users.id).
+      format: uuid
+      pattern: "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
     AdapterSlug:
       type: string
       description: An adapter instance slug.
@@ -2232,7 +2237,7 @@ components:
       required: [id, username, role, status, created_at, last_login_at]
       properties:
         id:
-          type: string
+          $ref: "#/components/schemas/UUID"
         username:
           type: string
         role:
@@ -4642,7 +4647,7 @@ paths:
                   - id: 1042
                     ts: "2026-10-02T12:05:00.000Z"
                     actor_type: user
-                    actor_id: 01K6NZ8Q2W3E4R5T6Y7V8W9X0Z
+                    actor_id: 6f1c2a4e-3b5d-4e7f-9a8b-0c1d2e3f4a5b
                     purpose: reconfiguration
                     entity_type: restriction
                     entity_id: 01K6P0A1B2C3D4E5F6G7H8J9KM
@@ -4796,7 +4801,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Me"
               example:
-                id: 01K6NZ8Q2W3E4R5T6Y7V8W9X0Z
+                id: 6f1c2a4e-3b5d-4e7f-9a8b-0c1d2e3f4a5b
                 username: supervisor1
                 role: watch_supervisor
                 status: active
@@ -4869,7 +4874,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/User"
               example:
-                id: 01K6P5C6D7E8F9G0H1J2K3M4N5
+                id: c2d3e4f5-6a7b-4c8d-9e0f-1a2b3c4d5e6f
                 username: viewer2
                 role: viewer
                 status: active
@@ -4981,7 +4986,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/User"
               example:
-                id: 01K6NZ8Q2W3E4R5T6Y7V8W9X0Z
+                id: 6f1c2a4e-3b5d-4e7f-9a8b-0c1d2e3f4a5b
                 username: supervisor1
                 role: watch_supervisor
                 status: disabled

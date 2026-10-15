@@ -171,8 +171,8 @@ test("reset MFA and disable are each confirmed first; a cancelled dialog sends n
   await expect(page.getByTestId("user-reset-mfa-viewer1")).toHaveCount(0);
   await axe(page, "a disabled account");
   expect((await acts()).map((r) => [r.method, r.path])).toEqual([
-    ["POST", "/v1/users/01K6NZ8Q2W3E4R5T6Y7V8W9X1A/reset-mfa"],
-    ["POST", "/v1/users/01K6NZ8Q2W3E4R5T6Y7V8W9X1A/disable"],
+    ["POST", "/v1/users/a3b4c5d6-1e2f-4a3b-8c4d-5e6f7a8b9c0d/reset-mfa"],
+    ["POST", "/v1/users/a3b4c5d6-1e2f-4a3b-8c4d-5e6f7a8b9c0d/disable"],
   ]);
 
   // The API's refusal is shown on the row: the last active admin is not disabled.
@@ -191,6 +191,34 @@ test("reset MFA and disable are each confirmed first; a cancelled dialog sends n
   await page.getByTestId("login-submit").click();
   await expect(page.getByTestId("login-refusal")).toBeVisible();
   await expect(page.getByTestId("enrolment-qr")).toHaveCount(0);
+});
+
+test("reset MFA and disable work for an account the admin has just created, through the BFF's UUID path", async ({ page, request }) => {
+  await signIn(page, ADMIN);
+  await openUsers(page);
+  await page.getByTestId("user-username").fill(NEW.username);
+  await page.getByTestId("user-password").fill(NEW.password);
+  await page.getByTestId("user-create-submit").click();
+  await expect(page.getByTestId("user-created")).toContainText(`Account ${NEW.username} created`);
+  await expect(row(page, NEW.username)).toHaveAttribute("data-status", "active");
+
+  const dialog = page.getByRole("alertdialog");
+  await page.getByTestId(`user-reset-mfa-${NEW.username}`).click();
+  await dialog.getByRole("button", { name: "Reset MFA" }).click();
+  await expect(page.getByTestId("user-act-done")).toHaveText(`The authenticator of ${NEW.username} is reset; it enrols again at its next sign-in.`);
+  await page.getByTestId(`user-disable-${NEW.username}`).click();
+  await dialog.getByRole("button", { name: "Disable the account" }).click();
+  await expect(page.getByTestId("user-act-done")).toHaveText(`${NEW.username} is disabled.`);
+  await expect(row(page, NEW.username)).toHaveAttribute("data-status", "disabled");
+
+  // Both reached the API, at the created account's UUID, not a 404 from the BFF.
+  const acts = (await requests(request)).filter((r) => /^\/v1\/users\/[^/]+\/(reset-mfa|disable)$/.test(r.path));
+  const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+  expect(acts.map((r) => [r.method, r.path.split("/")[3] ?? "", r.path.split("/")[4]])).toEqual([
+    ["POST", expect.stringMatching(UUID), "reset-mfa"],
+    ["POST", expect.stringMatching(UUID), "disable"],
+  ]);
+  expect(acts[0]?.path.split("/")[3]).toBe(acts[1]?.path.split("/")[3]);
 });
 
 for (const who of [VIEWER, SUPER]) {
@@ -212,10 +240,10 @@ for (const who of [VIEWER, SUPER]) {
     // Every account operation through the BFF: forwarded, and refused by the API.
     expect(await bffStatus(page, "/v1/users")).toBe(403);
     expect(await bffStatus(page, "/v1/users", "POST", { username: "sneaky1", password: NEW.password, role: "admin" })).toBe(403);
-    expect(await bffStatus(page, "/v1/users/01K6NZ8Q2W3E4R5T6Y7V8W9X2B/reset-mfa", "POST")).toBe(403);
-    expect(await bffStatus(page, "/v1/users/01K6NZ8Q2W3E4R5T6Y7V8W9X2B/disable", "POST")).toBe(403);
+    expect(await bffStatus(page, "/v1/users/b7c8d9e0-2f3a-4b4c-9d5e-6f7a8b9c0d1e/reset-mfa", "POST")).toBe(403);
+    expect(await bffStatus(page, "/v1/users/b7c8d9e0-2f3a-4b4c-9d5e-6f7a8b9c0d1e/disable", "POST")).toBe(403);
     // Off the list: another method 405 and a neighbouring path 404, neither reaching the API.
     expect(await bffStatus(page, "/v1/users", "DELETE")).toBe(405);
-    expect(await bffStatus(page, "/v1/users/01K6NZ8Q2W3E4R5T6Y7V8W9X2B")).toBe(404);
+    expect(await bffStatus(page, "/v1/users/b7c8d9e0-2f3a-4b4c-9d5e-6f7a8b9c0d1e")).toBe(404);
   });
 }
