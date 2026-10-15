@@ -3,8 +3,9 @@
 // front of `next start`. It answers the API operations the console uses
 // in the shapes of api/openapi.yaml (sign-in with MFA, restrictions,
 // delivery alarms, restriction requests, adapters, sources and their
-// switches, the coordination inbox, the policy, the audit log,
-// occurrences) and the three console streams in the console frame (WS
+// switches, the coordination inbox, the policy, the audit log, the
+// console accounts, occurrences) and the three console streams in the
+// console frame (WS
 // /v1/restrictions/stream and /v1/coordination/stream as api serves
 // them, /v1/manned-traffic/stream as manned-feed does), and passes every
 // other request to Next.js with the X-Forwarded-*
@@ -590,13 +591,14 @@ async function api(req, res, url) {
     keys: Object.keys(body).sort(),
     idempotencyKey: req.headers["idempotency-key"] ?? null,
     authorization: bearer(req) !== null,
-    body: path.startsWith("/v1/auth/") ? undefined : body,
+    // A password is never recorded: the sign-in's and a new account's.
+    body: path.startsWith("/v1/auth/") || path === "/v1/users" ? undefined : body,
     query: Object.fromEntries(url.searchParams),
   });
 
   if (req.method === "POST" && path === "/v1/auth/login") {
     const a = state.accounts[body.username];
-    if (a === undefined || a.password !== body.password) return problem(res, 401, "invalid_credentials", "Invalid credentials");
+    if (a === undefined || a.password !== body.password || a.status === "disabled") return problem(res, 401, "invalid_credentials", "Invalid credentials");
     const token = randomBytes(12).toString("hex");
     const expiresMs = Date.now() + CHALLENGE_TTL_MS;
     state.challenges.set(token, { account: a, expiresMs });
@@ -900,6 +902,46 @@ async function api(req, res, url) {
       degraded: state.adapters.some((a) => a.state === "live") ? [] : ["adapters_silent"],
       policy_version: "1",
     });
+  }
+  // The account administration (admin): the list; a new account, which
+  // enrols at its first sign-in; its MFA reset (enrols again) and its
+  // disabling, each ending its sessions. The API's refusals as it words
+  // them: the username's shape, a password under 12 characters, a name
+  // taken, the last active admin.
+  if (path === "/v1/users" && req.method === "GET") {
+    if (adminOnly()) return;
+    return json(res, 200, { users: Object.values(state.accounts).map(user) });
+  }
+  if (path === "/v1/users" && req.method === "POST") {
+    if (adminOnly()) return;
+    const username = String(body.username ?? "").toLowerCase();
+    const errors = [];
+    if (!/^[a-z0-9][a-z0-9._@-]{2,63}$/.test(username)) errors.push({ field: "username", reason: "3 to 64 of a-z 0-9 . _ @ -, starting with a letter or digit" });
+    if (typeof body.password !== "string" || [...body.password].length < 12) errors.push({ field: "password", reason: "at least 12 characters" });
+    if (![SUPERVISOR, "viewer", ADMIN].includes(body.role)) errors.push({ field: "role", reason: "one of watch_supervisor, viewer, admin" });
+    if (errors.length > 0) return problem(res, 400, "invalid_request", "Invalid request", null, errors);
+    if (state.accounts[username] !== undefined) return problem(res, 409, "conflict", "Conflict", "the username is taken", [{ field: "username", reason: "taken" }]);
+    const a = { id: ulid("01K6PS"), username, password: body.password, role: body.role, enrolled: false };
+    state.accounts[username] = a;
+    audit(session.account, "user", a.id, "user_created", "console account created", { username, role: a.role });
+    return json(res, 201, user(a));
+  }
+  const userAct = /^\/v1\/users\/([0-9A-Z]{26})\/(reset-mfa|disable)$/.exec(path);
+  if (userAct !== null && req.method === "POST") {
+    if (adminOnly()) return;
+    const a = Object.values(state.accounts).find((x) => x.id === userAct[1]);
+    if (a === undefined) return problem(res, 404, "not_found", "Not found", "no such account");
+    if (a.status === "disabled") return problem(res, 409, "conflict", "Conflict", "the account is disabled");
+    if (userAct[2] === "disable") {
+      const admins = Object.values(state.accounts).filter((x) => x.role === ADMIN && x.status !== "disabled");
+      if (a.role === ADMIN && admins.length === 1) return problem(res, 409, "conflict", "Conflict", "the last active admin cannot be disabled");
+      a.status = "disabled";
+    } else {
+      a.enrolled = false;
+    }
+    for (const [token, s] of state.sessions) if (s.account === a) state.sessions.delete(token);
+    audit(session.account, "user", a.id, userAct[2] === "disable" ? "user_disabled" : "user_mfa_reset", "console account changed", { username: a.username });
+    return json(res, 200, user(a));
   }
   // GET /v1/users/summary (admin): the accounts counted, no name.
   if (path === "/v1/users/summary" && req.method === "GET") {

@@ -120,6 +120,16 @@ complete.
 
 ### Added
 
+- `web/`: the users page (`/users`, under Administration, linked for an
+  admin only): the console accounts as `GET /v1/users` lists them; a new
+  account with a username, a role (watch_supervisor, viewer, admin) and
+  an initial password the admin sets, shown once with a copy button and
+  never kept or logged; reset MFA and disable, each confirmed first. A
+  new account enrols TOTP at its first sign-in. The BFF reaches exactly
+  `GET` and `POST /v1/users` and `POST /v1/users/{id}/reset-mfa` and
+  `/disable` (another method 405, a neighbouring path 404); the API
+  answers anyone but an admin 403. The e2e run checks the page with
+  axe-core (WCAG 2.2 AA).
 - `GET /v1/manned-traffic/summary` (manned-feed, any console session,
   additive): the live manned picture counted from the picture itself
   (live, stale, source_disabled; how many relevant), with `degraded[]`

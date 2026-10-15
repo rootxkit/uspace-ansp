@@ -344,7 +344,7 @@ describe("proxy", () => {
     expect(api.calls[0]?.url).toBe(`${API}/v1/restriction-requests/01K6P0R0000000000000000001/${act}`);
   });
 
-  it.each(["/v1/users", "/v1/policy/1", "/v1/auditX", "/v1/occurrences/01K6P0", "/v1/coordination/notices", "/v1/coordination/inboxX", "/v1/manned-traffic/snapshot", "/v1/auth/login", "/v1/auth/mfa", "/v1/auth/logout", "/metrics", "/v1/restrictionsX", "/v1/restriction-requests/q1", "/v1/restriction-requests/01K6P0R0000000000000000001/other", "/v1/restriction-requestsX"])(
+  it.each(["/v1/usersX", "/v1/policy/1", "/v1/auditX", "/v1/occurrences/01K6P0", "/v1/coordination/notices", "/v1/coordination/inboxX", "/v1/manned-traffic/snapshot", "/v1/auth/login", "/v1/auth/mfa", "/v1/auth/logout", "/metrics", "/v1/restrictionsX", "/v1/restriction-requests/q1", "/v1/restriction-requests/01K6P0R0000000000000000001/other", "/v1/restriction-requestsX"])(
     "refuses %s, which is not on the console's list",
     async (p) => {
       const api = mockApi(() => Response.json({ ok: true }));
@@ -399,6 +399,94 @@ describe("summaries", () => {
     const res = await bffWith(api.fetch).proxy(req(`/_bff/api${p}`, { method: "GET", headers: { cookie } }));
     expect(res.status).toBe(404);
     expect(api.calls).toHaveLength(0);
+  });
+});
+
+describe("account administration", () => {
+  const cookie = "uspace_session=tok123; uspace_csrf=csrf456";
+  const ID = "01K6NZ8Q2W3E4R5T6Y7V8W9X0Z";
+  const OPERATIONS = [
+    ["GET", "/v1/users"],
+    ["POST", "/v1/users"],
+    ["POST", `/v1/users/${ID}/reset-mfa`],
+    ["POST", `/v1/users/${ID}/disable`],
+  ] as const;
+  const call = (method: string, p: string) =>
+    req(`/_bff/api${p}`, {
+      method,
+      headers: { cookie, "x-csrf-token": "csrf456", "content-type": "application/json" },
+      ...(method === "GET" || method === "HEAD" ? {} : { body: "{}" }),
+    });
+
+  it.each(OPERATIONS)("forwards %s %s with the bearer, and passes the API's 401 and 403 on", async (method, p) => {
+    for (const status of [200, 401, 403]) {
+      const api = mockApi(() => Response.json(status === 200 ? { users: [] } : { status }, { status }));
+      const res = await bffWith(api.fetch).proxy(call(method, p));
+      expect(res.status).toBe(status);
+      // A 401 asks GET /v1/auth/me (which answers 401 here too) before it leaves.
+      expect(api.calls).toHaveLength(status === 401 ? 2 : 1);
+      expect(api.calls[0]?.method).toBe(method);
+      expect(api.calls[0]?.url).toBe(`${API}${p}`);
+      expect(api.calls[0]?.headers.get("authorization")).toBe("Bearer tok123");
+    }
+  });
+
+  it("forwards the new account's body as sent", async () => {
+    const api = mockApi(() => Response.json({ id: ID }, { status: 201 }));
+    const body = JSON.stringify({ username: "watch2", password: "a test password, run only", role: "watch_supervisor" });
+    const res = await bffWith(api.fetch).proxy(
+      req("/_bff/api/v1/users", { method: "POST", headers: { cookie, "x-csrf-token": "csrf456", "content-type": "application/json" }, body }),
+    );
+    expect(res.status).toBe(201);
+    expect(api.calls[0]?.body).toBe(body);
+  });
+
+  it.each(OPERATIONS.filter(([m]) => m === "POST"))("refuses %s %s without the CSRF pair before calling the API", async (method, p) => {
+    const api = mockApi(() => Response.json({ ok: true }));
+    const res = await bffWith(api.fetch).proxy(req(`/_bff/api${p}`, { method, headers: { cookie }, body: "{}" }));
+    expect(res.status).toBe(403);
+    expect(api.calls).toHaveLength(0);
+  });
+
+  it.each([
+    ["/v1/users", ["PUT", "PATCH", "DELETE", "HEAD"], "GET, POST"],
+    [`/v1/users/${ID}/reset-mfa`, ["GET", "PUT", "PATCH", "DELETE", "HEAD"], "POST"],
+    [`/v1/users/${ID}/disable`, ["GET", "PUT", "PATCH", "DELETE", "HEAD"], "POST"],
+  ] as const)("refuses another method on %s 405 without calling the API", async (p, methods, allow) => {
+    for (const method of methods) {
+      const api = mockApi(() => Response.json({ ok: true }));
+      const res = await bffWith(api.fetch).proxy(call(method, p));
+      expect(res.status, method).toBe(405);
+      expect(res.headers.get("allow"), method).toBe(allow);
+      expect(api.calls, method).toHaveLength(0);
+    }
+  });
+
+  it.each([
+    "/v1/users/",
+    "/v1/usersX",
+    "/v1/user",
+    `/v1/users/${ID}`,
+    `/v1/users/${ID}/`,
+    `/v1/users/${ID}/enable`,
+    `/v1/users/${ID}/reset-mfa/x`,
+    `/v1/users/${ID}/reset-mfaX`,
+    `/v1/users/${ID}/disable/x`,
+    `/v1/users/${ID}/disableX`,
+    `/v1/users/${ID}/reset-password`,
+    `/v1/users/${ID.toLowerCase()}/disable`,
+    `/v1/users/${ID.slice(1)}/disable`,
+    `/v1/users/${ID}0/disable`,
+    `/v1/users/8${ID.slice(1)}/disable`,
+    "/v1/users/x/reset-mfa",
+    "/v1/users//disable",
+  ])("refuses %s, a neighbour of the account operations, 404 without calling the API", async (p) => {
+    for (const method of ["GET", "POST"]) {
+      const api = mockApi(() => Response.json({ ok: true }));
+      const res = await bffWith(api.fetch).proxy(call(method, p));
+      expect(res.status, `${method} ${p}`).toBe(404);
+      expect(api.calls, `${method} ${p}`).toHaveLength(0);
+    }
   });
 });
 

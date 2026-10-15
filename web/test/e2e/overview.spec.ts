@@ -133,10 +133,12 @@ test("the admin's overview counts the console accounts; nobody else is shown or 
   await page.reload();
   await expect(users).toHaveAttribute("data-value", "2");
   await expect(users).toContainText("1 disabled, 1 admins, 3 in all");
-  // The BFF forwards that one path for GET and nothing else.
+  // The BFF forwards that one path for GET and nothing else; the list is
+  // the users page's own operation, and a path past the summary is none.
   expect(await bffStatus(page, "/v1/users/summary")).toBe(200);
   expect(await bffStatus(page, "/v1/users/summary", "POST")).toBe(405);
-  expect(await bffStatus(page, "/v1/users")).toBe(404);
+  expect(await bffStatus(page, "/v1/users")).toBe(200);
+  expect(await bffStatus(page, "/v1/users/summary/x")).toBe(404);
   // Without a session the API answers 401 through the BFF.
   expect((await request.get("/_bff/api/v1/users/summary")).status()).toBe(401);
 });

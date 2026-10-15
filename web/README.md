@@ -17,7 +17,8 @@ app/[locale]/login/            the sign-in with MFA (enrolment QR at a first sig
 app/[locale]/(signed-in)/      restrictions, restrictions/new (the map editor),
                                restrictions/<id>, requests, adapters (WP-11);
                                picture, inbox, occurrences/new, sources,
-                               policy, audit (WP-12)
+                               policy, audit (WP-12); users (the console accounts,
+                               an administrator's)
 app/%5Fbff/                    the three BFF routes: /_bff/login, /_bff/logout, /_bff/api/*
 src/bff/handlers.ts            the BFF, on the kit's auth/server helpers
 src/api/                       generated types (uspace-ui-gen-api) and the typed client
@@ -28,7 +29,7 @@ src/i18n/                      ka.json, en.json (every display string)
 eslint-rules/                  no-geometry-import, no-hardcoded-string, no-server-business-logic
 test/mock-api.mjs              the Playwright fixture server (stands in for Caddy and the API)
 test/e2e/                      the smoke runs (smoke.spec.ts WP-11, console.spec.ts
-                               WP-12), and the screenshots run
+                               WP-12, users.spec.ts with axe), and the screenshots run
 docs/screenshots/              every page in ka and en against the fixture server
 ```
 
@@ -75,7 +76,7 @@ The BFF is three routes and nothing else, on the kit's helpers:
 |---|---|
 | `POST /_bff/login` | `{username, password}` → `POST /v1/auth/login`; the API's challenge is sealed (AES-GCM under `WEB_MFA_CHALLENGE_SECRET`) into the `HttpOnly` `uspace_mfa` cookie (`Path=/_bff`) and the page gets `{status: "mfa_required", enrolment?}`. Then `{username, otp}` → `POST /v1/auth/mfa {mfa_token, code}`; its session sets `uspace_session` (`HttpOnly; Secure; SameSite=Strict`) and the readable `uspace_csrf`. The sign-in requires a same-origin `Origin`. |
 | `POST /_bff/logout` | the CSRF pair checked, `POST /v1/auth/logout` with the bearer, both cookies cleared whatever the API answers |
-| `/_bff/api/*` | the cookie forwarded as `Authorization: Bearer`; every unsafe method needs `X-CSRF-Token` equal to `uspace_csrf`; only `/v1/restrictions*`, `/v1/restriction-requests` (the list), `/v1/restriction-requests/{id}` and its `/accept` and `/decline`, `/v1/delivery-alarms*`, `/v1/adapters*`, `/v1/sources*`, `/v1/coordination/inbox*`, `/v1/occurrences`, `/v1/policy`, `/v1/audit` and `/v1/auth/me` are reached (not the machine intake `/v1/coordination/notices`), and the overview's summaries, each one exact path for `GET` only (`SUMMARY_READS`: `/v1/users/summary`, `/v1/restriction-requests/summary`, `/v1/occurrences/summary`, `/v1/manned-traffic/summary`, every one api's: it asks manned-feed for the picture's count on the bus), any other method on one answered 405 without an upstream call. A `401` of any path but `/v1/auth/me` asks `GET /v1/auth/me` with the same cookie before it leaves: a 2xx keeps both cookies (the kit's `forward` clears them on any 401), anything else clears them (fail closed). An `Idempotency-Key` of the contract's shape is passed on `POST /v1/restrictions` (the kit forwards a fixed header list without it). |
+| `/_bff/api/*` | the cookie forwarded as `Authorization: Bearer`; every unsafe method needs `X-CSRF-Token` equal to `uspace_csrf`; only `/v1/restrictions*`, `/v1/restriction-requests` (the list), `/v1/restriction-requests/{id}` and its `/accept` and `/decline`, `/v1/delivery-alarms*`, `/v1/adapters*`, `/v1/sources*`, `/v1/coordination/inbox*`, `/v1/occurrences`, `/v1/policy`, `/v1/audit` and `/v1/auth/me` are reached (not the machine intake `/v1/coordination/notices`), and the overview's summaries, each one exact path for `GET` only (`SUMMARY_READS`: `/v1/users/summary`, `/v1/restriction-requests/summary`, `/v1/occurrences/summary`, `/v1/manned-traffic/summary`, every one api's: it asks manned-feed for the picture's count on the bus), any other method on one answered 405 without an upstream call; and the account administration, each one exact path and method (`USER_OPERATIONS`: `GET` and `POST /v1/users`, `POST /v1/users/{id}/reset-mfa`, `POST /v1/users/{id}/disable`, the id a ULID), another method on one of those paths answered 405 and a neighbouring path 404, neither reaching the API, which answers anyone but an admin 403. A `401` of any path but `/v1/auth/me` asks `GET /v1/auth/me` with the same cookie before it leaves: a 2xx keeps both cookies (the kit's `forward` clears them on any 401), anything else clears them (fail closed). An `Idempotency-Key` of the contract's shape is passed on `POST /v1/restrictions` (the kit forwards a fixed header list without it). |
 
 The BFF never verifies a token: the API decides every request. There is
 no ticket route: the three streams are opened same-origin and the

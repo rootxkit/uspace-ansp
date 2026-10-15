@@ -57,6 +57,7 @@ export const NAV_ITEMS: readonly NavItem[] = [
   { path: "/sources", labelKey: "ansp.nav.sources", group: "surveillance" },
   { path: "/policy", labelKey: "ansp.nav.policy", group: "administration", adminOnly: true },
   { path: "/audit", labelKey: "ansp.nav.audit", group: "administration", adminOnly: true },
+  { path: "/users", labelKey: "ansp.nav.users", group: "administration", adminOnly: true },
 ];
 
 /** The navigation a role is shown. */
