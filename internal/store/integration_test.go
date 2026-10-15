@@ -447,6 +447,84 @@ func TestIntegrationTimeseriesPoliciesFromConfig(t *testing.T) {
 	}
 }
 
+// The looped replay writes manned_tracks (adapter replay, captured_at on
+// the wall clock; feed_products records what it served). Run at the
+// configured policy, the jobs compress a chunk past the compression age,
+// drop a chunk past the retention with its feed_products, and keep the
+// recent ones; while nothing is past the retention, nothing is dropped
+// (the presence pair).
+func TestIntegrationReplayRowsDroppedByRetention(t *testing.T) {
+	ctx := ctxT(t)
+	dsn := storetest.Scratch(t, store.TreeTimeseries, true)
+	db := storetest.Timeseries(t, dsn, store.RoleTimeseries)
+	if _, err := store.ApplyTimeseriesPolicies(ctx, dsn, store.TimeseriesPolicies{RetentionDays: 30, CompressAfterDays: 1}); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().Truncate(time.Second)
+	count := func(table, col string, from, to time.Time) int {
+		return scalar[int](t, dsn, `SELECT count(*) FROM `+table+` WHERE `+col+` >= $1 AND `+col+` < $2`, from, to)
+	}
+	runJob := func(table, proc string) {
+		t.Helper()
+		id := scalar[int32](t, dsn, `SELECT job_id FROM timescaledb_information.jobs WHERE hypertable_name = $1 AND proc_name = $2`, table, proc)
+		if err := exec(t, dsn, `CALL run_job($1::integer)`, id); err != nil {
+			t.Fatalf("run %s of %s: %v", proc, table, err)
+		}
+	}
+	runAll := func() {
+		runJob("manned_tracks", "policy_compression")
+		runJob("manned_tracks", "policy_retention")
+		runJob("feed_products", "policy_retention")
+	}
+	feed := func(at time.Time) {
+		t.Helper()
+		if err := exec(t, dsn, `INSERT INTO feed_products (at, client_id, tracks_sent, tracks_relevant, policy_version) VALUES ($1, 'replay-client', 2, 2, 1)`, at); err != nil {
+			t.Fatal(err)
+		}
+	}
+	day := 24 * time.Hour
+	recent, mid, old := now.Add(-time.Hour), now.Add(-5*day), now.Add(-40*day)
+	for _, at := range []time.Time{recent, mid} {
+		if _, err := db.Writer().Insert(ctx, rows(10, at)); err != nil {
+			t.Fatal(err)
+		}
+		feed(at)
+	}
+	runAll()
+	if n := count("manned_tracks", "captured_at", now.Add(-10*day), now.Add(day)); n != 20 {
+		t.Fatalf("with nothing past the retention: %d rows, want 20", n)
+	}
+	if _, err := db.Writer().Insert(ctx, rows(10, old)); err != nil {
+		t.Fatal(err)
+	}
+	feed(old)
+	if n := count("manned_tracks", "captured_at", old.Add(-day), old.Add(day)); n != 10 {
+		t.Fatalf("old rows before the jobs: %d, want 10", n)
+	}
+	runAll()
+	if n := count("manned_tracks", "captured_at", old.Add(-day), old.Add(day)); n != 0 {
+		t.Fatalf("old replay rows after the jobs: %d, want 0", n)
+	}
+	if n := count("feed_products", "at", old.Add(-day), old.Add(day)); n != 0 {
+		t.Fatalf("old feed_products after the jobs: %d, want 0", n)
+	}
+	for name, at := range map[string]time.Time{"recent": recent, "mid": mid} {
+		if n := count("manned_tracks", "captured_at", at.Add(-time.Minute), at.Add(time.Minute)); n != 10 {
+			t.Fatalf("%s manned_tracks rows after the jobs: %d, want 10", name, n)
+		}
+		if n := count("feed_products", "at", at.Add(-time.Minute), at.Add(time.Minute)); n != 1 {
+			t.Fatalf("%s feed_products rows after the jobs: %d, want 1", name, n)
+		}
+	}
+	compressed := func(at time.Time) bool {
+		return scalar[bool](t, dsn, `SELECT coalesce(bool_and(is_compressed), false) FROM timescaledb_information.chunks
+			WHERE hypertable_name = 'manned_tracks' AND range_start <= $1 AND range_end > $1`, at)
+	}
+	if !compressed(mid) || compressed(recent) {
+		t.Fatalf("compressed: 5 days old %v (want true), 1 hour old %v (want false)", compressed(mid), compressed(recent))
+	}
+}
+
 // 10 000 rows by CopyFrom land and are read back by icao24 and window;
 // a row that does not validate is left out and counted.
 func TestIntegrationCopyFrom10000(t *testing.T) {
