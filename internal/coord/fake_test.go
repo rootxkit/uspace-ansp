@@ -40,7 +40,7 @@ type fakeRepo struct {
 	countLimit int
 
 	failAudit, failNow, failNotices, failMark, failInsert, failBehind, failOcc error
-	failRaise, failClear, failIntersect, failEscalate, failCounts              error
+	failRaise, failClear, failIntersect, failEscalate, failCounts, failResolve error
 }
 
 func newFakeRepo() *fakeRepo {
@@ -298,7 +298,7 @@ func (t fakeTx) EscalateDue(_ context.Context, now time.Time, esc, repeat time.D
 	}
 	var out []Notice
 	for _, n := range r.sorted() { //nolint:gocritic // a test fake copies freely
-		if n.Acknowledged || !n.AckRequired || n.ReceivedAt.After(now.Add(-esc)) {
+		if n.Acknowledged || !n.AckRequired || n.ResolvedAt != nil || n.ReceivedAt.After(now.Add(-esc)) {
 			continue
 		}
 		if n.LastEscalatedAt != nil && n.LastEscalatedAt.After(now.Add(-repeat)) {
@@ -316,6 +316,45 @@ func (t fakeTx) EscalateDue(_ context.Context, now time.Time, esc, repeat time.D
 		n.EventSeq++
 		r.notices[n.AckID] = n
 		out = append(out, n)
+	}
+	return out, nil
+}
+
+// ResolveByEnded is the store's rule (coord.sql ResolveByEnded).
+func (t fakeTx) ResolveByEnded(_ context.Context, endedID string) ([]Notice, error) {
+	r := t.r
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.failResolve != nil {
+		return nil, r.failResolve
+	}
+	e, ok := r.notices[endedID]
+	if !ok || e.Kind != KindEnded {
+		return nil, nil
+	}
+	sameSender := func(a, b Notice) bool { return a.SenderClientID == b.SenderClientID && a.USSPID == b.USSPID }
+	ended := func(c Notice, ref string) bool {
+		for _, x := range r.notices { //nolint:gocritic // a test fake copies freely
+			if x.Kind == KindEnded && sameSender(x, c) && !x.ReceivedAt.Before(c.ReceivedAt) && slices.Contains(x.IntentRefs, ref) {
+				return true
+			}
+		}
+		return false
+	}
+	var out []Notice
+	for _, c := range r.sorted() { //nolint:gocritic // a test fake copies freely
+		if (c.Kind != KindNonconformance && c.Kind != KindContingent) || !c.AckRequired || c.Acknowledged || c.ResolvedAt != nil ||
+			!sameSender(c, e) || c.ReceivedAt.After(e.ReceivedAt) || !slices.ContainsFunc(c.IntentRefs, func(ref string) bool { return slices.Contains(e.IntentRefs, ref) }) {
+			continue
+		}
+		if slices.ContainsFunc(c.IntentRefs, func(ref string) bool { return !ended(c, ref) }) {
+			continue
+		}
+		at := e.ReceivedAt
+		c.ResolvedAt, c.ResolvedByAckID = &at, e.AckID
+		c.EventSeq++
+		r.notices[c.AckID] = c
+		out = append(out, c)
 	}
 	return out, nil
 }

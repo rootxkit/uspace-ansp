@@ -1858,6 +1858,13 @@ type CoordinationInbox struct {
 // again every 30 s: last_escalated_at, escalations); an intent_notice
 // or ended notice is informational. sender_unverified is true for a
 // notice accepted while no CIS USSP list was projected (WP-10).
+// resolved_at and resolved_by_ack_id are set on a nonconformance or
+// contingent notice once the same sender (sender_client_id and
+// ussp_id) has sent ended notices for all of its intents: resolved_at
+// is the receipt of the ended notice resolved_by_ack_id names. A
+// resolved notice escalates no more, and stays as it is otherwise
+// (state received or escalated, not acknowledged): a person still
+// acknowledges it.
 type CoordinationNotice struct {
 	// AckId Crockford base32, 26 characters (04 §2).
 	AckId ULID `json:"ack_id"`
@@ -1886,6 +1893,12 @@ type CoordinationNotice struct {
 
 	// ReceivedAt RFC 3339 UTC with Z, millisecond precision (02 §1).
 	ReceivedAt Timestamp `json:"received_at"`
+
+	// ResolvedAt RFC 3339 UTC with Z, millisecond precision (02 §1).
+	ResolvedAt *Timestamp `json:"resolved_at,omitempty"`
+
+	// ResolvedByAckId Crockford base32, 26 characters (04 §2).
+	ResolvedByAckId *ULID `json:"resolved_by_ack_id,omitempty"`
 
 	// RestrictionIds The restrictions the notice's volumes intersect, computed at receipt.
 	RestrictionIds   *[]ULID `json:"restriction_ids,omitempty"`
@@ -1917,6 +1930,13 @@ type CoordinationNoticeMessage struct {
 	// again every 30 s: last_escalated_at, escalations); an intent_notice
 	// or ended notice is informational. sender_unverified is true for a
 	// notice accepted while no CIS USSP list was projected (WP-10).
+	// resolved_at and resolved_by_ack_id are set on a nonconformance or
+	// contingent notice once the same sender (sender_client_id and
+	// ussp_id) has sent ended notices for all of its intents: resolved_at
+	// is the receipt of the ended notice resolved_by_ack_id names. A
+	// resolved notice escalates no more, and stays as it is otherwise
+	// (state received or escalated, not acknowledged): a person still
+	// acknowledges it.
 	Body CoordinationNotice `json:"body"`
 
 	// CapturedAt RFC 3339 UTC with Z, millisecond precision (02 §1).

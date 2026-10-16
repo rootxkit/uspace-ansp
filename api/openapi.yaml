@@ -1821,6 +1821,13 @@ components:
         again every 30 s: last_escalated_at, escalations); an intent_notice
         or ended notice is informational. sender_unverified is true for a
         notice accepted while no CIS USSP list was projected (WP-10).
+        resolved_at and resolved_by_ack_id are set on a nonconformance or
+        contingent notice once the same sender (sender_client_id and
+        ussp_id) has sent ended notices for all of its intents: resolved_at
+        is the receipt of the ended notice resolved_by_ack_id names. A
+        resolved notice escalates no more, and stays as it is otherwise
+        (state received or escalated, not acknowledged): a person still
+        acknowledges it.
       required: [ack_id, kind, sender_client_id, ussp_id, notice_ref, intent_refs, authorisation_numbers, received_at, state]
       properties:
         ack_id:
@@ -1865,6 +1872,10 @@ components:
         escalations:
           type: integer
           minimum: 0
+        resolved_at:
+          $ref: "#/components/schemas/Timestamp"
+        resolved_by_ack_id:
+          $ref: "#/components/schemas/ULID"
         restriction_ids:
           type: array
           description: The restrictions the notice's volumes intersect, computed at receipt.

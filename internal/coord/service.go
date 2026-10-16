@@ -45,6 +45,9 @@ const (
 	CounterInboxViewed      = "notices_inbox_viewed"
 	// CounterSenderQuota counts notices refused 429 at the sender's quota.
 	CounterSenderQuota = "notices_sender_quota_refused"
+	// CounterResolved counts the deviation notices an ended notice of
+	// their sender resolved (they escalate no more, still unacknowledged).
+	CounterResolved = "notices_resolved_by_ussp"
 )
 
 // The refusal slugs of the inbox (problem type slugs, M28).
@@ -260,9 +263,10 @@ func (s *Service) Submit(ctx context.Context, sub string, body []byte) (Receipt,
 		s.counters.Inc(CounterSenderUnverified)
 	}
 	var stored Notice
+	var resolved []Notice
 	var replay bool
 	err := s.Repo.Tx(ctx, func(ctx context.Context, tx Tx) error {
-		replay = false
+		replay, resolved = false, nil
 		now, err := s.now(ctx)
 		if err != nil {
 			return err
@@ -303,14 +307,37 @@ func (s *Service) Submit(ctx context.Context, sub string, body []byte) (Receipt,
 			return nil
 		}
 		stored = n
-		return tx.Audit(ctx, audit.Event{
+		if err := tx.Audit(ctx, audit.Event{
 			ActorType: audit.ActorClient, ActorID: sub,
 			Purpose:    "Annex V notice received (2021/664 Art. 13(2), Annex V)",
 			EntityType: "coordination_notice", EntityID: n.AckID, EventType: "coordination_notice_received",
 			Payload: map[string]any{"kind": n.Kind, "ussp_id": n.USSPID, "notice_ref": n.NoticeRef, "intent_refs": n.IntentRefs,
 				"authorisation_numbers": n.AuthorisationNumbers, "sender_unverified": n.SenderUnverified,
 				"restriction_ids": n.RestrictionIDs, "acknowledgement_required": n.AckRequired},
-		})
+		}); err != nil {
+			return err
+		}
+		if n.Kind != KindEnded {
+			return nil
+		}
+		// The sender's ended notice: its open deviation notices for these
+		// intents escalate no more; they stay for a person to acknowledge.
+		if resolved, err = tx.ResolveByEnded(ctx, n.AckID); err != nil {
+			return err
+		}
+		for i := range resolved {
+			r := &resolved[i]
+			if err := tx.Audit(ctx, audit.Event{
+				ActorType: audit.ActorClient, ActorID: sub,
+				Purpose:    "Annex V deviation notice resolved by the sender's ended notice (2021/664 Art. 13(2))",
+				EntityType: "coordination_notice", EntityID: r.AckID, EventType: "coordination_notice_resolved_by_ussp",
+				Payload: map[string]any{"kind": r.Kind, "ussp_id": r.USSPID, "intent_refs": r.IntentRefs,
+					"resolved_by_ack_id": r.ResolvedByAckID, "escalations": r.Escalations},
+			}); err != nil {
+				return err
+			}
+		}
+		return nil
 	})
 	if err != nil {
 		var rf *Refusal
@@ -328,6 +355,10 @@ func (s *Service) Submit(ctx context.Context, sub string, body []byte) (Receipt,
 	}
 	s.counters.Inc(CounterReceived)
 	s.publish(ctx, stored)
+	for i := range resolved {
+		s.counters.Inc(CounterResolved)
+		s.publish(ctx, resolved[i])
+	}
 	return receiptOf(stored), false, nil
 }
 
@@ -650,6 +681,8 @@ type NoticeBody struct {
 	EscalatedAt             *string         `json:"escalated_at,omitempty"`
 	LastEscalatedAt         *string         `json:"last_escalated_at,omitempty"`
 	Escalations             int             `json:"escalations"`
+	ResolvedAt              *string         `json:"resolved_at,omitempty"`
+	ResolvedByAckID         *string         `json:"resolved_by_ack_id,omitempty"`
 	RestrictionIDs          []string        `json:"restriction_ids"`
 	Payload                 json.RawMessage `json:"payload,omitempty"`
 }
@@ -670,6 +703,11 @@ func BodyOf(n Notice, console bool) NoticeBody {
 		ReceivedAt: restriction.Stamp(n.ReceivedAt), State: string(n.State()), AcknowledgementRequired: n.AckRequired,
 		SenderUnverified: n.SenderUnverified, AcknowledgedAt: stampPtr(n.AcknowledgedAt), EscalatedAt: stampPtr(n.EscalatedAt),
 		LastEscalatedAt: stampPtr(n.LastEscalatedAt), Escalations: n.Escalations, RestrictionIDs: nonNil(n.RestrictionIDs),
+		ResolvedAt: stampPtr(n.ResolvedAt),
+	}
+	if n.ResolvedByAckID != "" {
+		by := n.ResolvedByAckID
+		b.ResolvedByAckID = &by
 	}
 	if n.AcknowledgedBy != "" {
 		role := n.AcknowledgedBy

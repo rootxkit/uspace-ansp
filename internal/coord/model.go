@@ -52,8 +52,14 @@ type Notice struct {
 	EscalatedAt      *time.Time
 	LastEscalatedAt  *time.Time
 	Escalations      int
-	RestrictionIDs   []string
-	CISVersion       string
+	// ResolvedAt is when the sender's ended notice ResolvedByAckID,
+	// ending every intent of this deviation notice, was received: the
+	// notice escalates no more, and still awaits a person (it is not
+	// acknowledged by this).
+	ResolvedAt      *time.Time
+	ResolvedByAckID string
+	RestrictionIDs  []string
+	CISVersion      string
 	// EventSeq counts the notice's changes; BusSeq is the last one on
 	// coord.v1.
 	EventSeq int
@@ -202,8 +208,14 @@ type Tx interface {
 	// notice is acknowledged already.
 	Acknowledge(ctx context.Context, ackID, role, userID, note string) (Notice, bool, error)
 	// EscalateDue escalates the notices due at now: not acknowledged
-	// after escalation, then every repeat.
+	// after escalation, then every repeat, and not resolved.
 	EscalateDue(ctx context.Context, now time.Time, escalation, repeat time.Duration, limit int) ([]Notice, error)
+	// ResolveByEnded marks resolved by the ended notice endedAckID the
+	// open nonconformance and contingent notices of the same sender
+	// (client and ussp_id) received no later than it whose every intent
+	// an ended notice of that sender, received no earlier than them, has
+	// ended, and that share an intent with it; it returns them.
+	ResolveByEnded(ctx context.Context, endedAckID string) ([]Notice, error)
 	NextOccurrenceRef(ctx context.Context) (string, error)
 	InsertOccurrence(ctx context.Context, o NewOccurrence) (Occurrence, error)
 	// OccurrenceByIdempotency is the report actorID's Idempotency-Key

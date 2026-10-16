@@ -621,6 +621,104 @@ func TestIntegrationCoordinationEscalation(t *testing.T) {
 	}
 }
 
+// The sender's ended notice stops the escalation of its deviation
+// notices, against PostgreSQL (ResolveByEnded, EscalateDue) and NATS.
+// A nonconformance and a contingent notice of ussp-01 escalate at 60 s.
+// An ended notice for the same intent from ussp-02, and one from
+// ussp-01 for another intent, resolve nothing, and both escalate again
+// at 90 s. Then ussp-01's ended notice for the intent resolves both. They
+// carry resolved_at and resolved_by_ack_id on the API and on the console
+// stream, are audited, escalate no more however late, and stay
+// unacknowledged. Acknowledging one still works and leaves the other.
+func TestIntegrationEndedNoticeStopsEscalation(t *testing.T) {
+	s := newCoordStack(t, false)
+	s.setList(true, "ussp-01", "ussp-02")
+	cons := s.console(s.watch)
+	svc := s.co.api.svc
+	tick := func(d time.Duration) coord.TickReport {
+		t.Helper()
+		s.offset.Store(int64(d))
+		rep, err := svc.Tick(s.ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return rep
+	}
+	accepted := func(sub string, body map[string]any) coord.Receipt {
+		t.Helper()
+		code, rec, p := s.submit(sub, body)
+		if code != http.StatusAccepted {
+			t.Fatalf("%s: %d %+v", sub, code, p)
+		}
+		return rec
+	}
+	nc := accepted("ussp-01", notice("nonconformance", "nc-ended", 44.79, 41.71, 44.81, 41.72))
+	ct := accepted("ussp-01", notice("contingent", "ct-ended", 44.79, 41.71, 44.81, 41.72))
+	if rep := tick(61 * time.Second); len(rep.Escalated) != 2 {
+		t.Fatalf("not escalated: %+v", rep)
+	}
+	s.offset.Store(int64(70 * time.Second))
+	other := notice("ended", "ended-other-ussp", 44.79, 41.71, 44.81, 41.72)
+	other["ussp_id"] = "ussp-02"
+	accepted("ussp-02", other)
+	otherIntent := notice("ended", "ended-other-intent", 44.79, 41.71, 44.81, 41.72)
+	otherIntent["intents"].([]any)[0].(map[string]any)["intent_ref"] = "1b4e28ba-2fa1-41d2-883f-0016d3cca427"
+	accepted("ussp-01", otherIntent)
+	if n := s.count(`SELECT count(*) FROM coordination_notices WHERE resolved_at IS NOT NULL`); n != 0 {
+		t.Fatalf("%d notices resolved by another sender's or intent's ended notice", n)
+	}
+	if rep := tick(92 * time.Second); len(rep.Escalated) != 2 {
+		t.Fatalf("the escalation stopped without the sender's ended notice: %+v", rep)
+	}
+	s.offset.Store(int64(100 * time.Second))
+	ended := accepted("ussp-01", notice("ended", "ended-intent", 44.79, 41.71, 44.81, 41.72))
+	resolvedAt := ""
+	for _, id := range []string{nc.AckID, ct.AckID} {
+		code, raw := s.c.do(http.MethodGet, "/v1/coordination/notices/"+id, s.watch, nil, nil)
+		validateResponse(t, http.MethodGet, "/v1/coordination/notices/{ack_id}", code, raw)
+		var n coord.NoticeBody
+		if code != http.StatusOK || json.Unmarshal(raw, &n) != nil {
+			t.Fatalf("%s: %d %s", id, code, raw)
+		}
+		if n.ResolvedAt == nil || n.ResolvedByAckID == nil || *n.ResolvedByAckID != ended.AckID || n.AcknowledgedAt != nil ||
+			n.State != "escalated" || n.Escalations != 2 {
+			t.Fatalf("%s: %s", id, raw)
+		}
+		if *n.ResolvedAt != ended.ReceivedAt {
+			t.Fatalf("%s: resolved_at %s, the ended notice was received at %s", id, *n.ResolvedAt, ended.ReceivedAt)
+		}
+		resolvedAt = *n.ResolvedAt
+	}
+	cons.next(coord.SchemaNotice, func(raw json.RawMessage) bool {
+		var b coord.NoticeBody
+		return json.Unmarshal(raw, &b) == nil && b.AckID == nc.AckID && b.ResolvedByAckID != nil && *b.ResolvedByAckID == ended.AckID
+	})
+	if n := s.count(`SELECT count(*) FROM events WHERE event_type = 'coordination_notice_resolved_by_ussp' AND entity_id IN ($1, $2)`, nc.AckID, ct.AckID); n != 2 {
+		t.Fatalf("%d audit rows", n)
+	}
+	for _, d := range []time.Duration{123 * time.Second, 10 * time.Minute, time.Hour} {
+		if rep := tick(d); len(rep.Escalated) != 0 {
+			t.Fatalf("escalated at %v after the ended notice: %+v", d, rep.Escalated)
+		}
+	}
+	code, raw := s.c.do(http.MethodGet, "/v1/coordination/inbox?state=escalated", s.watch, nil, nil)
+	validateResponse(t, http.MethodGet, "/v1/coordination/inbox", code, raw)
+	if code != http.StatusOK || !strings.Contains(string(raw), nc.AckID) || !strings.Contains(string(raw), ct.AckID) {
+		t.Fatalf("the resolved notices left the open inbox: %d %s", code, raw)
+	}
+	code, raw = s.c.do(http.MethodPost, "/v1/coordination/inbox/"+nc.AckID+"/acknowledge", s.watch, nil, map[string]string{"note": "filed after the USSP ended the intent"})
+	validateResponse(t, http.MethodPost, "/v1/coordination/inbox/{id}/acknowledge", code, raw)
+	if code != http.StatusOK || !strings.Contains(string(raw), `"state":"acknowledged"`) || !strings.Contains(string(raw), `"resolved_at":"`+resolvedAt+`"`) {
+		t.Fatalf("acknowledge: %d %s", code, raw)
+	}
+	if _, n := s.notice(s.watch, ct.AckID); n.State != "escalated" || n.AcknowledgedAt != nil {
+		t.Fatalf("the contingent notice: %+v", n)
+	}
+	if svc.Counters().Get(coord.CounterResolved) != 2 {
+		t.Fatalf("%d resolved", svc.Counters().Get(coord.CounterResolved))
+	}
+}
+
 // An occurrence report reaches the authority stub with the reporter
 // reference in clear and no name, while the row holds it sealed (the
 // twin: the stored bytes are not the plaintext), and never in a log;

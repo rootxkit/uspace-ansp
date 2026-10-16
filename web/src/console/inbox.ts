@@ -56,6 +56,8 @@ export function noticeOf(frame: ConsoleFrame): ApiNotice | null {
 export function isLater(held: ApiNotice, next: ApiNotice): boolean {
   if (held.state === "acknowledged") return next.state === "acknowledged" && (next.acknowledged_at ?? "") >= (held.acknowledged_at ?? "");
   if (next.state === "acknowledged") return true;
+  // A resolution (the sender's ended notice) never goes back to unresolved.
+  if (held.resolved_at !== undefined && next.resolved_at === undefined) return false;
   return (next.escalations ?? 0) >= (held.escalations ?? 0);
 }
 
@@ -122,7 +124,7 @@ export function boundNotices(notices: ReadonlyMap<string, ApiNotice>, max: numbe
 
 /** Whether a notice frame is news of an escalation (for the opt-in browser notification). */
 export function escalationNews(held: ApiNotice | undefined, next: ApiNotice): boolean {
-  if (next.state !== "escalated") return false;
+  if (next.state !== "escalated" || next.resolved_at !== undefined) return false;
   if (held === undefined || held.state !== "escalated") return held?.state !== "acknowledged";
   return (next.escalations ?? 0) > (held.escalations ?? 0);
 }
@@ -130,8 +132,14 @@ export function escalationNews(held: ApiNotice | undefined, next: ApiNotice): bo
 /** The group a notice is listed in. */
 export type Group = "escalated" | "awaiting" | "informational" | "acknowledged";
 
+/**
+ * A notice the sender resolved (its ended notice for every intent,
+ * resolved_at) escalates no more and still awaits a person: it is listed
+ * with the ones awaiting an acknowledgement, not as escalated.
+ */
 export function groupOf(n: ApiNotice): Group {
   if (n.state === "acknowledged") return "acknowledged";
+  if (n.resolved_at !== undefined && n.acknowledgement_required === true) return "awaiting";
   if (n.state === "escalated") return "escalated";
   return n.acknowledgement_required === true ? "awaiting" : "informational";
 }
