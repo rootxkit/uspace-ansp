@@ -107,3 +107,14 @@ describe("reloadsFor", () => {
     expect(reloadsFor({ ...BODY, state: "active" }, "planned")).toBe(false);
   });
 });
+
+describe("withOutline", () => {
+  it("puts the API's ring in place of a circle's centre, and leaves the view alone without one", async () => {
+    const { withOutline } = await import("./adapt");
+    const view = { identifier: "R", geometry: { type: "Point", coordinates: [44.8, 41.7] } } as never;
+    const ring: GeoJSON.Polygon = { type: "Polygon", coordinates: [[[44.8, 41.73], [44.79, 41.71], [44.81, 41.71], [44.8, 41.73]]] };
+    expect((withOutline(view, ring) as { geometry: unknown }).geometry).toEqual(ring);
+    expect(withOutline(view, null)).toBe(view);
+    expect(withOutline(view, undefined)).toBe(view);
+  });
+});

@@ -12,7 +12,8 @@ import { useEffect, useMemo, useState } from "react";
 import { inputToUtc } from "@rootxkit/uspace-ui/form";
 import { useLang, useT } from "@rootxkit/uspace-ui/i18n";
 import { Button, cn, Input, Label, MapPanel, TABLE_NOWRAP } from "@rootxkit/uspace-ui/ui";
-import { toView } from "./adapt";
+import { toView, withOutline } from "./adapt";
+import { circleAreaOf, circleKey, undrawnCircles, useCircleOutlines } from "./outline";
 import { ConsoleMap } from "./ConsoleMap";
 import { useConsole, useLoad } from "./context";
 import type { ApiAlarm, ApiRestriction } from "./delivery";
@@ -122,7 +123,7 @@ function Acts({ r, onDone }: { r: ApiRestriction; onDone(): void }) {
 export function RestrictionDetailPage({ id }: { id: string }) {
   const t = useT();
   const { lang } = useLang();
-  const { onFrame } = useConsole();
+  const { client, onFrame } = useConsole();
   const loaded = useLoad(async (c) => (await c.GET("/v1/restrictions/{id}", { params: { path: { id } } })).data ?? null, `r:${id}`);
   const versions = useLoad(
     async (c) => (await c.GET("/v1/restrictions/{id}/versions", { params: { path: { id } } })).data?.versions ?? [],
@@ -156,7 +157,13 @@ export function RestrictionDetailPage({ id }: { id: string }) {
   }, [loaded.data, alarmsLoad.data, bodies, id]);
 
   const r = live.r;
-  const views = useMemo(() => (r === null ? [] : [toView(r, lang)]), [r, lang]);
+  const circle = useMemo(() => (r === null ? null : circleAreaOf(r)), [r]);
+  const circles = useMemo(() => (circle === null ? [] : [circle]), [circle]);
+  const outlines = useCircleOutlines(client, circles);
+  const views = useMemo(
+    () => (r === null ? [] : [withOutline(toView(r, lang), circle === null ? undefined : outlines.get(circleKey(circle)))]),
+    [r, lang, circle, outlines],
+  );
   const reloadAll = () => {
     loaded.reload();
     versions.reload();
@@ -281,7 +288,7 @@ export function RestrictionDetailPage({ id }: { id: string }) {
           title={t("ansp.map.title")}
           className="lg:w-[40%]"
           mapClassName="h-[30rem]"
-          {...(r.geometry.type === "Point" ? { footer: <p className="m-0 text-xs text-muted-foreground">{t("ansp.map.circle_centre_only", { count: 1 })}</p> } : {})}
+          {...(undrawnCircles(circles, outlines) > 0 ? { footer: <p className="m-0 text-xs text-muted-foreground">{t("ansp.map.circle_centre_only", { count: 1 })}</p> } : {})}
         >
           <ConsoleMap restrictions={views} fill />
         </MapPanel>

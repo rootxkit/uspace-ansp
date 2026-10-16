@@ -229,6 +229,19 @@ test("a circle is drawn from the API's outline and planned as its centre and rad
   const plans = (await recorded(request)).filter((c) => c.method === "POST" && c.path === "/v1/restrictions");
   expect(plans).toHaveLength(1);
   expect(plans[0]?.body).toMatchObject({ geometry: { type: "Point", coordinates: [44.8, 41.715] }, radius_m: 1500 });
+
+  // The detail page and the list draw the circle from the same outline,
+  // and neither asks the API again: it is cached per circle.
+  const outlineCalls = async () => (await recorded(request)).filter((c) => c.method === "GET" && c.path === "/v1/outlines/circle").length;
+  await expect(page.getByTestId("restriction-detail")).toBeVisible();
+  // The editor's own request, and the detail page's once.
+  await expect.poll(outlineCalls).toBe(2);
+  await expect(page.getByText("is drawn as its centre")).toHaveCount(0);
+  await page.getByRole("link", { name: "Restrictions", exact: true }).first().click();
+  await expect(page).toHaveURL(/\/en\/restrictions$/);
+  await expect(page.locator("[data-restriction]").first()).toBeVisible();
+  await expect(page.getByText("is drawn as its centre")).toHaveCount(0);
+  expect(await outlineCalls()).toBe(2);
 });
 
 test("a circle the API will not draw shows its centre and says so", async ({ page, request }) => {

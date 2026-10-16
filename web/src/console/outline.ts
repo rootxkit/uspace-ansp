@@ -86,3 +86,100 @@ export function useCircleOutline(client: ConsoleClient, outline: DrawOutline): C
   if (key === null) return { kind: "none" };
   return state.key === key ? state.value : { kind: "loading" };
 }
+
+/** One circle restriction's area, as the outline request needs it. */
+export interface CircleArea {
+  lat: number;
+  lng: number;
+  radiusM: number;
+}
+
+/** The circle of a restriction's area (a Point with radius_m), or null when it is not a circle. */
+export function circleAreaOf(area: { geometry: { type: string; coordinates?: unknown }; radius_m?: number | null }): CircleArea | null {
+  if (area.geometry.type !== "Point") return null;
+  const c = area.geometry.coordinates;
+  const r = area.radius_m;
+  if (!Array.isArray(c) || c.length < 2 || typeof c[0] !== "number" || typeof c[1] !== "number") return null;
+  if (typeof r !== "number" || !Number.isFinite(r) || r <= 0) return null;
+  return { lat: c[1], lng: c[0], radiusM: r };
+}
+
+/** The cache key of a circle: the values the API is asked about. */
+export function circleKey(c: CircleArea): string {
+  return `${c.lat},${c.lng},${c.radiusM}`;
+}
+
+/** The most circles whose outline is kept; the oldest goes first. */
+export const OUTLINE_CACHE_MAX = 200;
+
+const outlineCache = new Map<string, Promise<GeoJSON.Polygon | null>>();
+
+/** Forgets every cached outline (tests). */
+export function clearOutlineCache(): void {
+  outlineCache.clear();
+}
+
+/**
+ * The API's outline of one circle, asked once per circle: the request is
+ * cached by its centre and radius, so a restriction listed again (a
+ * reload, a pushed frame, another page) costs no request. A refusal is
+ * cached as null; a failed call is not, so a later visit asks again.
+ */
+export function circleOutline(client: ConsoleClient, c: CircleArea): Promise<GeoJSON.Polygon | null> {
+  const key = circleKey(c);
+  const hit = outlineCache.get(key);
+  if (hit !== undefined) return hit;
+  const pending = client.GET("/v1/outlines/circle", { params: { query: { lat: c.lat, lng: c.lng, radius_m: c.radiusM } } }).then(
+    ({ data }) => outlineOfAnswer(data),
+    (e: unknown) => {
+      outlineCache.delete(key);
+      throw e;
+    },
+  );
+  outlineCache.set(key, pending);
+  while (outlineCache.size > OUTLINE_CACHE_MAX) {
+    const oldest = outlineCache.keys().next();
+    if (oldest.done === true) break;
+    outlineCache.delete(oldest.value);
+  }
+  return pending;
+}
+
+/** What the maps know of the circles listed: the outline per key, null for a refused or unreachable one. */
+export type CircleOutlines = ReadonlyMap<string, GeoJSON.Polygon | null>;
+
+/**
+ * The API's outlines of the circles listed, for the list and detail
+ * maps. Each distinct circle is asked once (see circleOutline); a circle
+ * not answered yet is absent from the result, one the API refused or
+ * could not be reached for is null.
+ */
+export function useCircleOutlines(client: ConsoleClient, circles: readonly CircleArea[]): CircleOutlines {
+  const wantedKey = [...new Set(circles.map(circleKey))].sort().join("|");
+  const [answers, setAnswers] = useState<CircleOutlines>(new Map());
+  useEffect(() => {
+    let live = true;
+    const byKey = new Map(circles.map((c) => [circleKey(c), c] as const));
+    for (const [key, c] of byKey) {
+      circleOutline(client, c).then(
+        (outline) => {
+          if (live) setAnswers((prev) => new Map(prev).set(key, outline));
+        },
+        () => {
+          if (live) setAnswers((prev) => new Map(prev).set(key, null));
+        },
+      );
+    }
+    return () => {
+      live = false;
+    };
+    // The circles' values are the dependency, not the array identity.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [client, wantedKey]);
+  return answers;
+}
+
+/** The count of circles listed that the API gave no outline for (refused or unreachable). */
+export function undrawnCircles(circles: readonly CircleArea[], outlines: CircleOutlines): number {
+  return circles.filter((c) => outlines.get(circleKey(c)) === null).length;
+}
