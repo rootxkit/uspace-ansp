@@ -550,11 +550,18 @@ func TestIntegrationDeliverToTheCISP(t *testing.T) {
 	if got.Header.Get("Content-Type") != deliver.ContentTypeJOSE {
 		t.Fatalf("scan delivery %v", got.Header)
 	}
-	if !strings.Contains(s.logs.String(), "published by the outbox scan") {
-		t.Fatal("the repaired gap is not logged")
-	}
-	if n := s.deliveries(`SELECT count(*) FROM deliveries WHERE id = '01K6P0A2C4E6G8J0K2M4N6P8Q9' AND state = 'sent' AND bus_seq = 1`); n != 1 {
-		t.Fatal("the scanned row is not sent")
+	// The stub's receipt comes before the worker records the answer and
+	// logs it: wait for both, bounded, rather than read them at once.
+	deadline = time.Now().Add(5 * time.Second)
+	for !strings.Contains(s.logs.String(), "published by the outbox scan") ||
+		s.deliveries(`SELECT count(*) FROM deliveries WHERE id = '01K6P0A2C4E6G8J0K2M4N6P8Q9' AND state = 'sent' AND bus_seq = 1`) != 1 {
+		if time.Now().After(deadline) {
+			if !strings.Contains(s.logs.String(), "published by the outbox scan") {
+				t.Fatal("the repaired gap is not logged")
+			}
+			t.Fatal("the scanned row is not sent")
+		}
+		time.Sleep(50 * time.Millisecond)
 	}
 }
 

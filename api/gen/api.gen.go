@@ -1431,6 +1431,7 @@ func (e UserStatus) Valid() bool {
 
 // Defines values for VerticalRef.
 const (
+	VerticalRefAGL   VerticalRef = "AGL"
 	VerticalRefAMSL  VerticalRef = "AMSL"
 	VerticalRefWGS84 VerticalRef = "WGS84"
 )
@@ -1438,6 +1439,8 @@ const (
 // Valid indicates whether the value is a known member of the VerticalRef enum.
 func (e VerticalRef) Valid() bool {
 	switch e {
+	case VerticalRefAGL:
+		return true
 	case VerticalRefAMSL:
 		return true
 	case VerticalRefWGS84:
@@ -2737,10 +2740,18 @@ type Restriction struct {
 	// LowerM The lower limit in metres above lower_ref.
 	LowerM float32 `json:"lower_m"`
 
-	// LowerRef The vertical reference of a restriction limit: AMSL or WGS84
-	// (ellipsoid). AGL is refused for a dynamic restriction in this
-	// release (D3, §15 gap 3) with the reason "AGL is not supported for
-	// a dynamic restriction in this release".
+	// LowerRef The vertical reference of a restriction limit (ED-318
+	// CodeVerticalReferenceType; D3, §15 gap 3): AGL (above the ground),
+	// AMSL or WGS84 (ellipsoid). A limit is compared with the U-space
+	// airspace's directly in the same reference; in another, both are
+	// made AMSL over the restriction's area, the restriction's at the
+	// highest it reaches and the airspace's at the lowest. The F3548
+	// constraint is W84: an AGL lower limit over the lowest ground under
+	// the area, an AGL upper limit over the highest, so the volume never
+	// shrinks. Where the ground is not known everywhere under the area
+	// (ANSP_TERRAIN_DIR) such a conversion is refused 503
+	// terrain_unavailable, never guessed. AGL was added in this minor:
+	// a consumer that reads limits accepts it.
 	LowerRef VerticalRef `json:"lower_ref"`
 
 	// PublishedVersion The ansp_version the CISP confirmed.
@@ -2767,10 +2778,18 @@ type Restriction struct {
 	// UpperM The upper limit in metres above upper_ref; above lower_m.
 	UpperM float32 `json:"upper_m"`
 
-	// UpperRef The vertical reference of a restriction limit: AMSL or WGS84
-	// (ellipsoid). AGL is refused for a dynamic restriction in this
-	// release (D3, §15 gap 3) with the reason "AGL is not supported for
-	// a dynamic restriction in this release".
+	// UpperRef The vertical reference of a restriction limit (ED-318
+	// CodeVerticalReferenceType; D3, §15 gap 3): AGL (above the ground),
+	// AMSL or WGS84 (ellipsoid). A limit is compared with the U-space
+	// airspace's directly in the same reference; in another, both are
+	// made AMSL over the restriction's area, the restriction's at the
+	// highest it reaches and the airspace's at the lowest. The F3548
+	// constraint is W84: an AGL lower limit over the lowest ground under
+	// the area, an AGL upper limit over the highest, so the volume never
+	// shrinks. Where the ground is not known everywhere under the area
+	// (ANSP_TERRAIN_DIR) such a conversion is refused 503
+	// terrain_unavailable, never guessed. AGL was added in this minor:
+	// a consumer that reads limits accepts it.
 	UpperRef VerticalRef `json:"upper_ref"`
 
 	// UspaceAirspaceId The ED-318 identifier of the current USPACE feature of the CIS the restriction lies in (M9).
@@ -2791,10 +2810,18 @@ type RestrictionArea struct {
 	// LowerM The lower limit in metres above lower_ref.
 	LowerM float32 `json:"lower_m"`
 
-	// LowerRef The vertical reference of a restriction limit: AMSL or WGS84
-	// (ellipsoid). AGL is refused for a dynamic restriction in this
-	// release (D3, §15 gap 3) with the reason "AGL is not supported for
-	// a dynamic restriction in this release".
+	// LowerRef The vertical reference of a restriction limit (ED-318
+	// CodeVerticalReferenceType; D3, §15 gap 3): AGL (above the ground),
+	// AMSL or WGS84 (ellipsoid). A limit is compared with the U-space
+	// airspace's directly in the same reference; in another, both are
+	// made AMSL over the restriction's area, the restriction's at the
+	// highest it reaches and the airspace's at the lowest. The F3548
+	// constraint is W84: an AGL lower limit over the lowest ground under
+	// the area, an AGL upper limit over the highest, so the volume never
+	// shrinks. Where the ground is not known everywhere under the area
+	// (ANSP_TERRAIN_DIR) such a conversion is refused 503
+	// terrain_unavailable, never guessed. AGL was added in this minor:
+	// a consumer that reads limits accepts it.
 	LowerRef VerticalRef `json:"lower_ref"`
 
 	// RadiusM The circle's radius in metres; required with a Point, absent or null with a Polygon.
@@ -2809,10 +2836,18 @@ type RestrictionArea struct {
 	// UpperM The upper limit in metres above upper_ref; above lower_m.
 	UpperM float32 `json:"upper_m"`
 
-	// UpperRef The vertical reference of a restriction limit: AMSL or WGS84
-	// (ellipsoid). AGL is refused for a dynamic restriction in this
-	// release (D3, §15 gap 3) with the reason "AGL is not supported for
-	// a dynamic restriction in this release".
+	// UpperRef The vertical reference of a restriction limit (ED-318
+	// CodeVerticalReferenceType; D3, §15 gap 3): AGL (above the ground),
+	// AMSL or WGS84 (ellipsoid). A limit is compared with the U-space
+	// airspace's directly in the same reference; in another, both are
+	// made AMSL over the restriction's area, the restriction's at the
+	// highest it reaches and the airspace's at the lowest. The F3548
+	// constraint is W84: an AGL lower limit over the lowest ground under
+	// the area, an AGL upper limit over the highest, so the volume never
+	// shrinks. Where the ground is not known everywhere under the area
+	// (ANSP_TERRAIN_DIR) such a conversion is refused 503
+	// terrain_unavailable, never guessed. AGL was added in this minor:
+	// a consumer that reads limits accepts it.
 	UpperRef VerticalRef `json:"upper_ref"`
 
 	// UspaceAirspaceId The ED-318 identifier of the current USPACE feature of the CIS the restriction lies in (M9).
@@ -2837,10 +2872,18 @@ type RestrictionCreate struct {
 	// LowerM The lower limit in metres above lower_ref.
 	LowerM float32 `json:"lower_m"`
 
-	// LowerRef The vertical reference of a restriction limit: AMSL or WGS84
-	// (ellipsoid). AGL is refused for a dynamic restriction in this
-	// release (D3, §15 gap 3) with the reason "AGL is not supported for
-	// a dynamic restriction in this release".
+	// LowerRef The vertical reference of a restriction limit (ED-318
+	// CodeVerticalReferenceType; D3, §15 gap 3): AGL (above the ground),
+	// AMSL or WGS84 (ellipsoid). A limit is compared with the U-space
+	// airspace's directly in the same reference; in another, both are
+	// made AMSL over the restriction's area, the restriction's at the
+	// highest it reaches and the airspace's at the lowest. The F3548
+	// constraint is W84: an AGL lower limit over the lowest ground under
+	// the area, an AGL upper limit over the highest, so the volume never
+	// shrinks. Where the ground is not known everywhere under the area
+	// (ANSP_TERRAIN_DIR) such a conversion is refused 503
+	// terrain_unavailable, never guessed. AGL was added in this minor:
+	// a consumer that reads limits accepts it.
 	LowerRef VerticalRef `json:"lower_ref"`
 
 	// RadiusM The circle's radius in metres; required with a Point, absent or null with a Polygon.
@@ -2855,10 +2898,18 @@ type RestrictionCreate struct {
 	// UpperM The upper limit in metres above upper_ref; above lower_m.
 	UpperM float32 `json:"upper_m"`
 
-	// UpperRef The vertical reference of a restriction limit: AMSL or WGS84
-	// (ellipsoid). AGL is refused for a dynamic restriction in this
-	// release (D3, §15 gap 3) with the reason "AGL is not supported for
-	// a dynamic restriction in this release".
+	// UpperRef The vertical reference of a restriction limit (ED-318
+	// CodeVerticalReferenceType; D3, §15 gap 3): AGL (above the ground),
+	// AMSL or WGS84 (ellipsoid). A limit is compared with the U-space
+	// airspace's directly in the same reference; in another, both are
+	// made AMSL over the restriction's area, the restriction's at the
+	// highest it reaches and the airspace's at the lowest. The F3548
+	// constraint is W84: an AGL lower limit over the lowest ground under
+	// the area, an AGL upper limit over the highest, so the volume never
+	// shrinks. Where the ground is not known everywhere under the area
+	// (ANSP_TERRAIN_DIR) such a conversion is refused 503
+	// terrain_unavailable, never guessed. AGL was added in this minor:
+	// a consumer that reads limits accepts it.
 	UpperRef VerticalRef `json:"upper_ref"`
 
 	// UspaceAirspaceId The ED-318 identifier of the current USPACE feature of the CIS the restriction lies in (M9).
@@ -2931,10 +2982,18 @@ type RestrictionRequestCreate struct {
 	// LowerM The lower limit in metres above lower_ref.
 	LowerM float32 `json:"lower_m"`
 
-	// LowerRef The vertical reference of a restriction limit: AMSL or WGS84
-	// (ellipsoid). AGL is refused for a dynamic restriction in this
-	// release (D3, §15 gap 3) with the reason "AGL is not supported for
-	// a dynamic restriction in this release".
+	// LowerRef The vertical reference of a restriction limit (ED-318
+	// CodeVerticalReferenceType; D3, §15 gap 3): AGL (above the ground),
+	// AMSL or WGS84 (ellipsoid). A limit is compared with the U-space
+	// airspace's directly in the same reference; in another, both are
+	// made AMSL over the restriction's area, the restriction's at the
+	// highest it reaches and the airspace's at the lowest. The F3548
+	// constraint is W84: an AGL lower limit over the lowest ground under
+	// the area, an AGL upper limit over the highest, so the volume never
+	// shrinks. Where the ground is not known everywhere under the area
+	// (ANSP_TERRAIN_DIR) such a conversion is refused 503
+	// terrain_unavailable, never guessed. AGL was added in this minor:
+	// a consumer that reads limits accepts it.
 	LowerRef VerticalRef `json:"lower_ref"`
 
 	// RadiusM The circle's radius in metres; required with a Point, absent or null with a Polygon.
@@ -2949,10 +3008,18 @@ type RestrictionRequestCreate struct {
 	// UpperM The upper limit in metres above upper_ref; above lower_m.
 	UpperM float32 `json:"upper_m"`
 
-	// UpperRef The vertical reference of a restriction limit: AMSL or WGS84
-	// (ellipsoid). AGL is refused for a dynamic restriction in this
-	// release (D3, §15 gap 3) with the reason "AGL is not supported for
-	// a dynamic restriction in this release".
+	// UpperRef The vertical reference of a restriction limit (ED-318
+	// CodeVerticalReferenceType; D3, §15 gap 3): AGL (above the ground),
+	// AMSL or WGS84 (ellipsoid). A limit is compared with the U-space
+	// airspace's directly in the same reference; in another, both are
+	// made AMSL over the restriction's area, the restriction's at the
+	// highest it reaches and the airspace's at the lowest. The F3548
+	// constraint is W84: an AGL lower limit over the lowest ground under
+	// the area, an AGL upper limit over the highest, so the volume never
+	// shrinks. Where the ground is not known everywhere under the area
+	// (ANSP_TERRAIN_DIR) such a conversion is refused 503
+	// terrain_unavailable, never guessed. AGL was added in this minor:
+	// a consumer that reads limits accepts it.
 	UpperRef VerticalRef `json:"upper_ref"`
 
 	// UspaceAirspaceId The ED-318 identifier of the current USPACE feature of the CIS the restriction lies in (M9).
@@ -3290,10 +3357,18 @@ type UserSummary struct {
 	Truncated bool      `json:"truncated"`
 }
 
-// VerticalRef The vertical reference of a restriction limit: AMSL or WGS84
-// (ellipsoid). AGL is refused for a dynamic restriction in this
-// release (D3, §15 gap 3) with the reason "AGL is not supported for
-// a dynamic restriction in this release".
+// VerticalRef The vertical reference of a restriction limit (ED-318
+// CodeVerticalReferenceType; D3, §15 gap 3): AGL (above the ground),
+// AMSL or WGS84 (ellipsoid). A limit is compared with the U-space
+// airspace's directly in the same reference; in another, both are
+// made AMSL over the restriction's area, the restriction's at the
+// highest it reaches and the airspace's at the lowest. The F3548
+// constraint is W84: an AGL lower limit over the lowest ground under
+// the area, an AGL upper limit over the highest, so the volume never
+// shrinks. Where the ground is not known everywhere under the area
+// (ANSP_TERRAIN_DIR) such a conversion is refused 503
+// terrain_unavailable, never guessed. AGL was added in this minor:
+// a consumer that reads limits accepts it.
 type VerticalRef string
 
 // Volume4D F3548 Volume4D as uspace-core/f3548 generates it from the
@@ -4785,9 +4860,11 @@ type ClientInterface interface {
 	// projection the answer is 503 cis_stale. The window and the area
 	// are checked against the F3548 constraint limits of uspace-core
 	// (CstrMaxDurationHours, CstrMaxPlanningHorizonDays, CstrMaxAreaKm2,
-	// CstrMaxVertices). Vertical limits are in AMSL or WGS84; AGL is
-	// refused with "lower_ref: AGL is not supported for a dynamic
-	// restriction in this release" (D3). Idempotency-Key is the
+	// CstrMaxVertices). Vertical limits are in AGL, AMSL or WGS84 (D3,
+	// VerticalRef): an AGL limit compared with an airspace limit in
+	// another reference, and every AGL limit's F3548 volume, need the
+	// DEM, and without it the answer is 503 terrain_unavailable.
+	// Idempotency-Key is the
 	// client's reference: a repeat with the same key and body answers
 	// 200 with the restriction first created; with another body, 409.
 	//
@@ -4805,9 +4882,11 @@ type ClientInterface interface {
 	// projection the answer is 503 cis_stale. The window and the area
 	// are checked against the F3548 constraint limits of uspace-core
 	// (CstrMaxDurationHours, CstrMaxPlanningHorizonDays, CstrMaxAreaKm2,
-	// CstrMaxVertices). Vertical limits are in AMSL or WGS84; AGL is
-	// refused with "lower_ref: AGL is not supported for a dynamic
-	// restriction in this release" (D3). Idempotency-Key is the
+	// CstrMaxVertices). Vertical limits are in AGL, AMSL or WGS84 (D3,
+	// VerticalRef): an AGL limit compared with an airspace limit in
+	// another reference, and every AGL limit's F3548 volume, need the
+	// DEM, and without it the answer is 503 terrain_unavailable.
+	// Idempotency-Key is the
 	// client's reference: a repeat with the same key and body answers
 	// 200 with the restriction first created; with another body, 409.
 	//
@@ -6102,9 +6181,11 @@ func (c *Client) ListRestrictions(ctx context.Context, params *ListRestrictionsP
 // projection the answer is 503 cis_stale. The window and the area
 // are checked against the F3548 constraint limits of uspace-core
 // (CstrMaxDurationHours, CstrMaxPlanningHorizonDays, CstrMaxAreaKm2,
-// CstrMaxVertices). Vertical limits are in AMSL or WGS84; AGL is
-// refused with "lower_ref: AGL is not supported for a dynamic
-// restriction in this release" (D3). Idempotency-Key is the
+// CstrMaxVertices). Vertical limits are in AGL, AMSL or WGS84 (D3,
+// VerticalRef): an AGL limit compared with an airspace limit in
+// another reference, and every AGL limit's F3548 volume, need the
+// DEM, and without it the answer is 503 terrain_unavailable.
+// Idempotency-Key is the
 // client's reference: a repeat with the same key and body answers
 // 200 with the restriction first created; with another body, 409.
 //
@@ -6132,9 +6213,11 @@ func (c *Client) CreateRestrictionWithBody(ctx context.Context, params *CreateRe
 // projection the answer is 503 cis_stale. The window and the area
 // are checked against the F3548 constraint limits of uspace-core
 // (CstrMaxDurationHours, CstrMaxPlanningHorizonDays, CstrMaxAreaKm2,
-// CstrMaxVertices). Vertical limits are in AMSL or WGS84; AGL is
-// refused with "lower_ref: AGL is not supported for a dynamic
-// restriction in this release" (D3). Idempotency-Key is the
+// CstrMaxVertices). Vertical limits are in AGL, AMSL or WGS84 (D3,
+// VerticalRef): an AGL limit compared with an airspace limit in
+// another reference, and every AGL limit's F3548 volume, need the
+// DEM, and without it the answer is 503 terrain_unavailable.
+// Idempotency-Key is the
 // client's reference: a repeat with the same key and body answers
 // 200 with the restriction first created; with another body, 409.
 //
@@ -9426,9 +9509,11 @@ type ClientWithResponsesInterface interface {
 	// projection the answer is 503 cis_stale. The window and the area
 	// are checked against the F3548 constraint limits of uspace-core
 	// (CstrMaxDurationHours, CstrMaxPlanningHorizonDays, CstrMaxAreaKm2,
-	// CstrMaxVertices). Vertical limits are in AMSL or WGS84; AGL is
-	// refused with "lower_ref: AGL is not supported for a dynamic
-	// restriction in this release" (D3). Idempotency-Key is the
+	// CstrMaxVertices). Vertical limits are in AGL, AMSL or WGS84 (D3,
+	// VerticalRef): an AGL limit compared with an airspace limit in
+	// another reference, and every AGL limit's F3548 volume, need the
+	// DEM, and without it the answer is 503 terrain_unavailable.
+	// Idempotency-Key is the
 	// client's reference: a repeat with the same key and body answers
 	// 200 with the restriction first created; with another body, 409.
 	//
@@ -9446,9 +9531,11 @@ type ClientWithResponsesInterface interface {
 	// projection the answer is 503 cis_stale. The window and the area
 	// are checked against the F3548 constraint limits of uspace-core
 	// (CstrMaxDurationHours, CstrMaxPlanningHorizonDays, CstrMaxAreaKm2,
-	// CstrMaxVertices). Vertical limits are in AMSL or WGS84; AGL is
-	// refused with "lower_ref: AGL is not supported for a dynamic
-	// restriction in this release" (D3). Idempotency-Key is the
+	// CstrMaxVertices). Vertical limits are in AGL, AMSL or WGS84 (D3,
+	// VerticalRef): an AGL limit compared with an airspace limit in
+	// another reference, and every AGL limit's F3548 volume, need the
+	// DEM, and without it the answer is 503 terrain_unavailable.
+	// Idempotency-Key is the
 	// client's reference: a repeat with the same key and body answers
 	// 200 with the restriction first created; with another body, 409.
 	//
@@ -14856,9 +14943,11 @@ func (c *ClientWithResponses) ListRestrictionsWithResponse(ctx context.Context, 
 // projection the answer is 503 cis_stale. The window and the area
 // are checked against the F3548 constraint limits of uspace-core
 // (CstrMaxDurationHours, CstrMaxPlanningHorizonDays, CstrMaxAreaKm2,
-// CstrMaxVertices). Vertical limits are in AMSL or WGS84; AGL is
-// refused with "lower_ref: AGL is not supported for a dynamic
-// restriction in this release" (D3). Idempotency-Key is the
+// CstrMaxVertices). Vertical limits are in AGL, AMSL or WGS84 (D3,
+// VerticalRef): an AGL limit compared with an airspace limit in
+// another reference, and every AGL limit's F3548 volume, need the
+// DEM, and without it the answer is 503 terrain_unavailable.
+// Idempotency-Key is the
 // client's reference: a repeat with the same key and body answers
 // 200 with the restriction first created; with another body, 409.
 //
@@ -14882,9 +14971,11 @@ func (c *ClientWithResponses) CreateRestrictionWithBodyWithResponse(ctx context.
 // projection the answer is 503 cis_stale. The window and the area
 // are checked against the F3548 constraint limits of uspace-core
 // (CstrMaxDurationHours, CstrMaxPlanningHorizonDays, CstrMaxAreaKm2,
-// CstrMaxVertices). Vertical limits are in AMSL or WGS84; AGL is
-// refused with "lower_ref: AGL is not supported for a dynamic
-// restriction in this release" (D3). Idempotency-Key is the
+// CstrMaxVertices). Vertical limits are in AGL, AMSL or WGS84 (D3,
+// VerticalRef): an AGL limit compared with an airspace limit in
+// another reference, and every AGL limit's F3548 volume, need the
+// DEM, and without it the answer is 503 terrain_unavailable.
+// Idempotency-Key is the
 // client's reference: a repeat with the same key and body answers
 // 200 with the restriction first created; with another body, 409.
 //

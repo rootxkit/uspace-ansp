@@ -37,7 +37,7 @@ func TestRefusalMapping(t *testing.T) {
 		slug  string
 		field string
 	}{
-		{&restriction.Refusal{Status: 400, Slug: restriction.SlugInvalid, Detail: "no", Fields: []*core.FieldError{core.Fieldf("lower_ref", "%s", restriction.ReasonAGL)}}, 400, restriction.SlugInvalid, "lower_ref"},
+		{&restriction.Refusal{Status: 400, Slug: restriction.SlugInvalid, Detail: "no", Fields: []*core.FieldError{core.Fieldf("lower_ref", "%q is not AGL, AMSL or WGS84", "QNH")}}, 400, restriction.SlugInvalid, "lower_ref"},
 		{&restriction.Refusal{Status: 503, Slug: restriction.SlugCISStale, Detail: "stale", RetryAfter: 10 * time.Second}, 503, restriction.SlugCISStale, ""},
 		{&restriction.Refusal{Status: 409, Slug: restriction.SlugIllegalTransition, Detail: "x"}, 409, restriction.SlugIllegalTransition, ""},
 		{restriction.ErrNotFound, 404, apierr.SlugNotFound, ""},

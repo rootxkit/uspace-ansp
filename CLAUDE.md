@@ -61,7 +61,10 @@ package brief in `docs/WORKPACKAGES/`.
    `stale_after_s`; Go `AltPressureM`, `GSMS`, `MarginLateralM`.
    Pressure altitude is never written to an AMSL column; AMSL and AGL
    never meet in one calculation (D-01). A restriction's vertical
-   reference is `AMSL` or `WGS84`; `AGL` is refused with a reason.
+   reference is `AGL`, `AMSL` or `WGS84`, stored as given; an AGL limit
+   is made absolute only through `uspace-core/terrain` over the whole
+   area (lowest ground for a lower bound, highest for an upper), and
+   ground that is not known is a refusal, never zero (D3, D-04).
 10. **No panics on untrusted input; everything refused, dropped,
     degraded or stalled is counted** with a stable snake_case name
     exported as a metric and shown in the process status (E-09, E-10).

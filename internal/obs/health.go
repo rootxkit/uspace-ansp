@@ -27,6 +27,7 @@ const (
 	DepDSS        = "dss"
 	DepJWKS       = "jwks"
 	DepGeoid      = "geoid"
+	DepTerrain    = "terrain"
 )
 
 // DefaultCheckTimeout bounds one probe; a probe that does not answer in

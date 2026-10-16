@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"math"
 	"strings"
 	"time"
 
@@ -89,9 +88,11 @@ func cisAge(snap Snapshot, err error, now time.Time, boundS float64) (float64, e
 // that covers the shape. The shape must lie inside it (a restriction
 // partly outside is refused: the ATC unit limits airspace inside U-space
 // airspace, 2021/664 Art. 4), and upper_m may not exceed the airspace's
-// upper limit in the same reference; with references that differ the
-// answer is reference_mismatch, never a silent conversion.
-func Place(ctx context.Context, in Input, snap Snapshot, m Measurer) (string, error) {
+// upper limit anywhere over the restriction (upperWithin): compared
+// directly in the same reference, and otherwise through dt, refused when
+// the conversion cannot be made (geoid_unavailable,
+// terrain_unavailable), never passed unjudged.
+func Place(ctx context.Context, in Input, snap Snapshot, m Measurer, dt Datums) (string, error) {
 	var candidates []*ed318.Feature
 	for i := range snap.Airspaces {
 		f := &snap.Airspaces[i]
@@ -146,40 +147,80 @@ func Place(ctx context.Context, in Input, snap Snapshot, m Measurer) (string, er
 		}
 		return "", invalid(core.Fieldf("uspace_airspace_id", "the restriction lies in several U-space airspaces (%s); name one", strings.Join(ids, ", ")))
 	}
-	return covering[0].id, upperWithin(in, covering[0].parts)
+	return covering[0].id, upperWithin(in, covering[0].parts, dt)
 }
 
-// upperWithin holds upper_m to the airspace's upper limit, comparing
-// only limits in the same reference.
-func upperWithin(in Input, parts []Part) error {
-	var sameRefCeilings []float64
-	var otherRefs []string
+// upperWithin holds upper_m to the airspace's upper limit. A limit in
+// the same reference is compared directly: AGL with AGL, AMSL with AMSL,
+// WGS84 with WGS84. Limits in different references are compared as AMSL
+// over the restriction's area, the restriction's at the highest it
+// reaches and the airspace's at the lowest (an AGL limit over the
+// highest or lowest ground under the restriction, a WGS84 limit over
+// the least or greatest undulation): the restriction is accepted only
+// where it stays below the airspace's ceiling at every point (gap 3).
+// A conversion that cannot be made is refused 503 (geoid_unavailable,
+// terrain_unavailable), never passed unjudged.
+func upperWithin(in Input, parts []Part, dt Datums) error {
+	var exceeded []string
+	env := &envelope{shape: in.Shape, datums: dt}
 	for _, p := range parts {
-		switch {
-		case p.UpperM == nil:
+		if p.UpperM == nil {
 			return nil // unlimited above
-		case p.UpperRef == in.UpperRef:
+		}
+		if p.UpperRef == in.UpperRef {
 			if in.UpperM <= *p.UpperM {
 				return nil
 			}
-			sameRefCeilings = append(sameRefCeilings, *p.UpperM)
-		default:
-			otherRefs = append(otherRefs, fmt.Sprintf("%v m %s", *p.UpperM, p.UpperRef))
+			exceeded = append(exceeded, fmt.Sprintf("%v m %s", *p.UpperM, p.UpperRef))
+			continue
 		}
+		switch p.UpperRef {
+		case RefAGL, RefAMSL, RefWGS84:
+		default:
+			return refuse(400, SlugReferenceMismatch, "the U-space airspace's upper limit has a reference this system cannot compare",
+				core.Fieldf("upper_ref", "the airspace's upper limit %v m %q is not AGL, AMSL or WGS84", *p.UpperM, string(p.UpperRef)))
+		}
+		hi, err := env.amslBound(in.UpperM, in.UpperRef, true)
+		if err != nil {
+			return conversionRefusal(err)
+		}
+		lo, err := env.amslBound(*p.UpperM, p.UpperRef, false)
+		if err != nil {
+			return conversionRefusal(err)
+		}
+		if hi <= lo {
+			return nil
+		}
+		exceeded = append(exceeded, fmt.Sprintf("%v m %s (%.1f m AMSL at its lowest under the restriction, which reaches %.1f m AMSL)", *p.UpperM, p.UpperRef, lo, hi))
 	}
-	if len(sameRefCeilings) > 0 {
-		return invalid(core.Fieldf("upper_m", "%v m %s is above the U-space airspace's upper limit %v m %s", in.UpperM, in.UpperRef, slicesMax(sameRefCeilings), in.UpperRef))
-	}
-	return refuse(400, SlugReferenceMismatch, "the restriction's upper limit and the U-space airspace's are in different references; give the limit in the airspace's reference",
-		core.Fieldf("upper_ref", "%s cannot be compared with the airspace's upper limit (%s) without a conversion this system does not make silently", in.UpperRef, strings.Join(otherRefs, ", ")))
+	return invalid(core.Fieldf("upper_m", "%v m %s is above the U-space airspace's upper limit %s", in.UpperM, in.UpperRef, strings.Join(exceeded, ", ")))
 }
 
-func slicesMax(v []float64) float64 {
-	out := math.Inf(-1)
-	for _, x := range v {
-		out = math.Max(out, x)
+// conversionRefusal is the refusal of a limit that cannot be converted:
+// 503 when the geoid or the ground cannot answer, 400 on the geometry
+// when the area is too large to read the ground under.
+func conversionRefusal(err error) error {
+	switch {
+	case errors.Is(err, ErrGeoidUnavailable):
+		return geoidRefusal()
+	case errors.Is(err, ErrTerrainUnavailable):
+		return terrainRefusal()
 	}
-	return out
+	var fe *core.FieldError
+	if errors.As(err, &fe) {
+		return invalid(fe)
+	}
+	return err
+}
+
+func geoidRefusal() *Refusal {
+	return &Refusal{Status: 503, Slug: SlugGeoidUnavailable,
+		Detail: "the geoid is not configured or cannot answer (ANSP_GEOID_FILE); an AMSL or AGL limit cannot be made W84, and a wrong altitude is never written", RetryAfter: 60 * time.Second}
+}
+
+func terrainRefusal() *Refusal {
+	return &Refusal{Status: 503, Slug: SlugTerrainUnavailable,
+		Detail: "the ground under the restriction is not known everywhere (ANSP_TERRAIN_DIR: no terrain, a cell outside its index, an unreadable tile or a NoData sample); an AGL limit cannot be made absolute, and a guessed ground is never used", RetryAfter: 60 * time.Second}
 }
 
 // airspaceParts is the geometry parts of a U-space airspace feature,

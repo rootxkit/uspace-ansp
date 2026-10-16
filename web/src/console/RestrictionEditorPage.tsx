@@ -134,8 +134,8 @@ export function RestrictionEditorPage() {
           <EnumField name="lower_ref" labelKey="ansp.field.lower_ref" values={VERTICAL_REFS} i18nPrefix="ansp.vertical_ref" required />
           <NumberField name="upper_m" labelKey="ansp.field.upper_m" unit="form.unit.m" required />
           <EnumField name="upper_ref" labelKey="ansp.field.upper_ref" values={VERTICAL_REFS} i18nPrefix="ansp.vertical_ref" required />
-          <p className="m-0 text-xs text-muted-foreground" data-testid="agl-unavailable">
-            {t("ansp.editor.agl_unavailable")}
+          <p className="m-0 text-xs text-muted-foreground" data-testid="agl-note">
+            {t("ansp.editor.agl_note")}
           </p>
           <UTCDateTimeField name="starts_at" labelKey="ansp.field.starts_at" required />
           <UTCDateTimeField name="ends_at" labelKey="ansp.field.ends_at" required />

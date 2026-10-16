@@ -2,6 +2,7 @@ package restriction
 
 import (
 	"encoding/json"
+	"errors"
 	"math"
 	"strings"
 	"testing"
@@ -227,7 +228,7 @@ func TestIdentifier(t *testing.T) {
 func TestVolumesAMSL(t *testing.T) {
 	r := sample()
 	r.LowerM, r.UpperM = 100, 300
-	vs, d, err := Volumes(r, gridGeoid{})
+	vs, d, err := Volumes(r, Datums{Geoid: gridGeoid{}})
 	if err != nil || len(vs) != 1 {
 		t.Fatal(err)
 	}
@@ -249,7 +250,7 @@ func TestVolumesAMSL(t *testing.T) {
 // circle keeps its centre and radius in metres.
 func TestVolumesWGS84Circle(t *testing.T) {
 	r := circle()
-	vs, d, err := Volumes(r, nil)
+	vs, d, err := Volumes(r, Datums{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -260,31 +261,31 @@ func TestVolumesWGS84Circle(t *testing.T) {
 	}
 	// A circle's AMSL limits take the undulations at its centre and box.
 	r.LowerRef, r.UpperRef = RefAMSL, RefAMSL
-	if _, d, err := Volumes(r, gridGeoid{}); err != nil || d.UndulationSamples != 5 || *d.UndulationMinM >= *d.UndulationMaxM {
+	if _, d, err := Volumes(r, Datums{Geoid: gridGeoid{}}); err != nil || d.UndulationSamples != 5 || *d.UndulationMinM >= *d.UndulationMaxM {
 		t.Fatalf("%+v %v", d, err)
 	}
 }
 
 // Without a geoid (or one that cannot answer) an AMSL limit is refused
-// and counted, never guessed; a reference outside D3 is refused.
+// and counted, never guessed; an AGL limit without terrain likewise.
 func TestVolumesGeoidUnavailable(t *testing.T) {
 	var c core.Counters
 	f, _ := Feature(sample(), cfg)
-	if _, err := Details(sample(), f, nil, &c); err != ErrGeoidUnavailable || c.Get(CounterGeoidUnavailable) != 1 { //nolint:errorlint // the sentinel itself
+	if _, err := Details(sample(), f, Datums{}, &c); err != ErrGeoidUnavailable || c.Get(CounterGeoidUnavailable) != 1 { //nolint:errorlint // the sentinel itself
 		t.Fatalf("%v %v", err, c.Snapshot())
 	}
-	if _, err := Details(sample(), f, gridGeoid{fail: true}, &c); err != ErrGeoidUnavailable || c.Get(CounterGeoidUnavailable) != 2 { //nolint:errorlint // the sentinel itself
+	if _, err := Details(sample(), f, Datums{Geoid: gridGeoid{fail: true}}, &c); err != ErrGeoidUnavailable || c.Get(CounterGeoidUnavailable) != 2 { //nolint:errorlint // the sentinel itself
 		t.Fatal(err)
 	}
 	r := sample()
 	r.LowerRef, r.UpperRef = core.RefAGL, core.RefAGL
-	if _, _, err := Volumes(r, gridGeoid{}); err == nil {
-		t.Fatal("AGL volume")
+	if _, _, err := Volumes(r, Datums{Geoid: gridGeoid{}}); !errors.Is(err, ErrTerrainUnavailable) {
+		t.Fatalf("AGL volume without terrain: %v", err)
 	}
 	r = sample()
 	r.Shape = Shape{Ring: []core.LatLon{{LatDeg: 1, LonDeg: 1}}}
 	r.LowerRef, r.UpperRef = RefWGS84, RefWGS84
-	if _, _, err := Volumes(r, nil); err == nil {
+	if _, _, err := Volumes(r, Datums{}); err == nil {
 		t.Fatal("a one-vertex outline")
 	}
 	if _, _, _, err := undulationRange(Shape{}, gridGeoid{}); err == nil {
@@ -297,7 +298,7 @@ func TestVolumesGeoidUnavailable(t *testing.T) {
 func TestDetailsGeozoneOmitted(t *testing.T) {
 	var c core.Counters
 	f, _ := Feature(sample(), cfg)
-	sc, err := Details(sample(), f, gridGeoid{}, &c)
+	sc, err := Details(sample(), f, Datums{Geoid: gridGeoid{}}, &c)
 	if err != nil || *sc.Details.Type != ConstraintType || len(sc.Details.Volumes) != 1 || sc.Details.Geozone != nil {
 		t.Fatalf("%+v %v", sc, err)
 	}
@@ -334,7 +335,7 @@ func BenchmarkVolumes(b *testing.B) {
 	r := sample()
 	g := gridGeoid{}
 	for b.Loop() {
-		if _, _, err := Volumes(r, g); err != nil {
+		if _, _, err := Volumes(r, Datums{Geoid: g}); err != nil {
 			b.Fatal(err)
 		}
 	}

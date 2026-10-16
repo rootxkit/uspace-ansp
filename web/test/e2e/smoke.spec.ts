@@ -87,7 +87,7 @@ test("sign in with MFA, plan a restriction, activate it, see the delivery change
   await page.getByLabel("Starts, UTC").fill("2026-10-05T12:00");
   await page.getByLabel("Ends, UTC").fill("2026-10-05T16:00");
   await page.getByRole("textbox", { name: "Reason", exact: true }).fill("Search and rescue operation (synthetic)");
-  await expect(page.getByTestId("agl-unavailable")).toContainText("AGL is not available");
+  await expect(page.getByTestId("agl-note")).toContainText("terrain_unavailable");
   await page.getByRole("button", { name: "Plan", exact: true }).click();
   const confirm = page.getByRole("alertdialog");
   await expect(confirm).toContainText("publishes it to the CISP as planned");

@@ -46,8 +46,8 @@
 //
 // Validate reports every problem, repairs none: zone type PROHIBITED or
 // REQ_AUTHORIZATION (D4; empty takes the policy's default_zone_type);
-// both limits with a reference, AMSL or WGS84, AGL refused with ReasonAGL
-// (D3, D-01); lower below upper; starts_at before ends_at, not more than
+// both limits with a reference, AGL, AMSL or WGS84 (D3, D-01); lower
+// below upper in the same reference; starts_at before ends_at, not more than
 // StartLead in the past, within CstrMaxPlanningHorizonDays; reason_text
 // at most 200 characters (it becomes the feature's name and message); the
 // shape through ed318.Parse of the feature it would make (the
@@ -60,9 +60,14 @@
 // Place requires a current USPACE feature of the CIS projection (M9, gap
 // 13; no switch): the named one, or with none named the one feature that
 // covers the shape. The shape must lie inside it (partly outside is
-// refused) and upper_m may not exceed the airspace's upper limit in the
-// same reference; references that differ are reference_mismatch, never
-// converted. A projection that is absent or older than cis_stale_bound_s
+// refused) and upper_m may not exceed the airspace's upper limit: in the
+// same reference directly (AGL with AGL needs no terrain); across
+// references both as AMSL over the restriction's area, the restriction at
+// the highest it reaches (an AGL limit over the highest ground under it)
+// and the airspace at the lowest (Datums: the geoid, the DEM). A
+// conversion that cannot be made is 503 geoid_unavailable or
+// terrain_unavailable, never passed unjudged; an airspace limit in a
+// reference that is none of the three is reference_mismatch. A projection that is absent or older than cis_stale_bound_s
 // is 503 cis_stale. Area (CstrMaxAreaKm2) and the relation of two shapes
 // are the store's (PostGIS on geography; core has neither).
 //
@@ -95,12 +100,18 @@
 // # The F3548 volumes (constraint.go)
 //
 // Volumes is one Volume4D in W84 metres: a WGS84 limit passes through; an
-// AMSL limit is made HAE with geoid.HAEFromAMSL, the lower with the
-// least undulation over the outline and the upper with the greatest (a
-// conservative envelope, gap 3), the undulations recorded in the version's
-// constraint derivation. Without a geoid an AMSL plan, activation or
-// extension is refused 503 geoid_unavailable and counted; an end, cancel
-// or expiry is never held up by it and is written without a constraint.
+// AGL limit is made AMSL over the ground under the area (uspace-core
+// terrain.Store.RangeM over the shape's box: the lowest ground for the
+// lower limit, the highest for the upper), and an AMSL limit, or the AMSL
+// an AGL one became, is made HAE with geoid.HAEFromAMSL, the lower with
+// the least undulation over the outline and the upper with the greatest:
+// a conservative envelope that never shrinks below the restriction (gap
+// 3). The ground and undulations used are recorded in the version's
+// constraint derivation. Without a geoid, or without ground known
+// everywhere under the area, a plan, activation or extension that needs
+// it is refused 503 geoid_unavailable or terrain_unavailable and counted;
+// an end, cancel or expiry is never held up by it and is written without
+// a constraint.
 // Details adds type DAR and the geozone where ed318.ToED269 can map the
 // feature, which for a DAR it cannot, so it is omitted and counted (gap
 // 16).

@@ -160,9 +160,14 @@ const MaxTickBatch = 100
 type Service struct {
 	Repo      Repo
 	Airspaces Airspaces
-	// Geoid makes AMSL limits HAE for the F3548 volumes; nil refuses
-	// AMSL restrictions with geoid_unavailable (counted).
+	// Geoid makes AMSL and AGL limits HAE for the F3548 volumes; nil
+	// refuses them with geoid_unavailable (counted).
 	Geoid geoid.Undulator
+	// Ground makes AGL limits AMSL (the DEM, ANSP_TERRAIN_DIR) for the
+	// F3548 volumes and for a comparison with an airspace limit in
+	// another reference; nil refuses those with terrain_unavailable
+	// (counted). An AGL limit compared with an AGL airspace needs none.
+	Ground Ground
 	// Bus publishes restr.v1; nil leaves every version unpublished, and
 	// counted, until a bus is there (Tick republishes).
 	Bus Publisher
@@ -181,6 +186,9 @@ type Service struct {
 
 	counters core.Counters
 }
+
+// datums are the service's geoid and ground.
+func (s *Service) datums() Datums { return Datums{Geoid: s.Geoid, Ground: s.Ground} }
 
 // Counters are the service's counters.
 func (s *Service) Counters() *core.Counters { return &s.counters }
@@ -271,7 +279,7 @@ func (s *Service) plan(ctx context.Context, tx Tx, actor Actor, in Input, opt Pl
 	if _, err := cisAge(snap, serr, now, pol.CISStaleBoundS); err != nil {
 		return "", nil, err
 	}
-	airspace, err := Place(ctx, in, snap, tx)
+	airspace, err := Place(ctx, in, snap, tx, s.datums())
 	if err != nil {
 		return "", nil, err
 	}
@@ -369,23 +377,17 @@ func (s *Service) featureConfig(pol policy.Policy) FeatureConfig {
 }
 
 // constraint is the stored constraint document of r. With strict, a
-// geoid that cannot answer refuses (503 geoid_unavailable); otherwise
+// geoid or ground that cannot answer refuses (503 geoid_unavailable,
+// terrain_unavailable); otherwise
 // (end, cancel, expire: the restriction is going away) the version is
 // written without one.
 func (s *Service) constraint(r Restriction, f *ed318.Feature, strict bool) (json.RawMessage, error) {
-	sc, err := Details(r, f, s.Geoid, &s.counters)
-	if errors.Is(err, ErrGeoidUnavailable) {
-		if !strict {
-			return nil, nil
-		}
-		return nil, &Refusal{Status: 503, Slug: SlugGeoidUnavailable,
-			Detail: "the geoid is not configured or cannot answer (ANSP_GEOID_FILE); an AMSL limit cannot be made W84 for the F3548 constraint, and a wrong altitude is never written", RetryAfter: 60 * time.Second}
-	}
+	sc, err := Details(r, f, s.datums(), &s.counters)
 	if err != nil {
 		if !strict {
 			return nil, nil
 		}
-		return nil, err
+		return nil, conversionRefusal(err)
 	}
 	return json.Marshal(sc)
 }
@@ -524,7 +526,7 @@ func (s *Service) reissue(ctx context.Context, tx Tx, actor Actor, r Restriction
 	if _, err := cisAge(snap, serr, now, pol.CISStaleBoundS); err != nil {
 		return "", nil, err
 	}
-	airspace, err := Place(ctx, in, snap, tx)
+	airspace, err := Place(ctx, in, snap, tx, s.datums())
 	if err != nil {
 		return "", nil, err
 	}
