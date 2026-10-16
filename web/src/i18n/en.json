@@ -658,5 +658,18 @@
   "ansp.users.disable.title": "Disable {username}?",
   "ansp.users.disable.body": "The API disables the account and ends its sessions. {username} can no longer sign in.",
   "ansp.users.disable.confirm": "Disable the account",
-  "ansp.users.disable.done": "{username} is disabled."
+  "ansp.users.disable.done": "{username} is disabled.",
+  "ansp.time.utc": "{day} {month} {year}, {time} UTC",
+  "ansp.time.month.1": "Jan",
+  "ansp.time.month.2": "Feb",
+  "ansp.time.month.3": "Mar",
+  "ansp.time.month.4": "Apr",
+  "ansp.time.month.5": "May",
+  "ansp.time.month.6": "Jun",
+  "ansp.time.month.7": "Jul",
+  "ansp.time.month.8": "Aug",
+  "ansp.time.month.9": "Sep",
+  "ansp.time.month.10": "Oct",
+  "ansp.time.month.11": "Nov",
+  "ansp.time.month.12": "Dec"
 }

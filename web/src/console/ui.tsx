@@ -1,16 +1,17 @@
 "use client";
 
-// The console's small display parts: a time in the viewer's zone with
-// its UTC value on hover, a state badge, the API's refusal shown in
+// The console's small display parts: a time in UTC laid out for the
+// page's language, a state badge, the API's refusal shown in
 // full, the confirm-with-a-reason act every audited operation goes
 // through, and the empty state that says why it is empty.
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState, useSyncExternalStore, type ReactNode } from "react";
-import { fmtTimeUTC, LOCALES, useLang, useT } from "@rootxkit/uspace-ui/i18n";
+import { createTranslator, useLang, useT, type Translate } from "@rootxkit/uspace-ui/i18n";
 import { ConfirmDialog } from "@rootxkit/uspace-ui/form";
 import type { StatusTone } from "@rootxkit/uspace-ui/theme";
 import { Button, PageHeader, Panel, StatusBadge, type Crumb, type LinkRenderer } from "@rootxkit/uspace-ui/ui";
+import { catalogues } from "../i18n/catalogues";
 import { failureOf, type CallFailure } from "../api/client";
 import { navItemOf } from "./roles";
 
@@ -27,41 +28,43 @@ export function useInBrowser(): boolean {
   );
 }
 
+function two(n: number): string {
+  return String(n).padStart(2, "0");
+}
+
 /**
- * The viewer's local rendering of an RFC 3339 instant; the UTC value is
- * the title. The server, which does not know the viewer's zone, renders
- * the UTC value (convert at the display layer only).
+ * An RFC 3339 instant in UTC, laid out for the page's language from the
+ * catalogue ("15 Oct 2026, 22:07:49 UTC", "15 ოქტ. 2026, 22:07:49 UTC"):
+ * the console says UTC everywhere, never the viewer's zone. The month
+ * names are the catalogue's, not the browser's: a browser without
+ * Georgian locale data formats ka-GE in English. Null when the value is
+ * not a time.
  */
-export function localTime(iso: string, lang: "ka" | "en"): string | null {
+export function utcTime(iso: string, t: Translate): string | null {
   const ms = Date.parse(iso);
   if (!Number.isFinite(ms)) return null;
-  return new Intl.DateTimeFormat(LOCALES[lang], {
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    hourCycle: "h23",
-    timeZoneName: "short",
-  }).format(new Date(ms));
+  const d = new Date(ms);
+  return t("ansp.time.utc", {
+    day: d.getUTCDate(),
+    month: t(`ansp.time.month.${d.getUTCMonth() + 1}`),
+    year: d.getUTCFullYear(),
+    time: `${two(d.getUTCHours())}:${two(d.getUTCMinutes())}:${two(d.getUTCSeconds())}`,
+  });
 }
 
 /** An instant as UTC text in the viewer's language, or a dash. */
 export function utcText(iso: string | null | undefined, lang: "ka" | "en"): string {
   if (iso === null || iso === undefined || iso === "") return "—";
-  return fmtTimeUTC(iso, lang, { seconds: true });
+  return utcTime(iso, createTranslator(lang, catalogues)) ?? iso;
 }
 
+/** A time in UTC in the page's language; its RFC 3339 value is the title. */
 export function Time({ iso }: { iso: string | null | undefined }) {
-  const { lang } = useLang();
-  const browser = useInBrowser();
+  const t = useT();
   if (iso === null || iso === undefined || iso === "") return <span>—</span>;
-  const utc = fmtTimeUTC(iso, lang, { seconds: true });
-  const local = browser ? localTime(iso, lang) : null;
   return (
-    <time dateTime={iso} title={utc} className="whitespace-nowrap">
-      {local ?? utc}
+    <time dateTime={iso} title={iso} className="whitespace-nowrap" data-testid="utc-time">
+      {utcTime(iso, t) ?? iso}
     </time>
   );
 }

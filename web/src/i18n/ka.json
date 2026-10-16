@@ -658,5 +658,18 @@
   "ansp.users.disable.title": "გაითიშოს {username}?",
   "ansp.users.disable.body": "API თიშავს ანგარიშს და ასრულებს მის სესიებს. {username} ვეღარ შევა.",
   "ansp.users.disable.confirm": "ანგარიშის გათიშვა",
-  "ansp.users.disable.done": "{username} გათიშულია."
+  "ansp.users.disable.done": "{username} გათიშულია.",
+  "ansp.time.utc": "{day} {month}. {year}, {time} UTC",
+  "ansp.time.month.1": "იან",
+  "ansp.time.month.2": "თებ",
+  "ansp.time.month.3": "მარ",
+  "ansp.time.month.4": "აპრ",
+  "ansp.time.month.5": "მაი",
+  "ansp.time.month.6": "ივნ",
+  "ansp.time.month.7": "ივლ",
+  "ansp.time.month.8": "აგვ",
+  "ansp.time.month.9": "სექ",
+  "ansp.time.month.10": "ოქტ",
+  "ansp.time.month.11": "ნოე",
+  "ansp.time.month.12": "დეკ"
 }
