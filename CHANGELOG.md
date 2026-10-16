@@ -50,6 +50,19 @@ complete.
 
 ### Fixed
 
+- A nonconformance or contingent notice kept escalating after the same
+  USSP's `ended` notice for its intent (live: 28+ escalations of one
+  notice). An `ended` notice from the same sender (`sender_client_id`
+  and `ussp_id`) now resolves its open deviation notices once every one
+  of their intents is ended: `resolved_at` and `resolved_by_ack_id`
+  (relational migration 0073; additive in `CoordinationNotice` and
+  `coordination/notice/v1`), audited, counted
+  `notices_resolved_by_ussp`. A resolved notice escalates no more and
+  stays unacknowledged; the inbox lists it with the notices awaiting a
+  person and says "Resolved by the USSP at T; acknowledge to file." An
+  `ended` notice of another USSP or for other intents resolves nothing.
+  A deviation over while the intent goes on still escalates until
+  acknowledged (docs/PLAN.md section 15 row 55, open).
 - The picture page's live manned stream was refused where deployed:
   manned-feed verified no console session (row 54 (3)). It now verifies
   them with the public part of the session key alone,
