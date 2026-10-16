@@ -94,6 +94,9 @@ func Volumes(r Restriction, dt Datums) ([]f3548.Volume4D, Derivation, error) {
 	if err != nil {
 		return nil, d, err
 	}
+	if err := ordered(r, env, lower, upper); err != nil {
+		return nil, d, err
+	}
 	if env.undulationRead {
 		lo, hi := env.undulationLo, env.undulationHi
 		d.UndulationMinM, d.UndulationMaxM, d.UndulationSamples = &lo, &hi, env.undulationSamples
@@ -142,6 +145,34 @@ func Volumes(r Restriction, dt Datums) ([]f3548.Volume4D, Derivation, error) {
 		return nil, d, err
 	}
 	return []f3548.Volume4D{v}, d, nil
+}
+
+// ordered refuses limits that are not lower below upper everywhere under
+// the restriction. Validate compares limits in one reference (AGL with
+// AGL is the same comparison at every point); limits in different
+// references are compared here, as AMSL over the area: the lower limit
+// at the highest it reaches and the upper at the lowest, so a
+// restriction inverted or empty anywhere (an AMSL floor above an AGL
+// ceiling over the low ground) is refused, never widened into a volume
+// that hides it. The W84 volume itself must not be inverted or empty.
+func ordered(r Restriction, env *envelope, lowerHAE, upperHAE float64) error {
+	if r.LowerRef != r.UpperRef {
+		lo, err := env.amslBound(r.LowerM, r.LowerRef, true)
+		if err != nil {
+			return err
+		}
+		hi, err := env.amslBound(r.UpperM, r.UpperRef, false)
+		if err != nil {
+			return err
+		}
+		if !(lo < hi) {
+			return core.Fieldf("upper_m", "%v m %s is not above lower_m %v m %s everywhere under the restriction: the lower limit reaches %.1f m AMSL and the upper limit falls to %.1f m AMSL", r.UpperM, r.UpperRef, r.LowerM, r.LowerRef, lo, hi)
+		}
+	}
+	if !(lowerHAE < upperHAE) {
+		return core.Fieldf("upper_m", "the F3548 volume would be inverted or empty: %.1f m to %.1f m W84", lowerHAE, upperHAE)
+	}
+	return nil
 }
 
 // undulationRange is the least and greatest undulation over the outline:

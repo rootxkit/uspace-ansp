@@ -292,3 +292,69 @@ func TestServiceAGLRestriction(t *testing.T) {
 		t.Fatalf("end without terrain: %+v %v", ended, err)
 	}
 }
+
+// The blocker of review: limits in different references are ordered
+// everywhere under the restriction, as AMSL over the area, the lower at
+// its highest and the upper at its lowest. Over 500..800 m ground, a
+// floor of 0 m AGL reaches 800 m AMSL: an upper limit of 900 m AMSL is
+// above it everywhere (presence), 700 m AMSL is below it over the hill
+// (refused, never widened into a volume that hides the inversion). An
+// AMSL floor over an AGL ceiling likewise; a WGS84 ceiling against an
+// AMSL floor through the geoid; and an empty W84 volume.
+func TestVolumesOrderedEverywhere(t *testing.T) {
+	dt := Datums{Geoid: gridGeoid{}, Ground: hills()}
+	mixed := func(lower float64, lowerRef core.VerticalRef, upper float64, upperRef core.VerticalRef) Restriction {
+		r := sample()
+		r.LowerM, r.LowerRef, r.UpperM, r.UpperRef = lower, lowerRef, upper, upperRef
+		return r
+	}
+	for name, tc := range map[string]struct {
+		r      Restriction
+		reason string // "" accepted
+	}{
+		"AGL floor under an AMSL ceiling everywhere":  {mixed(0, RefAGL, 900, RefAMSL), ""},
+		"AGL floor above an AMSL ceiling on the hill": {mixed(0, RefAGL, 700, RefAMSL), "reaches 800.0 m AMSL"},
+		"AMSL floor under an AGL ceiling everywhere":  {mixed(550, RefAMSL, 100, RefAGL), ""},
+		"AMSL floor above an AGL ceiling in the low":  {mixed(650, RefAMSL, 100, RefAGL), "falls to 600.0 m AMSL"},
+		"WGS84 ceiling above an AMSL floor":           {mixed(100, RefAMSL, 120, RefWGS84), ""},
+		"WGS84 ceiling below an AMSL floor":           {mixed(100, RefAMSL, 105, RefWGS84), "falls to 93.4 m AMSL"},
+		"an empty volume (Validate bypassed)":         {mixed(100, RefWGS84, 100, RefWGS84), "inverted or empty"},
+	} {
+		vs, _, err := Volumes(tc.r, dt)
+		if tc.reason == "" {
+			if err != nil || !(vs[0].Volume.AltitudeLower.Value < vs[0].Volume.AltitudeUpper.Value) {
+				t.Errorf("%s: %v %+v", name, err, vs)
+			}
+			continue
+		}
+		var fe *core.FieldError
+		if !errors.As(err, &fe) || fe.Field != "upper_m" || !strings.Contains(fe.Reason, tc.reason) {
+			t.Errorf("%s: %v, want upper_m %q", name, err, tc.reason)
+		}
+	}
+	// The ordering needs the datum it converts with: fail closed.
+	if _, _, err := Volumes(mixed(0, RefAGL, 900, RefAMSL), Datums{Geoid: gridGeoid{}}); !errors.Is(err, ErrTerrainUnavailable) {
+		t.Fatalf("without terrain: %v", err)
+	}
+}
+
+// The service refuses the inverted plan 400 on upper_m, and stores
+// nothing.
+func TestServiceRefusesAnInvertedMixedRestriction(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t)
+	f.svc.Ground = hills()
+	in := input(t0, t0.Add(time.Hour))
+	in.LowerM, in.LowerRef, in.UpperM, in.UpperRef = 0, RefAGL, 700, RefAMSL
+	_, _, err := f.svc.Plan(ctx, supervisor, in, PlanOptions{})
+	if rf := refusalOf(t, err); rf.Status != 400 || rf.Slug != SlugInvalid || !hasField(rf, "upper_m", "not above lower_m") {
+		t.Fatalf("%+v", rf)
+	}
+	if got := f.bus.subjects(); len(got) != 0 {
+		t.Fatalf("published %v", got)
+	}
+	in.UpperM = 900
+	if _, _, err := f.svc.Plan(ctx, supervisor, in, PlanOptions{}); err != nil {
+		t.Fatalf("ordered everywhere: %v", err)
+	}
+}
