@@ -7,6 +7,8 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
+	"strconv"
 	"sync/atomic"
 	"time"
 
@@ -88,7 +90,7 @@ func loadGeoid(cfg config.Config, logger *slog.Logger) (geoid.Undulator, []obs.C
 // loadTerrain opens ANSP_TERRAIN_DIR with uspace-core's terrain store:
 // its index.json read and parsed now, its tiles mapped read-only on first
 // use (terrain.MappedDirOpener, WP-19). It returns the readiness check
-// that names the cells indexed. Without ANSP_TERRAIN_DIR there is no
+// (terrainProbe), which reads a tile, not only the index. Without ANSP_TERRAIN_DIR there is no
 // store and no check, and the log says what is refused; an index that
 // does not read or parse refuses the start (a DEM configured and broken
 // is not silently none).
@@ -107,10 +109,59 @@ func loadTerrain(cfg config.Config, logger *slog.Logger) (restriction.Ground, []
 	}
 	dem := terrain.NewStore(index, terrain.StoreOptions{OpenTile: terrain.MappedDirOpener(cfg.TerrainDir, 0)})
 	logger.Info("terrain indexed", slog.String("terrain_dir", cfg.TerrainDir), slog.Int("terrain_cells", len(index)))
-	reason := fmt.Sprintf("%d cells indexed", len(index))
-	return dem, []obs.Check{{Name: obs.DepTerrain, Probe: func(context.Context) (obs.State, string) {
-		return obs.StateOK, reason
-	}}}, nil
+	return dem, []obs.Check{{Name: obs.DepTerrain, Probe: terrainProbe(dem, index)}}, nil
+}
+
+// terrainProbe is the readiness of the DEM: the elevation at the centre
+// of the first land cell of the index (sorted by name), so a tile that is
+// missing or does not parse is seen on /readyz rather than at the first
+// AGL restriction. ok with the cells indexed and the cell read; degraded
+// with the cell when it gives no elevation (the store reads a failed
+// tile again after its retry interval, so the probe recovers with it);
+// an index of sea cells only reads no tile and is ok.
+func terrainProbe(dem *terrain.Store, index terrain.Index) func(context.Context) (obs.State, string) {
+	cells := make([]string, 0, len(index))
+	for c, ds := range index {
+		if ds != terrain.SeaDataset {
+			cells = append(cells, c)
+		}
+	}
+	slices.Sort(cells)
+	return func(context.Context) (obs.State, string) {
+		if len(cells) == 0 {
+			return obs.StateOK, fmt.Sprintf("%d cells indexed, all sea", len(index))
+		}
+		p, ok := cellCentre(cells[0])
+		if !ok {
+			return obs.StateDegraded, fmt.Sprintf("the cell name %q is not one terrain.CellName writes", cells[0])
+		}
+		e, err := dem.Elevation(p)
+		if err != nil || e == nil {
+			return obs.StateDegraded, fmt.Sprintf("tile %s gives no elevation at its centre (missing, unreadable or NoData); AGL limits over it are refused 503 terrain_unavailable", cells[0])
+		}
+		return obs.StateOK, fmt.Sprintf("%d cells indexed; tile %s read (%s)", len(index), cells[0], e.Dataset)
+	}
+}
+
+// cellCentre is the centre of a cell named as terrain.CellName names it
+// ("N41E044": 41.5N 44.5E), checked by naming it back.
+func cellCentre(cell string) (core.LatLon, bool) {
+	if len(cell) != 7 {
+		return core.LatLon{}, false
+	}
+	lat, err1 := strconv.Atoi(cell[1:3])
+	lon, err2 := strconv.Atoi(cell[4:7])
+	if err1 != nil || err2 != nil {
+		return core.LatLon{}, false
+	}
+	if cell[0] == 'S' {
+		lat = -lat
+	}
+	if cell[3] == 'W' {
+		lon = -lon
+	}
+	p := core.LatLon{LatDeg: float64(lat) + 0.5, LonDeg: float64(lon) + 0.5}
+	return p, terrain.CellName(p) == cell
 }
 
 // wireRestrictions builds the restriction service on the relational

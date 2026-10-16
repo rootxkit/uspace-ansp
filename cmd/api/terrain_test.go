@@ -78,11 +78,45 @@ func TestTerrainLoaded(t *testing.T) {
 		t.Fatalf("outside the index: %+v %v", r, err)
 	}
 	rep := (&obs.Health{Process: process}).Check(context.Background(), checks...)
-	if rep.Status != obs.StatusReady || len(rep.Summary) != 1 || rep.Summary[0] != "terrain: ok (1 cells indexed)" || checks[0].Required {
+	if rep.Status != obs.StatusReady || len(rep.Summary) != 1 || rep.Summary[0] != "terrain: ok (1 cells indexed; tile N41E044 read (COP-DEM GLO-30))" || checks[0].Required {
 		t.Fatalf("/readyz %+v", rep)
 	}
 	if !strings.Contains(out.String(), `"terrain_cells":1`) {
 		t.Fatalf("start log:\n%s", out.String())
+	}
+}
+
+// The readiness reads a tile: a tile that is indexed and missing is
+// degraded on /readyz, naming the cell (absence of the healthy answer
+// above); an index of sea only reads none and is ok.
+func TestTerrainProbeReadsATile(t *testing.T) {
+	dir := writeTerrain(t)
+	if err := os.Remove(filepath.Join(dir, "N41E044.pgm")); err != nil {
+		t.Fatal(err)
+	}
+	logger := obs.LoggerTo(&syncBuffer{}, config.Config{Process: process, LogLevel: "info"})
+	_, checks, err := loadTerrain(config.Config{TerrainDir: dir}, logger)
+	if err != nil || len(checks) != 1 {
+		t.Fatal(err)
+	}
+	state, why := checks[0].Probe(context.Background())
+	if state != obs.StateDegraded || !strings.Contains(why, "tile N41E044 gives no elevation") {
+		t.Fatalf("%s %q", state, why)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "index.json"), []byte(`{"cells":{"N41E044":"sea","S01W001":"sea"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, checks, _ = loadTerrain(config.Config{TerrainDir: dir}, logger)
+	if state, why := checks[0].Probe(context.Background()); state != obs.StateOK || why != "2 cells indexed, all sea" {
+		t.Fatalf("%s %q", state, why)
+	}
+	for _, c := range []struct {
+		cell string
+		ok   bool
+	}{{"N41E044", true}, {"S01W001", true}, {"N4E044", false}, {"X41E044", false}, {"N41E04x", false}} {
+		if _, ok := cellCentre(c.cell); ok != c.ok {
+			t.Errorf("%s: %v", c.cell, ok)
+		}
 	}
 }
 
