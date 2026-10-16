@@ -37,7 +37,7 @@ import {
 } from "./inbox";
 import { MAX_NOTICES, useInbox } from "./InboxProvider";
 import { maySupervise } from "./roles";
-import { ConsolePageHeader, Empty, Loading, ProblemNotice, Time } from "./ui";
+import { ConsolePageHeader, Empty, Loading, ProblemNotice, Time, utcText } from "./ui";
 import { useRestrictions } from "./useRestrictions";
 
 const FILTERS = ["all", "escalated", "received", "acknowledged"] as const;
@@ -167,6 +167,11 @@ function NoticeCard({ notice, selected, onSelect, onConflict }: { notice: ApiNot
       {loud && (
         <p className="m-0 font-semibold text-status-critical" data-testid="notice-escalated">
           {t("ansp.inbox.escalated", { count: notice.escalations ?? 1 })} <Time iso={notice.last_escalated_at ?? notice.escalated_at} />
+        </p>
+      )}
+      {notice.resolved_at !== undefined && notice.state !== "acknowledged" && (
+        <p className="m-0 text-xs" data-testid="notice-resolved">
+          {t("ansp.inbox.resolved", { at: utcText(notice.resolved_at, lang) })}
         </p>
       )}
       {group === "informational" && <p className="m-0 text-xs text-muted-foreground">{t("ansp.inbox.informational")}</p>}

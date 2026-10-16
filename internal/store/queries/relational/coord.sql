@@ -51,14 +51,15 @@ RETURNING *;
 
 -- name: EscalateDue :many
 -- The notices that need a person and have none: not acknowledged
--- escalation_s after receipt, then again every repeat_s. Rows another
--- replica is escalating are skipped, so each escalation happens once.
+-- escalation_s after receipt, then again every repeat_s, unless the
+-- sender resolved them since (ResolveByEnded). Rows another replica is
+-- escalating are skipped, so each escalation happens once.
 UPDATE coordination_notices n SET
     escalated_at = COALESCE(n.escalated_at, sqlc.arg(now)::timestamptz), last_escalated_at = sqlc.arg(now)::timestamptz,
     escalations = n.escalations + 1, event_seq = n.event_seq + 1
 WHERE n.id IN (
     SELECT c.id FROM coordination_notices c
-    WHERE c.state = 'received' AND c.ack_required
+    WHERE c.state = 'received' AND c.ack_required AND c.resolved_at IS NULL
       AND c.received_at <= sqlc.arg(now)::timestamptz - make_interval(secs => sqlc.arg(escalation_s)::float8)
       AND (c.last_escalated_at IS NULL
            OR c.last_escalated_at <= sqlc.arg(now)::timestamptz - make_interval(secs => sqlc.arg(repeat_s)::float8))
@@ -66,6 +67,31 @@ WHERE n.id IN (
     LIMIT sqlc.arg(page_size)
     FOR UPDATE SKIP LOCKED)
 RETURNING n.*;
+
+-- name: ResolveByEnded :many
+-- The open nonconformance and contingent notices the ended notice
+-- ended_id resolves: from the same sender (sender_client_id and
+-- ussp_id), received no later than it, neither acknowledged nor
+-- resolved, sharing an intent with it, and with every one of their
+-- intents ended by an ended notice of that sender received no earlier
+-- than them. They escalate no more (EscalateDue) and stay received: a
+-- person still acknowledges them. An ended notice of another sender,
+-- or for other intents, resolves nothing.
+UPDATE coordination_notices c SET
+    resolved_at = e.received_at, resolved_by_ack_id = e.id, event_seq = c.event_seq + 1
+FROM coordination_notices e
+WHERE e.id = sqlc.arg(ended_id) AND e.kind = 'ended'
+  AND c.kind IN ('nonconformance', 'contingent') AND c.ack_required AND c.state = 'received' AND c.resolved_at IS NULL
+  AND c.sender_client_id = e.sender_client_id AND c.ussp_id = e.ussp_id
+  AND c.received_at <= e.received_at
+  AND c.intent_refs && e.intent_refs
+  AND NOT EXISTS (
+      SELECT 1 FROM unnest(c.intent_refs) AS i(ref)
+      WHERE NOT EXISTS (
+          SELECT 1 FROM coordination_notices x
+          WHERE x.kind = 'ended' AND x.sender_client_id = c.sender_client_id AND x.ussp_id = c.ussp_id
+            AND x.received_at >= c.received_at AND i.ref = ANY (x.intent_refs)))
+RETURNING c.*;
 
 -- name: NoticesBehindBus :many
 -- Notices whose latest change is not on coord.v1 yet.

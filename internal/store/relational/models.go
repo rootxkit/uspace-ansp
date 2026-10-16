@@ -289,6 +289,8 @@ type CoordinationNotice struct {
 	CisVersion           *string
 	EventSeq             int32
 	BusSeq               int32
+	ResolvedAt           *time.Time
+	ResolvedByAckID      *string
 }
 
 type Delivery struct {

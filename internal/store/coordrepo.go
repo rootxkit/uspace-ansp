@@ -228,6 +228,13 @@ func (t coordTx) EscalateDue(ctx context.Context, now time.Time, escalation, rep
 	return noticesFrom(rows), err
 }
 
+// ResolveByEnded marks resolved the deviation notices the ended notice
+// resolves.
+func (t coordTx) ResolveByEnded(ctx context.Context, endedAckID string) ([]coord.Notice, error) {
+	rows, err := t.tx.Q.ResolveByEnded(ctx, endedAckID)
+	return noticesFrom(rows), err
+}
+
 // NextOccurrenceRef is the next report_ref.
 func (t coordTx) NextOccurrenceRef(ctx context.Context) (string, error) {
 	return t.tx.Q.NextOccurrenceRef(ctx)
@@ -320,6 +327,7 @@ func noticeFrom(r relational.CoordinationNotice) coord.Notice {
 		AckRequired: r.AckRequired, SenderUnverified: r.SenderUnverified, AcknowledgedBy: deref(r.AcknowledgedBy),
 		AcknowledgedUser: deref(r.AcknowledgedUser), AcknowledgedAt: r.AcknowledgedAt, AckNote: deref(r.AckNote),
 		EscalatedAt: r.EscalatedAt, LastEscalatedAt: r.LastEscalatedAt, Escalations: int(r.Escalations),
+		ResolvedAt: r.ResolvedAt, ResolvedByAckID: deref(r.ResolvedByAckID),
 		RestrictionIDs: nonNilStrings(r.RestrictionIds), CISVersion: deref(r.CisVersion), EventSeq: int(r.EventSeq), BusSeq: int(r.BusSeq),
 	}
 }

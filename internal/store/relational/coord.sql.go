@@ -18,7 +18,7 @@ UPDATE coordination_notices SET
     state = 'acknowledged', acknowledged_by = $1, acknowledged_user = $2,
     acknowledged_at = clock_timestamp(), ack_note = $3, event_seq = event_seq + 1
 WHERE id = $4 AND state = 'received'
-RETURNING id, kind, sender_client_id, ussp_id, notice_ref, payload, payload_sha256, intent_refs, authorisation_numbers, received_at, state, ack_required, sender_unverified, acknowledged_by, acknowledged_user, acknowledged_at, ack_note, escalated_at, last_escalated_at, escalations, restriction_ids, cis_version, event_seq, bus_seq
+RETURNING id, kind, sender_client_id, ussp_id, notice_ref, payload, payload_sha256, intent_refs, authorisation_numbers, received_at, state, ack_required, sender_unverified, acknowledged_by, acknowledged_user, acknowledged_at, ack_note, escalated_at, last_escalated_at, escalations, restriction_ids, cis_version, event_seq, bus_seq, resolved_at, resolved_by_ack_id
 `
 
 type AcknowledgeNoticeParams struct {
@@ -63,6 +63,8 @@ func (q *Queries) AcknowledgeNotice(ctx context.Context, arg AcknowledgeNoticePa
 		&i.CisVersion,
 		&i.EventSeq,
 		&i.BusSeq,
+		&i.ResolvedAt,
+		&i.ResolvedByAckID,
 	)
 	return i, err
 }
@@ -138,14 +140,14 @@ UPDATE coordination_notices n SET
     escalations = n.escalations + 1, event_seq = n.event_seq + 1
 WHERE n.id IN (
     SELECT c.id FROM coordination_notices c
-    WHERE c.state = 'received' AND c.ack_required
+    WHERE c.state = 'received' AND c.ack_required AND c.resolved_at IS NULL
       AND c.received_at <= $1::timestamptz - make_interval(secs => $2::float8)
       AND (c.last_escalated_at IS NULL
            OR c.last_escalated_at <= $1::timestamptz - make_interval(secs => $3::float8))
     ORDER BY c.received_at
     LIMIT $4
     FOR UPDATE SKIP LOCKED)
-RETURNING n.id, n.kind, n.sender_client_id, n.ussp_id, n.notice_ref, n.payload, n.payload_sha256, n.intent_refs, n.authorisation_numbers, n.received_at, n.state, n.ack_required, n.sender_unverified, n.acknowledged_by, n.acknowledged_user, n.acknowledged_at, n.ack_note, n.escalated_at, n.last_escalated_at, n.escalations, n.restriction_ids, n.cis_version, n.event_seq, n.bus_seq
+RETURNING n.id, n.kind, n.sender_client_id, n.ussp_id, n.notice_ref, n.payload, n.payload_sha256, n.intent_refs, n.authorisation_numbers, n.received_at, n.state, n.ack_required, n.sender_unverified, n.acknowledged_by, n.acknowledged_user, n.acknowledged_at, n.ack_note, n.escalated_at, n.last_escalated_at, n.escalations, n.restriction_ids, n.cis_version, n.event_seq, n.bus_seq, n.resolved_at, n.resolved_by_ack_id
 `
 
 type EscalateDueParams struct {
@@ -156,8 +158,9 @@ type EscalateDueParams struct {
 }
 
 // The notices that need a person and have none: not acknowledged
-// escalation_s after receipt, then again every repeat_s. Rows another
-// replica is escalating are skipped, so each escalation happens once.
+// escalation_s after receipt, then again every repeat_s, unless the
+// sender resolved them since (ResolveByEnded). Rows another replica is
+// escalating are skipped, so each escalation happens once.
 func (q *Queries) EscalateDue(ctx context.Context, arg EscalateDueParams) ([]CoordinationNotice, error) {
 	rows, err := q.db.Query(ctx, escalateDue,
 		arg.Now,
@@ -197,6 +200,8 @@ func (q *Queries) EscalateDue(ctx context.Context, arg EscalateDueParams) ([]Coo
 			&i.CisVersion,
 			&i.EventSeq,
 			&i.BusSeq,
+			&i.ResolvedAt,
+			&i.ResolvedByAckID,
 		); err != nil {
 			return nil, err
 		}
@@ -216,7 +221,7 @@ VALUES ($1, $2, $3, $4, $5, $6,
         $7, $8::uuid[], $9::text[], $10,
         $11, $12::text[], $13, $14)
 ON CONFLICT ON CONSTRAINT coordination_notices_sender_ref DO NOTHING
-RETURNING id, kind, sender_client_id, ussp_id, notice_ref, payload, payload_sha256, intent_refs, authorisation_numbers, received_at, state, ack_required, sender_unverified, acknowledged_by, acknowledged_user, acknowledged_at, ack_note, escalated_at, last_escalated_at, escalations, restriction_ids, cis_version, event_seq, bus_seq
+RETURNING id, kind, sender_client_id, ussp_id, notice_ref, payload, payload_sha256, intent_refs, authorisation_numbers, received_at, state, ack_required, sender_unverified, acknowledged_by, acknowledged_user, acknowledged_at, ack_note, escalated_at, last_escalated_at, escalations, restriction_ids, cis_version, event_seq, bus_seq, resolved_at, resolved_by_ack_id
 `
 
 type InsertNoticeParams struct {
@@ -284,6 +289,8 @@ func (q *Queries) InsertNotice(ctx context.Context, arg InsertNoticeParams) (Coo
 		&i.CisVersion,
 		&i.EventSeq,
 		&i.BusSeq,
+		&i.ResolvedAt,
+		&i.ResolvedByAckID,
 	)
 	return i, err
 }
@@ -414,7 +421,7 @@ func (q *Queries) IntersectingRestrictions(ctx context.Context, arg Intersecting
 }
 
 const listNotices = `-- name: ListNotices :many
-SELECT id, kind, sender_client_id, ussp_id, notice_ref, payload, payload_sha256, intent_refs, authorisation_numbers, received_at, state, ack_required, sender_unverified, acknowledged_by, acknowledged_user, acknowledged_at, ack_note, escalated_at, last_escalated_at, escalations, restriction_ids, cis_version, event_seq, bus_seq FROM coordination_notices
+SELECT id, kind, sender_client_id, ussp_id, notice_ref, payload, payload_sha256, intent_refs, authorisation_numbers, received_at, state, ack_required, sender_unverified, acknowledged_by, acknowledged_user, acknowledged_at, ack_note, escalated_at, last_escalated_at, escalations, restriction_ids, cis_version, event_seq, bus_seq, resolved_at, resolved_by_ack_id FROM coordination_notices
 WHERE ($1::text IS NULL
        OR ($1::text = 'received' AND state = 'received' AND escalated_at IS NULL)
        OR ($1::text = 'escalated' AND state = 'received' AND escalated_at IS NOT NULL)
@@ -468,6 +475,8 @@ func (q *Queries) ListNotices(ctx context.Context, arg ListNoticesParams) ([]Coo
 			&i.CisVersion,
 			&i.EventSeq,
 			&i.BusSeq,
+			&i.ResolvedAt,
+			&i.ResolvedByAckID,
 		); err != nil {
 			return nil, err
 		}
@@ -507,7 +516,7 @@ func (q *Queries) NextOccurrenceRef(ctx context.Context) (string, error) {
 }
 
 const noticeByID = `-- name: NoticeByID :one
-SELECT id, kind, sender_client_id, ussp_id, notice_ref, payload, payload_sha256, intent_refs, authorisation_numbers, received_at, state, ack_required, sender_unverified, acknowledged_by, acknowledged_user, acknowledged_at, ack_note, escalated_at, last_escalated_at, escalations, restriction_ids, cis_version, event_seq, bus_seq FROM coordination_notices WHERE id = $1
+SELECT id, kind, sender_client_id, ussp_id, notice_ref, payload, payload_sha256, intent_refs, authorisation_numbers, received_at, state, ack_required, sender_unverified, acknowledged_by, acknowledged_user, acknowledged_at, ack_note, escalated_at, last_escalated_at, escalations, restriction_ids, cis_version, event_seq, bus_seq, resolved_at, resolved_by_ack_id FROM coordination_notices WHERE id = $1
 `
 
 func (q *Queries) NoticeByID(ctx context.Context, id string) (CoordinationNotice, error) {
@@ -538,12 +547,14 @@ func (q *Queries) NoticeByID(ctx context.Context, id string) (CoordinationNotice
 		&i.CisVersion,
 		&i.EventSeq,
 		&i.BusSeq,
+		&i.ResolvedAt,
+		&i.ResolvedByAckID,
 	)
 	return i, err
 }
 
 const noticeBySenderRef = `-- name: NoticeBySenderRef :one
-SELECT id, kind, sender_client_id, ussp_id, notice_ref, payload, payload_sha256, intent_refs, authorisation_numbers, received_at, state, ack_required, sender_unverified, acknowledged_by, acknowledged_user, acknowledged_at, ack_note, escalated_at, last_escalated_at, escalations, restriction_ids, cis_version, event_seq, bus_seq FROM coordination_notices WHERE sender_client_id = $1 AND notice_ref = $2
+SELECT id, kind, sender_client_id, ussp_id, notice_ref, payload, payload_sha256, intent_refs, authorisation_numbers, received_at, state, ack_required, sender_unverified, acknowledged_by, acknowledged_user, acknowledged_at, ack_note, escalated_at, last_escalated_at, escalations, restriction_ids, cis_version, event_seq, bus_seq, resolved_at, resolved_by_ack_id FROM coordination_notices WHERE sender_client_id = $1 AND notice_ref = $2
 `
 
 type NoticeBySenderRefParams struct {
@@ -579,12 +590,14 @@ func (q *Queries) NoticeBySenderRef(ctx context.Context, arg NoticeBySenderRefPa
 		&i.CisVersion,
 		&i.EventSeq,
 		&i.BusSeq,
+		&i.ResolvedAt,
+		&i.ResolvedByAckID,
 	)
 	return i, err
 }
 
 const noticesBehindBus = `-- name: NoticesBehindBus :many
-SELECT id, kind, sender_client_id, ussp_id, notice_ref, payload, payload_sha256, intent_refs, authorisation_numbers, received_at, state, ack_required, sender_unverified, acknowledged_by, acknowledged_user, acknowledged_at, ack_note, escalated_at, last_escalated_at, escalations, restriction_ids, cis_version, event_seq, bus_seq FROM coordination_notices WHERE bus_seq < event_seq ORDER BY id LIMIT $1
+SELECT id, kind, sender_client_id, ussp_id, notice_ref, payload, payload_sha256, intent_refs, authorisation_numbers, received_at, state, ack_required, sender_unverified, acknowledged_by, acknowledged_user, acknowledged_at, ack_note, escalated_at, last_escalated_at, escalations, restriction_ids, cis_version, event_seq, bus_seq, resolved_at, resolved_by_ack_id FROM coordination_notices WHERE bus_seq < event_seq ORDER BY id LIMIT $1
 `
 
 // Notices whose latest change is not on coord.v1 yet.
@@ -622,6 +635,8 @@ func (q *Queries) NoticesBehindBus(ctx context.Context, pageSize int32) ([]Coord
 			&i.CisVersion,
 			&i.EventSeq,
 			&i.BusSeq,
+			&i.ResolvedAt,
+			&i.ResolvedByAckID,
 		); err != nil {
 			return nil, err
 		}
@@ -754,6 +769,79 @@ func (q *Queries) OccurrenceDeliveryCounts(ctx context.Context, maxRows int32) (
 		&i.Truncated,
 	)
 	return i, err
+}
+
+const resolveByEnded = `-- name: ResolveByEnded :many
+UPDATE coordination_notices c SET
+    resolved_at = e.received_at, resolved_by_ack_id = e.id, event_seq = c.event_seq + 1
+FROM coordination_notices e
+WHERE e.id = $1 AND e.kind = 'ended'
+  AND c.kind IN ('nonconformance', 'contingent') AND c.ack_required AND c.state = 'received' AND c.resolved_at IS NULL
+  AND c.sender_client_id = e.sender_client_id AND c.ussp_id = e.ussp_id
+  AND c.received_at <= e.received_at
+  AND c.intent_refs && e.intent_refs
+  AND NOT EXISTS (
+      SELECT 1 FROM unnest(c.intent_refs) AS i(ref)
+      WHERE NOT EXISTS (
+          SELECT 1 FROM coordination_notices x
+          WHERE x.kind = 'ended' AND x.sender_client_id = c.sender_client_id AND x.ussp_id = c.ussp_id
+            AND x.received_at >= c.received_at AND i.ref = ANY (x.intent_refs)))
+RETURNING c.id, c.kind, c.sender_client_id, c.ussp_id, c.notice_ref, c.payload, c.payload_sha256, c.intent_refs, c.authorisation_numbers, c.received_at, c.state, c.ack_required, c.sender_unverified, c.acknowledged_by, c.acknowledged_user, c.acknowledged_at, c.ack_note, c.escalated_at, c.last_escalated_at, c.escalations, c.restriction_ids, c.cis_version, c.event_seq, c.bus_seq, c.resolved_at, c.resolved_by_ack_id
+`
+
+// The open nonconformance and contingent notices the ended notice
+// ended_id resolves: from the same sender (sender_client_id and
+// ussp_id), received no later than it, neither acknowledged nor
+// resolved, sharing an intent with it, and with every one of their
+// intents ended by an ended notice of that sender received no earlier
+// than them. They escalate no more (EscalateDue) and stay received: a
+// person still acknowledges them. An ended notice of another sender,
+// or for other intents, resolves nothing.
+func (q *Queries) ResolveByEnded(ctx context.Context, endedID string) ([]CoordinationNotice, error) {
+	rows, err := q.db.Query(ctx, resolveByEnded, endedID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []CoordinationNotice{}
+	for rows.Next() {
+		var i CoordinationNotice
+		if err := rows.Scan(
+			&i.ID,
+			&i.Kind,
+			&i.SenderClientID,
+			&i.UsspID,
+			&i.NoticeRef,
+			&i.Payload,
+			&i.PayloadSha256,
+			&i.IntentRefs,
+			&i.AuthorisationNumbers,
+			&i.ReceivedAt,
+			&i.State,
+			&i.AckRequired,
+			&i.SenderUnverified,
+			&i.AcknowledgedBy,
+			&i.AcknowledgedUser,
+			&i.AcknowledgedAt,
+			&i.AckNote,
+			&i.EscalatedAt,
+			&i.LastEscalatedAt,
+			&i.Escalations,
+			&i.RestrictionIds,
+			&i.CisVersion,
+			&i.EventSeq,
+			&i.BusSeq,
+			&i.ResolvedAt,
+			&i.ResolvedByAckID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const undeliveredOccurrences = `-- name: UndeliveredOccurrences :many

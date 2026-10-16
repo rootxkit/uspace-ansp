@@ -899,6 +899,198 @@ func TestIntegrationEndDeliveredDirectlyWhenTheCISPFailsAfterTheActivation(t *te
 	}
 }
 
+// planEnding plans a restriction starting now and ending after d, for
+// the ticker to expire (WGS84 limits: no geoid).
+func (s *deliverStack) planEnding(key string, d time.Duration) restrictionWire {
+	s.t.Helper()
+	start := time.Now().UTC().Truncate(time.Millisecond)
+	body := map[string]any{
+		"uspace_airspace_id": "GEOTU01", "zone_type": "PROHIBITED",
+		"geometry": map[string]any{"type": "Polygon", "coordinates": [][][2]float64{{{44.78, 41.70}, {44.82, 41.70}, {44.82, 41.73}, {44.78, 41.73}, {44.78, 41.70}}}},
+		"lower_m":  0, "lower_ref": "WGS84", "upper_m": 120, "upper_ref": "WGS84",
+		"starts_at": restriction.Stamp(start), "ends_at": restriction.Stamp(start.Add(d)),
+		"reason_text": "Search and rescue (synthetic)",
+	}
+	code, out := s.c.do(http.MethodPost, "/v1/restrictions", s.watch, map[string]string{"Idempotency-Key": key}, body)
+	var r restrictionWire
+	if code != http.StatusCreated || json.Unmarshal(out, &r) != nil {
+		s.t.Fatalf("plan: %d %s", code, out)
+	}
+	return r
+}
+
+// restriction is GET /v1/restrictions/{id}, checked against the
+// published API, as the console reads it.
+func (s *deliverStack) restriction(id string) map[string]any {
+	s.t.Helper()
+	code, out := s.c.do(http.MethodGet, "/v1/restrictions/"+id, s.watch, nil, nil)
+	validateResponse(s.t, http.MethodGet, "/v1/restrictions/{id}", code, out)
+	var r map[string]any
+	if code != http.StatusOK || json.Unmarshal(out, &r) != nil {
+		s.t.Fatalf("get: %d %s", code, out)
+	}
+	return r
+}
+
+// awaitState waits until the restriction is in state at version v.
+func (s *deliverStack) awaitState(id, state string, v int64, within time.Duration) map[string]any {
+	s.t.Helper()
+	deadline := time.Now().Add(within)
+	for {
+		r := s.restriction(id)
+		if r["state"] == state && r["ansp_version"] == float64(v) {
+			return r
+		}
+		if time.Now().After(deadline) {
+			s.t.Fatalf("not %s at version %d within %v: %v at %v", state, v, within, r["state"], r["ansp_version"])
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+}
+
+// directChange is the n-th degraded direct delivery p received,
+// verified as its receiver verifies it.
+func (s *deliverStack) directChange(p *peer, n int) cispclient.Change {
+	s.t.Helper()
+	req := p.await(s.t, deliver.PathNotifications, n, 20*time.Second)
+	v, err := coreauth.NewCompactVerifier(s.ctx, coreauth.CompactConfig{
+		Issuers:   map[string]coreauth.IssuerConfig{"https://ansp.test": {JWKSURL: s.jwksURL()}},
+		Audiences: []string{p.host()}})
+	if err != nil {
+		s.t.Fatal(err)
+	}
+	_, body, err := v.Verify(s.ctx, string(req.Body))
+	if err != nil {
+		s.t.Fatalf("%s refuses the delivery: %v", p.host(), err)
+	}
+	var ch cispclient.Change
+	strict(s.t, body, &ch)
+	return ch
+}
+
+// A natural expiry, the CISP up: the activation is published (200), the
+// ticker expires the restriction at ends_at and queues no cisp_publish
+// (the CISP expires it on its own clock), and across several monitor
+// ticks past cisp_alarm_after_s no cisp_not_published alarm is raised
+// and nothing goes out directly (the absence; the live finding was an
+// alarm and a direct delivery about 10 s after every expiry). The
+// console's facts say the CISP holds version 2 and the restriction
+// expired (ended_by system), with no alarm. The presence is
+// TestIntegrationAlarmAtAnExpiryAfterAnUnpublishedExtension and, for an
+// end owed to the CISP,
+// TestIntegrationEndDeliveredDirectlyWhenTheCISPFailsAfterTheActivation.
+func TestIntegrationNoAlarmAtANaturalExpiry(t *testing.T) {
+	s := newDeliverStack(t)
+	r := s.planEnding("expiry-no-alarm", 12*time.Second)
+	s.cisp.await(t, "/v1/restrictions", 1, 5*time.Second)
+	s.op(r.ID, "activate", map[string]string{"reason": "rescue helicopter on scene"})
+	s.awaitBody(10*time.Second, func(b map[string]any) bool { return b["published"] == true && b["ansp_version"] == 2.0 })
+	s.awaitState(r.ID, "ended", 3, 30*time.Second)
+	expiredAt := s.changedAt(r.ID, 3)
+	if n := s.deliveries(`SELECT count(*) FROM deliveries WHERE restriction_id = $1 AND kind = 'cisp_publish' AND ansp_version = 3`, r.ID); n != 0 {
+		t.Fatalf("%d cisp_publish jobs for the expiry", n)
+	}
+	// The monitor runs on its own; tick it too, past cisp_alarm_after_s
+	// (10 s) three times over.
+	for time.Since(expiredAt) < 32*time.Second {
+		rep, err := s.dw.monitor.Tick(s.ctx)
+		if err != nil || rep.Raised != 0 || rep.Advanced != 0 || rep.DirectQueued != 0 {
+			t.Fatalf("%v after the expiry: %+v %v", time.Since(expiredAt), rep, err)
+		}
+		time.Sleep(2 * time.Second)
+	}
+	if n := s.deliveries(`SELECT count(*) FROM delivery_alarms WHERE restriction_id = $1`, r.ID); n != 0 {
+		t.Fatalf("%d alarms for the expired restriction", n)
+	}
+	if n := s.deliveries(`SELECT count(*) FROM deliveries WHERE restriction_id = $1 AND kind = 'direct_degraded'`, r.ID); n != 0 {
+		t.Fatalf("%d direct deliveries of the expired restriction", n)
+	}
+	for _, p := range append([]*peer{s.authority}, s.ussps...) {
+		if n := len(p.requests(deliver.PathNotifications)); n != 0 {
+			t.Fatalf("%s: %d direct deliveries", p.host(), n)
+		}
+	}
+	code, out := s.c.do(http.MethodGet, "/v1/delivery-alarms?all=true", s.watch, nil, nil)
+	validateResponse(t, http.MethodGet, "/v1/delivery-alarms", code, out)
+	if code != http.StatusOK || strings.Contains(string(out), r.ID) {
+		t.Fatalf("delivery alarms: %d %s", code, out)
+	}
+	// What the console's CISP line reads (web/src/console/delivery.ts):
+	// ended by the ticker, the CISP holding the version before the expiry.
+	got := s.restriction(r.ID)
+	if got["ended_by"] != "system" || got["published_version"] != 2.0 || got["ansp_version"] != 3.0 || got["ends_at"] != r.EndsAt {
+		t.Fatalf("facts: ended_by %v published_version %v ansp_version %v ends_at %v (planned %s)",
+			got["ended_by"], got["published_version"], got["ansp_version"], got["ends_at"], r.EndsAt)
+	}
+	if l := s.logs.String(); strings.Contains(l, "cisp_not_published") || strings.Contains(l, "not yet published") {
+		t.Fatal("the expiry is logged as unpublished")
+	}
+}
+
+// The presence of the absence above: the activation is published, then
+// the CISP refuses the extension (503). At cisp_alarm_after_s the alarm
+// is raised at the extension and it goes out directly; at the extended
+// ends_at the ticker expires the restriction, which owes the CISP
+// nothing, yet the receivers hold the extension from the direct path: the
+// alarm moves to the expiry's version, the end is delivered directly to
+// the USSPs and the authority, and the alarm clears once it is.
+func TestIntegrationAlarmAtAnExpiryAfterAnUnpublishedExtension(t *testing.T) {
+	s := newDeliverStack(t)
+	r := s.planEnding("expiry-after-unpublished-extension", 12*time.Second)
+	s.cisp.await(t, "/v1/restrictions", 1, 5*time.Second)
+	s.op(r.ID, "activate", map[string]string{"reason": "rescue helicopter on scene"})
+	s.awaitBody(10*time.Second, func(b map[string]any) bool { return b["published"] == true && b["ansp_version"] == 2.0 })
+	s.cisp.answer.Store(func(req peerRequest) int {
+		if req.Path == deliver.PathHeartbeat {
+			return http.StatusNoContent
+		}
+		return http.StatusServiceUnavailable
+	})
+	planned, err := time.Parse(time.RFC3339Nano, r.EndsAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	extended := restriction.Stamp(planned.Add(13 * time.Second))
+	if got := s.op(r.ID, "extend", map[string]string{"ends_at": extended, "reason": "operation continues"}); got.AnspVersion != 3 {
+		t.Fatalf("extend: version %d", got.AnspVersion)
+	}
+	extendedAt := s.changedAt(r.ID, 3)
+	raised := s.awaitBody(20*time.Second, func(b map[string]any) bool {
+		a, ok := b["alarm"].(map[string]any)
+		return ok && a["kind"] == "cisp_not_published" && a["state"] == "open" && a["ansp_version"] == 3.0
+	})["alarm"].(map[string]any)
+	if at, _ := time.Parse(time.RFC3339Nano, raised["raised_at"].(string)); at.Sub(extendedAt) < 10*time.Second {
+		t.Fatalf("raised %v after the extension, before cisp_alarm_after_s", at.Sub(extendedAt))
+	}
+	for _, p := range []*peer{s.ussps[0], s.authority} {
+		if ch := s.directChange(p, 1); ch.Reason != cispclient.ChangeReasonRestrictionExtended || ch.Version != 3 {
+			t.Fatalf("%s: the extension is not delivered directly: %+v", p.host(), ch)
+		}
+	}
+	got := s.awaitState(r.ID, "ended", 4, 30*time.Second)
+	if got["ended_by"] != "system" || got["published_version"] != 2.0 {
+		t.Fatalf("not the ticker's expiry: ended_by %v published_version %v", got["ended_by"], got["published_version"])
+	}
+	if n := s.deliveries(`SELECT count(*) FROM deliveries WHERE restriction_id = $1 AND kind = 'cisp_publish' AND ansp_version = 4`, r.ID); n != 0 {
+		t.Fatalf("%d cisp_publish jobs for the expiry", n)
+	}
+	for _, p := range []*peer{s.ussps[0], s.authority} {
+		if ch := s.directChange(p, 2); ch.Reason != cispclient.ChangeReasonRestrictionEnded || ch.Version != 4 || len(ch.RemovedIds) != 1 {
+			t.Fatalf("%s: the expiry is not delivered directly: %+v", p.host(), ch)
+		}
+	}
+	cleared := s.awaitBody(20*time.Second, func(b map[string]any) bool {
+		a, ok := b["alarm"].(map[string]any)
+		return ok && a["kind"] == "cisp_not_published" && a["state"] == "cleared"
+	})["alarm"].(map[string]any)
+	if cleared["clear_reason"] != deliver.CancelNotActive || cleared["ansp_version"] != 4.0 {
+		t.Fatalf("cleared %v", cleared)
+	}
+	if n := s.deliveries(`SELECT count(*) FROM delivery_alarms WHERE restriction_id = $1 AND kind = 'cisp_not_published'`, r.ID); n != 1 {
+		t.Fatalf("%d cisp_not_published alarms, want the one advanced and cleared", n)
+	}
+}
+
 func (s *deliverStack) planWithReason(key, reason string) restrictionWire {
 	s.t.Helper()
 	start := time.Now().UTC().Truncate(time.Millisecond)

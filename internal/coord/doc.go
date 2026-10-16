@@ -43,6 +43,14 @@
 // coordination/notice/v1, counted notices_escalated and logged at error
 // level by the process; the console renders it as the loudest state. An
 // intent_notice or ended notice is informational and never escalates.
+// An ended notice from the same sender (sender_client_id and ussp_id)
+// resolves its nonconformance and contingent notices received no later
+// than it once every one of their intents is ended by such a notice
+// (resolved_at, resolved_by_ack_id; audited, counted
+// notices_resolved_by_ussp, a frame): they escalate no more, and stay
+// unacknowledged for a person to file (docs/PLAN.md section 15 row 55).
+// An ended notice of another sender, or for other intents, resolves
+// nothing.
 // The escalation lives on the row (escalated_at, last_escalated_at,
 // escalations) and is judged on the database clock by a query every
 // replica runs with SKIP LOCKED, so a restart, a rolling update with a

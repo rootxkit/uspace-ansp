@@ -25,6 +25,9 @@ export interface DeliveryFacts {
   state: ApiRestriction["state"];
   ansp_version: number;
   published_version?: number | null;
+  /** system for the ticker's expiry at ends_at (ChangedBy). */
+  ended_by?: ApiRestriction["ended_by"];
+  ends_at?: ApiRestriction["ends_at"];
   deliveries?: ApiRestriction["deliveries"];
   dss?: ApiDssStatus;
 }
@@ -58,6 +61,20 @@ export function cispLine(r: DeliveryFacts, alarm: ApiAlarm | null): Line {
   }
   if (c !== undefined && c.state === "abandoned") {
     return { key: "ansp.delivery.cisp.abandoned", vars: { version: r.ansp_version, ...channelVars(c) }, attention: true };
+  }
+  // The ticker's expiry at ends_at, the CISP holding the version just
+  // before it (the same ends_at): nothing is owed to the CISP, which
+  // expires the restriction there on its own clock (no cisp_publish job
+  // is queued for an expiry, so none is awaited).
+  // With an open alarm, or the CISP further behind, it reads as behind.
+  if (
+    r.state === "ended" &&
+    r.ended_by === "system" &&
+    published !== null &&
+    published === r.ansp_version - 1 &&
+    alarm === null
+  ) {
+    return { key: "ansp.delivery.cisp.expired", vars: { published, at: r.ends_at ?? "" }, attention: false };
   }
   const since = alarm?.since ?? null;
   const vars: Record<string, string | number> = {

@@ -36,6 +36,7 @@
 //                                         and its source/status/v1 in sources[])
 //   POST /__mock/notice {...}             a coordination notice received (or changed); one frame
 //   POST /__mock/escalate {ack_id}        the inbox ticker's escalation of a notice; one frame
+//   POST /__mock/resolve {ack_id, by}     the sender's ended notice by resolved the notice; one frame
 //   POST /__mock/occurrence {state}       the outbox's outcome for the newest report queued
 //                                         (sent, failed, abandoned, cancelled)
 //   POST /__mock/account {username, status}
@@ -1115,6 +1116,14 @@ async function control(req, res, path) {
     n.escalations = (n.escalations ?? 0) + 1;
     n.escalated_at = n.escalated_at ?? iso();
     n.last_escalated_at = iso();
+    broadcast(noticeFrame(n), "coordination");
+    return json(res, 200, n);
+  }
+  if (path === "/__mock/resolve") {
+    const n = state.notices.find((x) => x.ack_id === input.ack_id);
+    if (n === undefined) return json(res, 404, { error: "no such notice" });
+    n.resolved_at = iso();
+    n.resolved_by_ack_id = input.by;
     broadcast(noticeFrame(n), "coordination");
     return json(res, 200, n);
   }

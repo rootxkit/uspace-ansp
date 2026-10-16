@@ -390,6 +390,221 @@ func TestEscalation(t *testing.T) {
 	}
 }
 
+// exampleMap is an example notice as a map, its notice_ref set.
+func exampleMap(t *testing.T, name, ref string) map[string]any {
+	t.Helper()
+	var m map[string]any
+	if err := json.Unmarshal(readExample(t, name), &m); err != nil {
+		t.Fatal(err)
+	}
+	m["notice_ref"] = ref
+	return m
+}
+
+// withIntents gives m one intent per ref, each a copy of its first.
+func withIntents(t *testing.T, m map[string]any, refs ...string) map[string]any {
+	t.Helper()
+	first, ok := m["intents"].([]any)[0].(map[string]any)
+	if !ok {
+		t.Fatal("no intent")
+	}
+	intents := make([]any, 0, len(refs))
+	for _, ref := range refs {
+		i := make(map[string]any, len(first))
+		for k, v := range first {
+			i[k] = v
+		}
+		i["intent_ref"] = ref
+		intents = append(intents, i)
+	}
+	m["intents"] = intents
+	return m
+}
+
+const (
+	exampleIntent = "6d1c2b4e-9a0f-4e3b-8c7d-2a1b0c9d8e7f"
+	otherIntent   = "1b4e28ba-2fa1-41d2-883f-0016d3cca427"
+)
+
+// escalationClock drives Tick on a fake clock from the fixture's start.
+func escalationClock(t *testing.T, f *fixture) (at func(d time.Duration) TickReport, set func(d time.Duration)) {
+	t.Helper()
+	start := f.repo.now
+	clock := start
+	f.svc.Clock = func(context.Context) (time.Time, error) { return clock, nil }
+	f.svc.Escalation = func(context.Context) (time.Duration, int64) { return 60 * time.Second, 3 }
+	set = func(d time.Duration) { clock = start.Add(d) }
+	at = func(d time.Duration) TickReport {
+		t.Helper()
+		set(d)
+		rep, err := f.svc.Tick(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		return rep
+	}
+	return at, set
+}
+
+// The sender's ended notice for the intent: its nonconformance and
+// contingent notices escalate no more (EscalateDue returns nothing for
+// them, however late), are marked resolved by the USSP at the ended
+// notice's receipt, audited, counted and told on coord.v1, and stay
+// unacknowledged: a person still acknowledges them, and that works. Its
+// pair: TestEscalation (no follow-up: escalation goes on) and
+// TestEndedNoticeOfAnotherSenderOrIntent.
+func TestEndedNoticeStopsEscalation(t *testing.T) {
+	f := newFixture(t)
+	at, set := escalationClock(t, f)
+	nc, _, err := f.submit(t, "ussp-01", readExample(t, "nonconformance.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ct, _, err := f.submit(t, "ussp-01", readExample(t, "contingent.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep := at(60 * time.Second); len(rep.Escalated) != 2 {
+		t.Fatalf("not escalated: %+v", rep)
+	}
+	set(70 * time.Second)
+	ended, _, err := f.submit(t, "ussp-01", readExample(t, "ended.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	endedAt := f.repo.now.Add(70 * time.Second)
+	for _, id := range []string{nc.AckID, ct.AckID} {
+		n, _ := f.repo.Notice(context.Background(), id)
+		if n.ResolvedAt == nil || !n.ResolvedAt.Equal(endedAt) || n.ResolvedByAckID != ended.AckID || n.Acknowledged ||
+			n.State() != StateEscalated || n.Escalations != 1 {
+			t.Fatalf("%s: %+v", id, n)
+		}
+		b := BodyOf(n, true)
+		if b.ResolvedAt == nil || *b.ResolvedAt != "2026-10-03T12:01:10.000Z" || b.ResolvedByAckID == nil || *b.ResolvedByAckID != ended.AckID {
+			t.Fatalf("%s: body %+v", id, b)
+		}
+	}
+	if f.svc.Counters().Get(CounterResolved) != 2 || len(f.repo.audited("coordination_notice_resolved_by_ussp")) != 2 {
+		t.Fatal("not counted or audited")
+	}
+	framed := 0
+	for _, m := range f.bus.published() {
+		if m.id == nc.AckID+".3" || m.id == ct.AckID+".3" {
+			if !strings.Contains(string(m.data), `"resolved_by_ack_id":"`+ended.AckID+`"`) {
+				t.Fatalf("frame %s", m.data)
+			}
+			framed++
+		}
+	}
+	if framed != 2 {
+		t.Fatalf("%d resolution frames", framed)
+	}
+	for _, d := range []time.Duration{90 * time.Second, 120 * time.Second, time.Hour} {
+		if rep := at(d); len(rep.Escalated) != 0 {
+			t.Fatalf("escalated at %v after the ended notice: %+v", d, rep.Escalated)
+		}
+	}
+	open, _, err := f.svc.Inbox(context.Background(), Actor{ID: "u1", Role: "watch_supervisor"}, Filter{State: FilterOpen, Limit: 10})
+	if err != nil || len(open) != 3 {
+		t.Fatalf("the open inbox: %d notices, %v", len(open), err)
+	}
+	n, err := f.svc.Acknowledge(context.Background(), Actor{ID: "u1", Role: "watch_supervisor"}, nc.AckID, "filed")
+	if err != nil || n.State() != StateAcknowledged || n.ResolvedByAckID != ended.AckID {
+		t.Fatalf("acknowledge: %+v %v", n, err)
+	}
+	if c, _ := f.repo.Notice(context.Background(), ct.AckID); c.Acknowledged {
+		t.Fatal("the contingent notice was acknowledged with the other")
+	}
+}
+
+// An ended notice resolves only the same sender's notices for the
+// intents it ends: one from another USSP, or from another client of the
+// same USSP, one for another intent, one ending only part of a
+// notice's intents, and one received before the notice resolve nothing,
+// and escalation goes on. Then the sender's own ended notice for the
+// rest resolves them (the presence).
+func TestEndedNoticeOfAnotherSenderOrIntent(t *testing.T) {
+	f := newFixture(t)
+	f.listed = append(f.listed, "ussp-02")
+	at, set := escalationClock(t, f)
+	// An ended notice before the nonconformance it would match.
+	early, _, err := f.submit(t, "ussp-01", encode(t, exampleMap(t, "ended.json", "early-ended")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	set(time.Second)
+	nc, _, err := f.submit(t, "ussp-01", readExample(t, "nonconformance.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	both, _, err := f.submit(t, "ussp-01", encode(t, withIntents(t, exampleMap(t, "nonconformance.json", "nc-two"), exampleIntent, otherIntent)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	set(10 * time.Second)
+	other := exampleMap(t, "ended.json", "ussp-02-ended")
+	other["ussp_id"] = "ussp-02"
+	if _, _, err := f.submit(t, "ussp-02", encode(t, other)); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := f.submit(t, "ussp-ussp-01-02", encode(t, exampleMap(t, "ended.json", "other-client"))); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := f.submit(t, "ussp-01", encode(t, withIntents(t, exampleMap(t, "ended.json", "other-intent"), "0e7b5c8f-3d1a-4b6e-9f2c-7a8d9e0f1b2c"))); err != nil {
+		t.Fatal(err)
+	}
+	unresolved := func(ids ...string) {
+		t.Helper()
+		for _, id := range ids {
+			if n, _ := f.repo.Notice(context.Background(), id); n.ResolvedAt != nil || n.ResolvedByAckID != "" {
+				t.Fatalf("%s resolved by %s", id, n.ResolvedByAckID)
+			}
+		}
+	}
+	unresolved(nc.AckID, both.AckID)
+	if rep := at(61 * time.Second); len(rep.Escalated) != 2 {
+		t.Fatalf("not escalated: %+v", rep)
+	}
+	// The sender ends the example intent: the single-intent notice is
+	// resolved; the two-intent one still has an intent in progress.
+	set(70 * time.Second)
+	first, _, err := f.submit(t, "ussp-01", encode(t, exampleMap(t, "ended.json", "ended-example")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n, _ := f.repo.Notice(context.Background(), nc.AckID); n.ResolvedByAckID != first.AckID || n.ResolvedByAckID == early.AckID {
+		t.Fatalf("not resolved by the sender's ended notice: %+v", n)
+	}
+	unresolved(both.AckID)
+	if rep := at(91 * time.Second); len(rep.Escalated) != 1 || rep.Escalated[0].AckID != both.AckID {
+		t.Fatalf("%+v", rep)
+	}
+	set(100 * time.Second)
+	rest, _, err := f.submit(t, "ussp-01", encode(t, withIntents(t, exampleMap(t, "ended.json", "ended-other"), otherIntent)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n, _ := f.repo.Notice(context.Background(), both.AckID); n.ResolvedByAckID != rest.AckID || n.Acknowledged {
+		t.Fatalf("the two-intent notice: %+v", n)
+	}
+	if rep := at(time.Hour); len(rep.Escalated) != 0 {
+		t.Fatalf("%+v", rep)
+	}
+	if f.svc.Counters().Get(CounterResolved) != 2 {
+		t.Fatalf("%d resolved", f.svc.Counters().Get(CounterResolved))
+	}
+	// A store failure in the resolution refuses the ended notice whole:
+	// nothing of it is stored.
+	f.repo.failResolve = errBoom
+	before := len(f.repo.notices)
+	if _, _, err := f.submit(t, "ussp-01", encode(t, exampleMap(t, "ended.json", "ended-fails"))); !errors.Is(err, errBoom) {
+		t.Fatal(err)
+	}
+	if len(f.repo.notices) != before {
+		t.Fatal("an ended notice stored without its resolution")
+	}
+}
+
 func TestTickFailures(t *testing.T) {
 	f := newFixture(t)
 	f.repo.failNow = errBoom

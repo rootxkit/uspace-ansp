@@ -18,7 +18,7 @@ complete.
 
 - The CIS projection installs the restrictions version the CISP makes
   at a restriction's expiry instead of holding it (spec 02 F3 erratum of
-  2026-10-16; docs/PLAN.md §15 row 55, WP-7 "Amendment"): installed
+  2026-10-16; docs/PLAN.md §15 row 56, WP-7 "Amendment"): installed
   only when its bytes are the CISP's expiry record with `feature_id`,
   `X-CIS-Signature` verifies with the new `cisp` entry of
   `ANSP_CIS_PUBLISHER_KEYS`, its `at` is within `ANSP_CIS_EXPIRY_SKEW_S`
@@ -60,6 +60,19 @@ complete.
 
 ### Fixed
 
+- A nonconformance or contingent notice kept escalating after the same
+  USSP's `ended` notice for its intent (live: 28+ escalations of one
+  notice). An `ended` notice from the same sender (`sender_client_id`
+  and `ussp_id`) now resolves its open deviation notices once every one
+  of their intents is ended: `resolved_at` and `resolved_by_ack_id`
+  (relational migration 0073; additive in `CoordinationNotice` and
+  `coordination/notice/v1`), audited, counted
+  `notices_resolved_by_ussp`. A resolved notice escalates no more and
+  stays unacknowledged; the inbox lists it with the notices awaiting a
+  person and says "Resolved by the USSP at T; acknowledge to file." An
+  `ended` notice of another USSP or for other intents resolves nothing.
+  A deviation over while the intent goes on still escalates until
+  acknowledged (docs/PLAN.md section 15 row 55, open).
 - The picture page's live manned stream was refused where deployed:
   manned-feed verified no console session (row 54 (3)). It now verifies
   them with the public part of the session key alone,
@@ -81,6 +94,17 @@ complete.
   checked against `GET /v1/auth/me` by the BFF (cookies kept on 2xx,
   cleared otherwise) and by the console before it signs out. A 501 (the
   adapters, not yet served by api) is said in its tile as not served.
+- A natural expiry raised a false `cisp_not_published`: the H-2 branch
+  took every ended restriction the CISP held at an earlier version,
+  including one the ticker expired at `ends_at`, for which no
+  `cisp_publish` is queued (the CISP expires it on its own clock). About
+  10 s after every expiry the alarm was raised and the end delivered on
+  the degraded direct path, then cleared as `restriction_not_active`.
+  The branch now requires that the end was owed to the CISP (a
+  `cisp_publish` job of the current version exists); an expiry after a
+  version that went out directly still goes out directly. The console
+  says "CISP: holds vN; expired there at T" for an expiry instead of "not
+  yet published".
 - H-2 review: an end was delivered directly only when an alarm was
   already open at an earlier version. When the activation reached the
   CISP and the CISP then went down, the end was neither published nor
