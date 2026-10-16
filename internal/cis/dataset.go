@@ -80,6 +80,11 @@ type Version struct {
 	// FetchedAt is when the CISP last confirmed this version, on the
 	// database clock when there is a database.
 	FetchedAt time.Time
+	// Provenance is how this process showed the version trustworthy when
+	// it installed it: ProvenancePublisher or ProvenanceCISPExpiry; ""
+	// for a version loaded from cis_cache, which keeps no trust flag
+	// (only a version shown either way is ever stored).
+	Provenance string
 }
 
 // RefusalError is a dataset version refused whole (spec 06 T9): the

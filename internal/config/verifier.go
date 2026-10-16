@@ -40,13 +40,15 @@ func (c Config) VerifierConfig() (auth.Config, error) {
 }
 
 // The publishers ANSP_CIS_PUBLISHER_KEYS may name (internal/cis
-// PublisherAuthority, PublisherANSP).
-var cisPublishers = []string{"authority", "ansp"}
+// PublisherAuthority, PublisherANSP, PublisherCISP).
+var cisPublishers = []string{"authority", "ansp", "cisp"}
 
 // PublisherConfig is the uspace-core auth.DetachedConfig that verifies
 // the publishers' signatures of CIS dataset versions:
 // ANSP_CIS_PUBLISHER_KEYS (publisher=jwks_url, the publisher one of
-// authority and ansp) and MaxAge ANSP_CIS_PUBLISHER_SIG_MAX_AGE_S.
+// authority, ansp and cisp) and MaxAge ANSP_CIS_PUBLISHER_SIG_MAX_AGE_S,
+// which bounds the CISP's signature of an expiry version as it bounds a
+// publisher's.
 func (c Config) PublisherConfig() (auth.DetachedConfig, error) {
 	if len(c.CISPublisherKeys) == 0 {
 		return auth.DetachedConfig{}, core.Fieldf("ANSP_CIS_PUBLISHER_KEYS", "required to verify CIS dataset versions")

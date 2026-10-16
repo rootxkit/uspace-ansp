@@ -135,19 +135,23 @@ func TestVerifierConfigRefusesMalformedSessionClaims(t *testing.T) {
 	}
 }
 
-// PublisherConfig takes authority and ansp with their JWKS and the
-// signature max age; anything else names ANSP_CIS_PUBLISHER_KEYS.
+// PublisherConfig takes authority, ansp and cisp with their JWKS and the
+// signature max age (one bound for the three); anything else names
+// ANSP_CIS_PUBLISHER_KEYS. The pair of the cisp entry: taken under its
+// name, refused under another or twice.
 func TestPublisherConfig(t *testing.T) {
-	c := Config{CISPublisherKeys: []string{"authority=https://authority.test/jwks", " ansp = https://ansp.test/jwks"}, CISPublisherSigMaxAgeS: 600}
+	c := Config{CISPublisherKeys: []string{"authority=https://authority.test/jwks", " ansp = https://ansp.test/jwks", "cisp=https://cisp.test/jwks"},
+		CISPublisherSigMaxAgeS: 600}
 	dc, err := c.PublisherConfig()
 	if err != nil || dc.Publishers["authority"].JWKSURL != "https://authority.test/jwks" || dc.Publishers["ansp"].JWKSURL != "https://ansp.test/jwks" ||
-		dc.MaxAge != 10*time.Minute {
+		dc.Publishers["cisp"].JWKSURL != "https://cisp.test/jwks" || dc.MaxAge != 10*time.Minute {
 		t.Fatalf("%+v %v", dc, err)
 	}
 	for _, keys := range [][]string{
 		nil,
 		{"authority"},
-		{"cisp=https://cisp.test/jwks"},
+		{"uspace-cisp=https://cisp.test/jwks"},
+		{"cisp=https://a.test/jwks", "cisp=https://b.test/jwks"},
 		{"authority=not a url"},
 		{"authority=https://a.test/jwks", "authority=https://b.test/jwks"},
 	} {

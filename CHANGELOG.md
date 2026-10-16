@@ -16,6 +16,16 @@ complete.
 
 ### Changed
 
+- The CIS projection installs the restrictions version the CISP makes
+  at a restriction's expiry instead of holding it (spec 02 F3 erratum of
+  2026-10-16; docs/PLAN.md §15 row 56, WP-7 "Amendment"): installed
+  only when its bytes are the CISP's expiry record with `feature_id`,
+  `X-CIS-Signature` verifies with the new `cisp` entry of
+  `ANSP_CIS_PUBLISHER_KEYS`, its `at` is within `ANSP_CIS_EXPIRY_SKEW_S`
+  (new, default 30 s, 0 to 300) of the clock, and it only removes
+  features past their signed end; otherwise held as before. Counted
+  `cis_expiry_installed` and `cis_expiry_held`. Without the `cisp` key,
+  or against a CISP that writes no `feature_id`, nothing changes.
 - Restrictions take AGL limits (docs/PLAN.md D3, §15 gap 3; the owner's
   decision of 2026-10-16: DEMOU1 and the GCAA U-space airspaces are
   0-120 m AGL, and no restriction could be planned in them). A limit is

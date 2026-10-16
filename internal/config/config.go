@@ -97,15 +97,26 @@ type Config struct {
 	// (the CISP), as iss=jwks_url.
 	CISNotifyIssuers []Issuer `env:"ANSP_CIS_NOTIFY_ISSUERS"`
 	// CISPublisherKeys are the JWKS of the CIS publishers as
-	// publisher=jwks_url (authority, ansp): a dataset version is used
-	// only when its X-Publisher-Signature verifies with its publisher's
-	// key (the authority for uspace_airspace and ussp_list, this system
-	// for restrictions); otherwise it is held (WP-7).
+	// publisher=jwks_url (authority, ansp, cisp): a dataset version is
+	// used only when its X-Publisher-Signature verifies with its
+	// publisher's key (the authority for uspace_airspace and ussp_list,
+	// this system for restrictions); otherwise it is held (WP-7). The
+	// cisp entry verifies X-CIS-Signature over a restrictions version
+	// the CISP made itself at a restriction's expiry (spec 02 F3, the
+	// erratum of 2026-10-16); without it every expiry version is held.
 	CISPublisherKeys []string `env:"ANSP_CIS_PUBLISHER_KEYS"`
 	// CISPublisherSigMaxAgeS is how old the iat of a publisher signature
 	// may be when this system first reads its version: the CISP forwards
 	// the signature made at publication, so it is as old as the version.
+	// The CISP's own signature of an expiry version is held to the same
+	// bound (it is made at first serve and kept).
 	CISPublisherSigMaxAgeS int `env:"ANSP_CIS_PUBLISHER_SIG_MAX_AGE_S" default:"31622400" min:"300" max:"315360000"`
+	// CISExpirySkewS is how far ahead of this system's clock the at of
+	// a CISP expiry record may be with the version still installed: a
+	// CISP whose clock runs early ends a restriction's bookkeeping here
+	// at most this much before its signed end (spec 02 F3,
+	// cis_expiry_skew_s).
+	CISExpirySkewS int `env:"ANSP_CIS_EXPIRY_SKEW_S" default:"30" min:"0" max:"300"`
 	// DSSURL is the DSS base URL; its host is the DSS audience.
 	DSSURL string `env:"ANSP_DSS_URL" kind:"url"`
 	// DSSNotifyPrivateAllowed lets a subscriber notification go to http

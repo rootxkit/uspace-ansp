@@ -38,6 +38,10 @@ const (
 	HeaderStale              = "X-CIS-Stale"
 	HeaderPublisherSignature = "X-Publisher-Signature"
 	HeaderPublisherKID       = "X-Publisher-Kid"
+	// HeaderCISSignature is the CISP's own compact detached JWS over a
+	// version's bytes (getDatasetVersion); this system decides on it only
+	// for a restrictions version the CISP made at an expiry.
+	HeaderCISSignature = "X-CIS-Signature"
 )
 
 // TokenSource hands out an ecosystem token whose aud is the host of
@@ -157,6 +161,8 @@ type Fetched struct {
 	// X-Publisher-Kid ("" when absent; only a version read sends them).
 	PublisherSignature string
 	PublisherKID       string
+	// CISSignature is X-CIS-Signature ("" when absent).
+	CISSignature string
 }
 
 // GetDataset is GET /v1/{dataset}, unfiltered, with If-None-Match etag
@@ -193,6 +199,7 @@ func (c *Client) read(resp *http.Response) (Fetched, error) {
 	f := Fetched{
 		Status: resp.StatusCode, ETag: resp.Header.Get("ETag"), Stale: resp.Header.Get(HeaderStale) == "true",
 		PublisherSignature: resp.Header.Get(HeaderPublisherSignature), PublisherKID: resp.Header.Get(HeaderPublisherKID),
+		CISSignature: resp.Header.Get(HeaderCISSignature),
 	}
 	if v := resp.Header.Get(HeaderVersion); v != "" {
 		n, err := strconv.ParseInt(v, 10, 64)

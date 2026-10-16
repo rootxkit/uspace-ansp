@@ -109,6 +109,8 @@ type stubDataset struct {
 	body    []byte
 	// sig is the publisher's X-Publisher-Signature over body ("": none).
 	sig string
+	// cisSig is the CISP's X-CIS-Signature over body ("": none).
+	cisSig string
 	// current, when set, is served at GET /v1/{dataset} in place of
 	// body (body stays at /versions/{n}): a CISP or a proxy that
 	// alters one path and not the other.
@@ -294,6 +296,9 @@ func (s *stub) serveVersion(w http.ResponseWriter, d cis.Dataset, raw string) {
 	}
 	if sd.sig != "" {
 		w.Header().Set(cis.HeaderPublisherSignature, sd.sig)
+	}
+	if sd.cisSig != "" {
+		w.Header().Set(cis.HeaderCISSignature, sd.cisSig)
 	}
 	w.Header().Set(cis.HeaderVersion, raw)
 	_, _ = w.Write(sd.body)
