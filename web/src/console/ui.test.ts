@@ -5,12 +5,12 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { I18nProvider, type Lang } from "@rootxkit/uspace-ui/i18n";
+import { I18nProvider, createTranslator, type Lang } from "@rootxkit/uspace-ui/i18n";
 import type { CallFailure } from "../api/client";
 import { catalogues } from "../i18n/catalogues";
 import en from "../i18n/en.json";
 import ka from "../i18n/ka.json";
-import { ProblemNotice } from "./ui";
+import { ProblemNotice, Time, utcText, utcTime } from "./ui";
 
 function failure(status: number, slug: string | null): CallFailure {
   return {
@@ -52,5 +52,40 @@ describe("ProblemNotice", () => {
     const stale = rendered(failure(503, "cis_stale"));
     expect(stale).toContain(en["ansp.problem.cis_stale"]);
     expect(stale).not.toContain(en["ansp.problem.not_served"]);
+  });
+});
+
+describe("times", () => {
+  const tr = (lang: Lang) => createTranslator(lang, catalogues);
+
+  it("a time is rendered in UTC, laid out by each catalogue, and says UTC", () => {
+    // 02:07:49 in Tbilisi is the evening before in UTC: the zone is UTC, never the viewer's.
+    expect(utcTime("2026-10-16T02:07:49+04:00", tr("en"))).toBe("15 Oct 2026, 22:07:49 UTC");
+    expect(utcTime("2026-10-16T02:07:49+04:00", tr("ka"))).toBe("15 ოქტ. 2026, 22:07:49 UTC");
+    // The pair: a UTC instant keeps its wall clock.
+    expect(utcTime("2026-01-02T03:04:05Z", tr("en"))).toBe("2 Jan 2026, 03:04:05 UTC");
+  });
+
+  it("utcText is the same text, a dash for no time, and the value as sent for a non-time", () => {
+    expect(utcText("2026-10-16T05:28:00+04:00", "en")).toBe("16 Oct 2026, 01:28:00 UTC");
+    expect(utcText(null, "ka")).toBe("—");
+    expect(utcText("not a time", "en")).toBe("not a time");
+    expect(utcTime("not a time", tr("en"))).toBeNull();
+  });
+
+  it("the Time element renders UTC with the RFC 3339 value as its title, never GMT+x", () => {
+    for (const lang of ["en", "ka"] as const) {
+      const html = renderToStaticMarkup(createElement(I18nProvider, { lang, catalogues }, createElement(Time, { iso: "2026-10-16T05:28:00+04:00" })));
+      expect(html).toContain(lang === "en" ? "16 Oct 2026, 01:28:00 UTC" : "16 ოქტ. 2026, 01:28:00 UTC");
+      expect(html).toContain('title="2026-10-16T05:28:00+04:00"');
+      expect(html).not.toContain("GMT");
+    }
+  });
+
+  it("every month has a name in both catalogues", () => {
+    for (let m = 1; m <= 12; m++) {
+      expect((en as Record<string, string>)[`ansp.time.month.${m}`]).toBeTruthy();
+      expect((ka as Record<string, string>)[`ansp.time.month.${m}`]).toBeTruthy();
+    }
   });
 });

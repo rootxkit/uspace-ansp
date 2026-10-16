@@ -15,7 +15,8 @@ import { useMemo, useState, type FormEvent } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useLang, useT } from "@rootxkit/uspace-ui/i18n";
 import { Button, Input, Label, MapPanel } from "@rootxkit/uspace-ui/ui";
-import { requestView } from "./adapt";
+import { requestView, withOutline } from "./adapt";
+import { circleAreaOf, circleKey, undrawnCircles, useCircleOutlines } from "./outline";
 import { ConsoleMap } from "./ConsoleMap";
 import { useConsole, useLoad } from "./context";
 import { maySupervise } from "./roles";
@@ -64,7 +65,13 @@ function RequestView({ id, onDecided }: { id: string; onDecided: () => void }) {
   const [zoneType, setZoneType] = useState<(typeof ZONE_TYPES)[number]>("PROHIBITED");
   const req = useLoad(async (c) => (await c.GET("/v1/restriction-requests/{id}", { params: { path: { id } } })).data ?? null, `q:${id}`);
   const q = req.data;
-  const views = useMemo(() => (q === null ? [] : [requestView(q.id, q.payload)]), [q]);
+  const circle = useMemo(() => (q === null ? null : circleAreaOf(q.payload)), [q]);
+  const circles = useMemo(() => (circle === null ? [] : [circle]), [circle]);
+  const outlines = useCircleOutlines(client, circles);
+  const views = useMemo(
+    () => (q === null ? [] : [withOutline(requestView(q.id, q.payload), circle === null ? undefined : outlines.get(circleKey(circle)))]),
+    [q, circle, outlines],
+  );
   if (req.failure !== null && q === null) return <ProblemNotice failure={req.failure} />;
   if (q === null) return <Loading />;
   const p = q.payload;
@@ -175,7 +182,7 @@ function RequestView({ id, onDecided }: { id: string; onDecided: () => void }) {
         title={t("ansp.map.title")}
         className="lg:w-[45%]"
         mapClassName="h-[28rem]"
-        {...(p.geometry.type === "Point" ? { footer: <p className="m-0 text-xs text-muted-foreground">{t("ansp.map.circle_centre_only", { count: 1 })}</p> } : {})}
+        {...(undrawnCircles(circles, outlines) > 0 ? { footer: <p className="m-0 text-xs text-muted-foreground">{t("ansp.map.circle_centre_only", { count: 1 })}</p> } : {})}
       >
         <ConsoleMap restrictions={views} fill />
       </MapPanel>

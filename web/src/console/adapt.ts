@@ -1,9 +1,9 @@
 // The one hand-written mapping from the API's restrictions to the kit's
 // view model (uspace-ui PLAN §3.14). It copies what the API said and
 // decides nothing: the area is the restriction's own geometry as the API
-// sent it (a circle is its centre Point: the API sends no outline of it,
-// and drawing one would be geodesy, which web/ never does; the page says
-// so beside the map), the limits and their references are the API's, and
+// sent it (a circle is its centre Point; its outline is the API's, from
+// GET /v1/outlines/circle and put in by withOutline, because drawing one
+// would be geodesy, which web/ never does), the limits and their references are the API's, and
 // the name and message are the ED-318 feature's text in the viewer's
 // language when the feature has it.
 import type { RestrictionView } from "@rootxkit/uspace-ui/layers";
@@ -54,6 +54,14 @@ export function toView(r: ApiRestriction, lang: Lang): RestrictionView {
     startsAt: r.starts_at,
     endsAt: r.ends_at,
   };
+}
+
+/**
+ * The view with a circle's geometry replaced by the outline the API drew
+ * for it; unchanged when there is none (the map then shows the centre).
+ */
+export function withOutline(view: RestrictionView, outline: GeoJSON.Polygon | null | undefined): RestrictionView {
+  return outline === null || outline === undefined ? view : { ...view, geometry: outline as unknown as ZoneView["geometry"] };
 }
 
 /** The kit's view of the area a restriction request asks for (02 F11), drawn before it is accepted. */

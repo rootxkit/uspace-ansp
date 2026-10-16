@@ -11,7 +11,8 @@ import { useLang, useT } from "@rootxkit/uspace-ui/i18n";
 import { Button, cn, MapPanel, Panel, TABLE_NOWRAP } from "@rootxkit/uspace-ui/ui";
 import { ConsoleMap } from "./ConsoleMap";
 import { useConsole } from "./context";
-import { toView } from "./adapt";
+import { toView, withOutline } from "./adapt";
+import { circleAreaOf, circleKey, undrawnCircles, useCircleOutlines } from "./outline";
 import { deliveryLines, openAlarmsOf, type ApiAlarm, type ApiRestriction } from "./delivery";
 import { maySupervise } from "./roles";
 import { ConsolePageHeader, Empty, Loading, ProblemNotice, ReasonAction, Section, StateBadge, Time, timesShown } from "./ui";
@@ -81,10 +82,20 @@ export function AlarmList({ alarms, onChanged }: { alarms: readonly ApiAlarm[]; 
 export function RestrictionsPage() {
   const t = useT();
   const { lang } = useLang();
+  const { client } = useConsole();
   const [filter, setFilter] = useState<(typeof FILTERS)[number]>("all");
   const live = useRestrictions(filter === "all" ? null : filter);
-  const views = useMemo(() => (live.restrictions ?? []).map((r) => toView(r, lang)), [live.restrictions, lang]);
-  const circles = (live.restrictions ?? []).filter((r) => r.geometry.type === "Point").length;
+  const circles = useMemo(() => (live.restrictions ?? []).flatMap((r) => circleAreaOf(r) ?? []), [live.restrictions]);
+  const outlines = useCircleOutlines(client, circles);
+  const views = useMemo(
+    () =>
+      (live.restrictions ?? []).map((r) => {
+        const c = circleAreaOf(r);
+        return withOutline(toView(r, lang), c === null ? undefined : outlines.get(circleKey(c)));
+      }),
+    [live.restrictions, lang, outlines],
+  );
+  const undrawn = undrawnCircles(circles, outlines);
 
   return (
     <div className="flex flex-col gap-6">
@@ -188,7 +199,7 @@ export function RestrictionsPage() {
         <MapPanel
           title={t("ansp.map.title")}
           mapClassName="h-[32rem]"
-          {...(circles > 0 ? { footer: <p className="m-0 text-xs text-muted-foreground">{t("ansp.map.circle_centre_only", { count: circles })}</p> } : {})}
+          {...(undrawn > 0 ? { footer: <p className="m-0 text-xs text-muted-foreground">{t("ansp.map.circle_centre_only", { count: undrawn })}</p> } : {})}
         >
           <ConsoleMap restrictions={views} fill />
         </MapPanel>

@@ -216,7 +216,7 @@ test("an occurrence report is queued with the protected reference sent once and 
   await expect(page.getByTestId("occ-reporter-protected")).toHaveText("protected");
   await page.getByTestId("occ-occurred_at").fill("2026-10-02T11:20");
   await page.getByTestId("occ-became_aware_at").fill("2026-10-02T11:25");
-  await expect(page.getByTestId("occurrence-deadline")).toContainText("2026-10-05 11:25");
+  await expect(page.getByTestId("occurrence-deadline")).toContainText("5 Oct 2026, 11:25:00 UTC");
   await page.getByTestId("occ-narrative").fill("Synthetic airprox between a UAS and a manned aircraft.");
   await page.getByLabel(/Reporter reference/).fill("staff-0042");
   await page.getByTestId("occ-submit").click();
