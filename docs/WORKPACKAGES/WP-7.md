@@ -98,6 +98,43 @@ WP-10 (sender validation).
   `ussp_list.json` (two USSPs with base URLs on `localhost`), parsed by
   the tests and by WP-5/WP-6/WP-8/WP-10.
 
+## Amendment: the CISP's expiry version (spec 02 F3, erratum 2026-10-16)
+
+A restrictions version the CISP makes itself when a restriction passes
+its `ends_at` (reason `restriction_expired`, no `X-Publisher-Signature`)
+used to be held, so after every natural expiry the restrictions version
+in use was never confirmed again and the readiness line turned `stale`
+at `cis_stale_bound_s`. It is now installed, not held, when the bytes at
+`/v1/restrictions/versions/{v}` are the CISP's expiry record `{op:
+"expire", restriction_id, feature_id, ends_at, at}`, `X-CIS-Signature`
+over them verifies with the `cisp` entry of `ANSP_CIS_PUBLISHER_KEYS`
+(signature age `ANSP_CIS_PUBLISHER_SIG_MAX_AGE_S`), `at` is not later
+than this system's clock plus `ANSP_CIS_EXPIRY_SKEW_S` (default 30 s,
+0 to 300), and, compared feature by feature with the version in use
+(`canonicalFeatures`, `cis_*` members left out), the version removes
+one or more features and adds or changes none, every removed feature
+has one `limitedApplicability` period ending at or before `at`, and
+`feature_id` is one of them. Any other case is held as before, counted
+`cis_expiry_held` beside `cis_publisher_untrusted`; an install is
+counted `cis_expiry_installed` and logged with `provenance
+cisp_expiry`. A CISP before the erratum writes no `feature_id`: its
+expiry version is held exactly as before. `cis_cache` keeps no trust
+flag (only a version shown trustworthy is stored), so the provenance
+kind is in memory and in the install log only. The projection still
+ends no restriction: this system's restrictions end at their `ends_at`
+by the restriction ticker, whatever the CISP has published.
+
+Tests (`internal/cis/expiry_test.go`, presence and absence in pairs):
+acceptance and chaining; the CISP's signature (none, the ANSP's key,
+another key, bytes changed, no `cisp` key configured); a removal before
+the signed end, after an extend, and `at` either side of the skew;
+content (added, changed, nothing removed, `feature_id` not removed, two
+removed in one jump); an older CISP without `feature_id`; replay and
+downgrade; the marker (`op` other than `expire`, not a record, another
+dataset); the readiness line stale with the version held and ok with
+it installed. `internal/restriction/expiry_local_test.go`: the ticker
+ends a restriction at its `ends_at` and not a second before.
+
 ## Done when
 
 - [ ] `make lint`, `make race`, `make integration` green; coverage ≥
