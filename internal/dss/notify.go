@@ -103,12 +103,25 @@ func publicAddr(a netip.Addr) bool {
 // cgnat is RFC 6598 shared address space, not routed publicly.
 var cgnat = netip.MustParsePrefix("100.64.0.0/10")
 
+// dialRefusedError is a connection refused at dial time: ErrTargetRefused
+// and the resolved address that was dialled (ip:port, nothing else), so
+// an operator can see which address a name resolved to.
+type dialRefusedError struct{ address string }
+
+// Error is ErrTargetRefused's text with the address dialled.
+func (e *dialRefusedError) Error() string {
+	return fmt.Sprintf("%s (dialled %s)", ErrTargetRefused, e.address)
+}
+
+// Is makes errors.Is(err, ErrTargetRefused) hold for a dial refusal.
+func (e *dialRefusedError) Is(target error) bool { return target == ErrTargetRefused }
+
 // refuseNonPublic is a net.Dialer Control: a connection to an address
 // that is not public is refused before it is made.
 func refuseNonPublic(_, address string, _ syscall.RawConn) error {
 	ap, err := netip.ParseAddrPort(address)
 	if err != nil || !publicAddr(ap.Addr()) {
-		return fmt.Errorf("%w (dialled %s)", ErrTargetRefused, address)
+		return &dialRefusedError{address: address}
 	}
 	return nil
 }
@@ -183,7 +196,14 @@ func (n *Notifier) Notify(ctx context.Context, base string, body []byte) Call {
 	resp, err := n.HTTP.Do(req)
 	if err != nil {
 		if errors.Is(err, ErrTargetRefused) {
-			call.Err, call.Refused = "target: "+ErrTargetRefused.Error(), true
+			// The refusal with the address dialled, not the whole
+			// transport error: that names the request URL as well.
+			reason := ErrTargetRefused.Error()
+			var dr *dialRefusedError
+			if errors.As(err, &dr) {
+				reason = dr.Error()
+			}
+			call.Err, call.Refused = "target: "+reason, true
 			return call
 		}
 		call.Err = TransportReason(err)
