@@ -24,6 +24,21 @@
 //     publisher's detached JWS verifies (core's DetachedVerifier; the
 //     authority for uspace_airspace and ussp_list, this system for
 //     restrictions); otherwise it is held and the version in use stays.
+//     The one exception (spec 02 F3, erratum 2026-10-16): a restrictions
+//     version the CISP made itself when restrictions passed their
+//     ends_at, served without X-Publisher-Signature, is installed when
+//     its bytes are the CISP's expiry record {op: expire,
+//     restriction_id, feature_id, ends_at, at} under an X-CIS-Signature
+//     that verifies with the cisp entry of ANSP_CIS_PUBLISHER_KEYS, at
+//     is not later than the clock plus ANSP_CIS_EXPIRY_SKEW_S, and
+//     against the version in use it only removes features, each past
+//     its signed end at at, feature_id among them (expiryProvenance;
+//     counted cis_expiry_installed, else held and counted
+//     cis_expiry_held). A CISP that writes no feature_id is held as
+//     before. The version records how it was shown trustworthy
+//     (Provenance: publisher or cisp_expiry). It is bookkeeping: the
+//     projection never ends a restriction; this system's restrictions
+//     end at their ends_at by internal/restriction's ticker.
 //     A new version is committed to cis_cache first (the row never goes
 //     back to a lower version, compared under its lock; fetched_at is the
 //     database clock), then put to KV cis_current and pushed on

@@ -171,7 +171,8 @@ func wireCIS(cfg config.Config, db *store.Relational, b *bus.Bus, reg prometheus
 		logger.Error("no publisher keys (ANSP_CIS_PUBLISHER_KEYS): every new CIS version is held untrusted and never used")
 	}
 	pol := &cachedPolicy{}
-	pcfg := cis.Config{Client: client, Publishers: publishers, Counters: counters, Logger: logger, Policy: pol.get}
+	pcfg := cis.Config{Client: client, Publishers: publishers, Counters: counters, Logger: logger, Policy: pol.get,
+		ExpirySkew: time.Duration(cfg.CISExpirySkewS) * time.Second}
 	if db != nil {
 		repo := store.CISRepo{DB: db}
 		pcfg.Store = repo

@@ -86,8 +86,20 @@ func TestWireCISConfigurations(t *testing.T) {
 			}
 		}
 	}
+	// The CISP's keys for its expiry versions, and cis_expiry_skew_s,
+	// reach the projection; a name that is not a publisher refuses.
+	withCISP := cfg
+	withCISP.CISPublisherKeys = append([]string{"cisp=https://cisp.example.invalid/.well-known/jwks.json"}, cfg.CISPublisherKeys...)
+	withCISP.CISExpirySkewS = 45
+	wc, err := wireCIS(withCISP, nil, nil, prometheus.NewRegistry(), discard())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if wc.proj.ExpirySkew() != 45*time.Second {
+		t.Fatalf("cis_expiry_skew_s %v", wc.proj.ExpirySkew())
+	}
 	bad := cfg
-	bad.CISPublisherKeys = []string{"cisp=https://cisp.example.invalid/jwks"}
+	bad.CISPublisherKeys = []string{"uspace-cisp=https://cisp.example.invalid/jwks"}
 	if _, err := wireCIS(bad, nil, nil, prometheus.NewRegistry(), discard()); err == nil || !strings.Contains(err.Error(), "ANSP_CIS_PUBLISHER_KEYS") {
 		t.Fatalf("%v", err)
 	}

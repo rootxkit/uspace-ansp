@@ -42,6 +42,14 @@ const (
 	CounterSubscribed        = "cis_subscribed"
 	CounterSubscribeFailed   = "cis_subscribe_failed"
 	CounterResubscribed      = "cis_resubscribed"
+	// CounterExpiryInstalled counts restrictions versions the CISP made
+	// at an expiry, installed by the F3 content rule (also counted
+	// cis_installed).
+	CounterExpiryInstalled = "cis_expiry_installed"
+	// CounterExpiryHeld counts restrictions versions without a publisher
+	// signature that the rule did not show to be a CISP expiry (also
+	// counted cis_publisher_untrusted).
+	CounterExpiryHeld = "cis_expiry_held"
 )
 
 // NotificationsPath is the path of the change-notification receiver,
@@ -109,8 +117,13 @@ type Config struct {
 	// what the database holds, and says so.
 	Client *Client
 	// Publishers verifies the publisher's signature of every new version
+	// and, under PublisherCISP, the CISP's signature of an expiry version
 	// (ANSP_CIS_PUBLISHER_KEYS); nil holds every new version.
 	Publishers PublisherVerifier
+	// ExpirySkew is cis_expiry_skew_s (ANSP_CIS_EXPIRY_SKEW_S): how far
+	// past this process's clock a CISP expiry record's at may be. Zero
+	// allows none.
+	ExpirySkew time.Duration
 	// Store is nil without a relational database: memory only.
 	Store Store
 	// KV and Push carry the projection to the hot path; nil writes none.
@@ -197,6 +210,10 @@ func New(cfg Config) *Projection {
 
 // Counters are the projection's counters.
 func (p *Projection) Counters() *core.Counters { return p.cfg.Counters }
+
+// ExpirySkew is the cis_expiry_skew_s the projection judges a CISP
+// expiry record's at with.
+func (p *Projection) ExpirySkew() time.Duration { return p.cfg.ExpirySkew }
 
 // reconcileEvery is cis_reconcile_s as a duration, at least a second.
 func (p *Projection) reconcileEvery(ctx context.Context) time.Duration {
@@ -360,13 +377,15 @@ func (p *Projection) Pull(ctx context.Context, d Dataset, reconcile bool) error 
 		}
 		return p.touch(ctx, cur)
 	}
-	if err := provenance(ctx, p.cfg.Client, p.cfg.Publishers, v); err != nil {
+	kind, err := provenance(ctx, p.cfg.Client, p.cfg.Publishers, v, expiryRule{prev: cur, now: p.cfg.Now(), skew: p.cfg.ExpirySkew})
+	if err != nil {
 		var ue *UntrustedError
 		if errors.As(err, &ue) {
 			return p.hold(ue)
 		}
 		return p.fail(d, err)
 	}
+	v.Provenance = kind
 	return p.install(ctx, v, reconcile)
 }
 
@@ -413,11 +432,14 @@ func (p *Projection) install(ctx context.Context, v *Version, reconcile bool) er
 	delete(p.installs, v.Dataset)
 	p.mu.Unlock()
 	p.cfg.Counters.Inc(CounterInstalled)
+	if v.Provenance == ProvenanceCISPExpiry {
+		p.cfg.Counters.Inc(CounterExpiryInstalled)
+	}
 	if reconcile {
 		p.cfg.Counters.Inc(CounterReconcileCatchups)
 	}
 	p.cfg.Logger.Info("CIS version installed", slog.String("dataset", string(v.Dataset)), slog.Int64("version", v.Number),
-		slog.Bool("reconcile", reconcile))
+		slog.String("provenance", v.Provenance), slog.Bool("reconcile", reconcile))
 	p.project(ctx, v)
 	for _, ch := range waiting {
 		close(ch)
@@ -457,6 +479,9 @@ func (p *Projection) touch(ctx context.Context, cur *Version) error {
 // logged once per version and reason.
 func (p *Projection) hold(ue *UntrustedError) error {
 	p.cfg.Counters.Inc(CounterUntrusted)
+	if ue.Expiry {
+		p.cfg.Counters.Inc(CounterExpiryHeld)
+	}
 	p.mu.Lock()
 	s := p.st[ue.Dataset]
 	prev := s.held
@@ -689,6 +714,16 @@ func (p *Projection) USSPs() []cispclient.Ussp {
 		return v.USSPList.Ussps
 	}
 	return []cispclient.Ussp{}
+}
+
+// Provenance is how the version of d in use was shown trustworthy when
+// this process installed it (ProvenancePublisher, ProvenanceCISPExpiry),
+// "" for one loaded from cis_cache or when none is in use.
+func (p *Projection) Provenance(d Dataset) string {
+	if v := p.current(d); v != nil {
+		return v.Provenance
+	}
+	return ""
 }
 
 // Version is the version of d in use, or 0.
