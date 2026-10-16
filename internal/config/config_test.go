@@ -50,6 +50,9 @@ func TestLoadDefaults(t *testing.T) {
 	if c.DBMaxConns != 10 || c.DBAcquireTimeoutS != 5 || c.DBStatementTimeoutS != 5 || c.DBTxTimeoutS != 15 {
 		t.Fatalf("database bounds %+v", c)
 	}
+	if c.CISExpirySkewS != 30 {
+		t.Fatalf("cis_expiry_skew_s default %d", c.CISExpirySkewS)
+	}
 	if c.NATSURL != "" || c.Audiences != nil || c.TokenIssuers != nil || c.ClientSecret != "" {
 		t.Fatalf("unset values %+v", c)
 	}
@@ -76,6 +79,7 @@ func TestLoadEveryVariable(t *testing.T) {
 		"ANSP_CLIENT_SECRET_FILE":            "/run/secrets/client",
 		"ANSP_CISP_URL":                      "https://cisp.example",
 		"ANSP_CIS_NOTIFY_ISSUERS":            "https://cisp.example=https://cisp.example/jwks",
+		"ANSP_CIS_EXPIRY_SKEW_S":             "300",
 		"ANSP_DSS_URL":                       "https://dss.example",
 		"ANSP_AUTHORITY_URL":                 "https://authority.example",
 		"ANSP_PUBLIC_BASE_URL":               "https://ansp.example",
@@ -103,7 +107,7 @@ func TestLoadEveryVariable(t *testing.T) {
 	if c.Process != ProcessMannedFeed || !slices.Equal(c.Audiences, []string{"ansp.example", "ansp.lab"}) ||
 		len(c.TokenIssuers) != 2 || c.TokenIssuers[1].JWKSURL != "https://lab.example/jwks" ||
 		c.CISNotifyIssuers[0].Issuer != "https://cisp.example" || c.ClientSecret != "s3cret" || c.MTLSMode != MTLSOff ||
-		c.DBMaxConns != 20 || c.DBTxTimeoutS != 30 {
+		c.DBMaxConns != 20 || c.DBTxTimeoutS != 30 || c.CISExpirySkewS != 300 {
 		t.Fatalf("loaded %+v", c)
 	}
 	if !slices.Equal(c.TrustedProxies, []string{"10.0.0.0/8", "192.0.2.10"}) || len(c.WSAllowedOrigins) != 2 ||
@@ -164,6 +168,8 @@ func TestLoadRefusesNamingTheVariable(t *testing.T) {
 		{"pool size not a number", map[string]string{"ANSP_DB_MAX_CONNS": "ten"}, []string{"ANSP_DB_MAX_CONNS"}},
 		{"pool size zero", map[string]string{"ANSP_DB_MAX_CONNS": "0"}, []string{"ANSP_DB_MAX_CONNS"}},
 		{"statement timeout above the bound", map[string]string{"ANSP_DB_STATEMENT_TIMEOUT_S": "301"}, []string{"ANSP_DB_STATEMENT_TIMEOUT_S"}},
+		{"expiry skew above the bound", map[string]string{"ANSP_CIS_EXPIRY_SKEW_S": "301"}, []string{"ANSP_CIS_EXPIRY_SKEW_S"}},
+		{"expiry skew negative", map[string]string{"ANSP_CIS_EXPIRY_SKEW_S": "-1"}, []string{"ANSP_CIS_EXPIRY_SKEW_S"}},
 		{"retention below the floor", map[string]string{"ANSP_TIMESERIES_RETENTION_DAYS": "29"}, []string{"ANSP_TIMESERIES_RETENTION_DAYS"}},
 		{"compression never", map[string]string{"ANSP_TIMESERIES_COMPRESS_AFTER_DAYS": "0"}, []string{"ANSP_TIMESERIES_COMPRESS_AFTER_DAYS"}},
 		{"compression at the retention", map[string]string{"ANSP_TIMESERIES_RETENTION_DAYS": "30", "ANSP_TIMESERIES_COMPRESS_AFTER_DAYS": "30"}, []string{"ANSP_TIMESERIES_COMPRESS_AFTER_DAYS"}},
