@@ -337,6 +337,7 @@
   "ansp.inbox.escalated_one": "Escalated {count} time, last at",
   "ansp.inbox.escalated_other": "Escalated {count} times, last at",
   "ansp.inbox.informational": "Informational: no acknowledgement is required.",
+  "ansp.inbox.resolved": "Resolved by the USSP at {at}; acknowledge to file.",
   "ansp.inbox.sender_unverified": "Sender not verified: no CIS USSP list was projected when it arrived.",
   "ansp.inbox.col.intent": "Intent",
   "ansp.inbox.col.authorisation": "Authorisation",

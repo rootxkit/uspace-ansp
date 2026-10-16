@@ -154,6 +154,42 @@ const PAYLOAD = {
   ],
 };
 
+describe("a notice the sender resolved", () => {
+  const escalated = { state: "escalated", escalations: 3, escalated_at: "2026-10-02T12:01:00.000Z" } as const;
+  const resolved = { resolved_at: "2026-10-02T12:09:00.000Z", resolved_by_ack_id: "01K6P0N0000000000000000009" } as const;
+
+  it("is listed as awaiting a person, not escalated; without the resolution it stays escalated", () => {
+    expect(groupOf(notice({ ...escalated, ...resolved }))).toBe("awaiting");
+    expect(groupOf(notice({ ...resolved }))).toBe("awaiting");
+    expect(groupOf(notice(escalated))).toBe("escalated");
+    expect(groupOf(notice({ ...escalated, ...resolved, state: "acknowledged", acknowledged_at: "2026-10-02T12:10:00.000Z" }))).toBe("acknowledged");
+    expect(awaitingCount([notice({ ...escalated, ...resolved })])).toEqual({ escalated: 0, awaiting: 1 });
+  });
+
+  it("is not news of an escalation; an unresolved escalation is", () => {
+    expect(escalationNews(notice(escalated), notice({ ...escalated, ...resolved }))).toBe(false);
+    expect(escalationNews(notice({ ...escalated, escalations: 2 }), notice(escalated))).toBe(true);
+  });
+
+  it("never goes back to unresolved, and still goes on to acknowledged", () => {
+    const held = notice({ ...escalated, ...resolved });
+    expect(isLater(held, notice(escalated))).toBe(false);
+    expect(isLater(held, notice({ ...escalated, ...resolved }))).toBe(true);
+    expect(isLater(notice(escalated), held)).toBe(true);
+    expect(isLater(held, notice({ ...resolved, state: "acknowledged", acknowledged_at: "2026-10-02T12:10:00.000Z" }))).toBe(true);
+  });
+
+  it("is never evicted while it awaits a person", () => {
+    const held = new Map([
+      ["a", notice({ ack_id: "a", ...escalated, ...resolved })],
+      ["b", notice({ ack_id: "b", kind: "intent_notice", acknowledgement_required: false })],
+    ]);
+    const { notices, evicted } = boundNotices(held, 1);
+    expect([...notices.keys()]).toEqual(["a"]);
+    expect(evicted).toBe(1);
+  });
+});
+
 describe("payload", () => {
   it("copies the intents and counts the unreadable", () => {
     const { intents, malformed } = intentsOf(PAYLOAD);

@@ -135,6 +135,28 @@ test("an escalated notice is listed first and loudest, and the acknowledgement c
   expect(acks).toEqual([expect.objectContaining({ path: "/v1/coordination/inbox/01K6P0N0000000000000000001/acknowledge", body: { note: "Seen; operator contacted (synthetic)" } })]);
 });
 
+test("a notice the sender resolved is no longer loud, says so, and is still acknowledged by a person", async ({ page, request }) => {
+  const ack = "01K6P0N0000000000000000004";
+  await signIn(page, SUPER, true);
+  await control(request, "/__mock/notice", { ack_id: ack, kind: "nonconformance" });
+  await control(request, "/__mock/escalate", { ack_id: ack });
+  await page.goto("/en/inbox");
+  const card = page.locator(`[data-testid="notice"][data-ack="${ack}"]`);
+  await expect(card).toHaveAttribute("data-group", "escalated");
+  await expect(card.getByTestId("notice-resolved")).toHaveCount(0);
+
+  await control(request, "/__mock/resolve", { ack_id: ack, by: "01K6P0N0000000000000000005" });
+  await expect(card).toHaveAttribute("data-group", "awaiting");
+  await expect(card).not.toHaveAttribute("role", "alert");
+  await expect(card.getByTestId("notice-resolved")).toContainText("Resolved by the USSP at");
+  await expect(card.getByTestId("notice-resolved")).toContainText("acknowledge to file");
+  await expect(card).toHaveAttribute("data-state", "escalated");
+
+  await card.getByTestId("ack-submit").click();
+  await expect(card).toHaveAttribute("data-state", "acknowledged");
+  await expect(card.getByTestId("notice-resolved")).toHaveCount(0);
+});
+
 test("an acknowledgement after someone else's is a permanent 409: said, read again, not retried", async ({ page, request }) => {
   const ack = "01K6P0N0000000000000000003";
   await signIn(page, SUPER, true);

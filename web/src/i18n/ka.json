@@ -337,6 +337,7 @@
   "ansp.inbox.escalated_one": "ესკალირებულია {count}-ჯერ, ბოლოს",
   "ansp.inbox.escalated_other": "ესკალირებულია {count}-ჯერ, ბოლოს",
   "ansp.inbox.informational": "საინფორმაციო: დადასტურება არ არის საჭირო.",
+  "ansp.inbox.resolved": "USSP-მ მოაგვარა {at}; შესანახად დაადასტურეთ.",
   "ansp.inbox.sender_unverified": "გამგზავნი არ არის გადამოწმებული: მიღებისას CIS-ის USSP სია არ იყო პროექციაში.",
   "ansp.inbox.col.intent": "განზრახვა",
   "ansp.inbox.col.authorisation": "ავტორიზაცია",
