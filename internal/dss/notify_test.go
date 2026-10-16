@@ -143,8 +143,47 @@ func TestNotifierRefusesNonPublicTargets(t *testing.T) {
 		}
 	}
 	for _, a := range []string{"127.0.0.1:443", "[::1]:443", "192.168.1.1:443", "100.64.0.1:443", "0.0.0.0:443", "224.0.0.1:443"} {
-		if err := refuseNonPublic("tcp", a, nil); !errors.Is(err, ErrTargetRefused) {
+		if err := refuseNonPublic("tcp", a, nil); !errors.Is(err, ErrTargetRefused) || !strings.HasSuffix(err.Error(), "(dialled "+a+")") {
 			t.Fatalf("%s: %v", a, err)
+		}
+	}
+}
+
+// A name that passes the literal check but resolves to a private
+// address (the droplet's extra_hosts pinning a USSP's host to Caddy's
+// edge address) is refused at dial time, and the Call, which is the
+// delivery's last error, its log line and its alarm, names the address
+// dialled. It names nothing else: not the request URL, not the token.
+func TestNotifierRefusalNamesTheDialledAddress(t *testing.T) {
+	const base, dialled = "https://uss.example.test", "172.30.4.2:443"
+	client := &http.Client{}
+	GuardTransport(client)
+	tr, ok := client.Transport.(*http.Transport)
+	if !ok {
+		t.Fatalf("transport %T", client.Transport)
+	}
+	guarded := tr.DialContext
+	// Resolve the name as /etc/hosts would; the guarded dialer sees the
+	// private address and refuses it before connecting.
+	tr.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+		if addr != "uss.example.test:443" {
+			t.Errorf("dialled %s", addr)
+		}
+		return guarded(ctx, network, dialled)
+	}
+	tk := &tokens{}
+	n := &Notifier{HTTP: client, Tokens: tk}
+	call := n.Notify(context.Background(), base, []byte(`{}`))
+	want := "target: " + ErrTargetRefused.Error() + " (dialled " + dialled + ")"
+	if !call.Refused || call.Status != 0 || call.Err != want {
+		t.Fatalf("got %+v, want Err %q", call, want)
+	}
+	if len(tk.asked()) != 1 {
+		t.Fatalf("tokens %v: the refusal was not at dial time", tk.asked())
+	}
+	for _, leak := range []string{"tok-", NotifyPath(), base} {
+		if strings.Contains(call.Err, leak) {
+			t.Fatalf("%q names %q", call.Err, leak)
 		}
 	}
 }
