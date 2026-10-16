@@ -115,7 +115,8 @@ export function PictureStatus({ status, nowMs, counters }: { status: StreamStatu
             ? t("ansp.picture.status.cis_none")
             : t("ansp.picture.status.cis", { version: status.cisVersion, age: status.cisAgeS === null ? "—" : Math.round(status.cisAgeS) })}
           {status.nats !== null && <span> · {t("ansp.status.nats", { state: status.nats })}</span>}
-          {status.relevance !== null && <span> · {t("ansp.picture.status.relevance", { text: status.relevance })}</span>}
+          {/* The feed's line carries its own "relevance:" label (picture.RelevanceStatus); show it as sent. */}
+          {status.relevance !== null && <span data-testid="picture-relevance"> · {status.relevance}</span>}
         </p>
       )}
       {status.connection === "live" && <DegradedBanner degraded={status.degraded} cisAgeS={status.cisAgeS} />}

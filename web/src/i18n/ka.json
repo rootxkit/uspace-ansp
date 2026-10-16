@@ -296,7 +296,6 @@
   "ansp.picture.status.policy": "პოლიტიკის ვერსია {version} · მოძველება {stale} წმ-ის შემდეგ · ცოცხალი {live} წმ-მდე",
   "ansp.picture.status.cis": "CIS ვერსია {version}, ასაკი {age} წმ",
   "ansp.picture.status.cis_none": "CIS პროექცია არ არის: რელევანტურობა არ ფასდება",
-  "ansp.picture.status.relevance": "რელევანტურობა: {text}",
   "ansp.picture.status.adapters": "ადაპტერები",
   "ansp.picture.status.counters": "არ არის ნაჩვენები: {refused} უარყოფილი კადრი, {out_of_order} შენახულზე ძველი, {evicted} ზღვრის გამო გამოძევებული, {adapters} არასწორი ადაპტერის ჩანაწერი",
   "ansp.picture.held_one": "ნაკადი არ არის ცოცხალი: {count} ხომალდი ნაჩვენებია ბოლო პოზიციაზე, ასაკით.",
