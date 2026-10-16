@@ -326,6 +326,145 @@ func TestEndDeliveredDirectlyWhenTheCISPFailsAfterTheActivation(t *testing.T) {
 	}
 }
 
+// expire writes version n as the ticker's expiry at ends_at and queues
+// its jobs as the restriction hook does: a DSS delete and, by design, no
+// CISP publication (the CISP expires it on its own clock).
+func (h *harness) expire(n int64, end time.Time) {
+	h.t.Helper()
+	v := version(n, "ended")
+	v.EndsAt = end
+	h.repo.addVersion(v)
+	err := h.repo.Tx(context.Background(), func(ctx context.Context, tx Tx) error {
+		return h.outbox.EnqueueVersion(ctx, tx, restriction.Version{RestrictionID: testRID, AnspRef: testRef, Version: n}, restriction.OpExpire, 0)
+	})
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	for _, id := range h.repo.order {
+		if r := h.repo.row(id); r.Kind == KindCISPPublish && r.AnspVersion == n {
+			h.t.Fatalf("a cisp_publish job %s for the expiry", id)
+		}
+	}
+}
+
+// A natural expiry of a restriction the CISP holds: no cisp_publish job
+// is owed (the CISP expires it at ends_at on its own clock), so no
+// cisp_not_published alarm is raised and nothing goes out directly, on
+// any tick past cisp_alarm_after_s (the absence). Its pair is
+// TestAlarmAtAnExpiryAfterAnUnpublishedExtension, and for an end that is
+// owed, TestEndDeliveredDirectlyWhenTheCISPFailsAfterTheActivation.
+func TestNoAlarmAtANaturalExpiry(t *testing.T) {
+	h := newHarness(t, nil)
+	ussp := newReceiver(t, h, func(int, recorded) (int, string) { return 204, "" })
+	authority := newReceiver(t, h, func(int, recorded) (int, string) { return 204, "" })
+	mon := monitorOf(h, Target{"ussp-a", ussp.srv.URL}, Target{"authority", authority.srv.URL})
+	h.repo.addVersion(version(1, "planned"))
+	h.deliver(h.enqueue(1, OpCreate))
+	h.repo.addVersion(version(2, "active"))
+	h.deliver(h.enqueue(2, OpActivate))
+	if p := h.repo.restrictions[testRID].published; p == nil || *p != 2 {
+		t.Fatalf("the activation is not published: %v", p)
+	}
+	h.clock.Advance(4 * time.Hour)
+	h.expire(3, testStart.Add(4*time.Hour))
+	for i, step := range []time.Duration{time.Second, 9 * time.Second, time.Second, 10 * time.Second, time.Minute} {
+		h.clock.Advance(step)
+		rep, err := mon.Tick(context.Background())
+		if err != nil || rep.Raised != 0 || rep.Advanced != 0 || rep.DirectQueued != 0 || len(h.repo.alarms) != 0 {
+			t.Fatalf("tick %d after the expiry: %+v %v, %d alarms", i, rep, err, len(h.repo.alarms))
+		}
+	}
+	for _, id := range h.repo.order {
+		if r := h.repo.row(id); r.Kind == KindDirect {
+			t.Fatalf("direct_degraded %s of version %d", id, r.AnspVersion)
+		}
+	}
+	for _, rc := range []*receiver{ussp, authority} {
+		if n := len(rc.requests()); n != 0 {
+			t.Fatalf("%s: %d direct requests", rc.host, n)
+		}
+	}
+	if p := h.repo.restrictions[testRID].published; p == nil || *p != 2 {
+		t.Fatalf("published_version %v, want the activation's 2", p)
+	}
+	if l := h.log(); strings.Contains(l, "cisp_not_published") || strings.Contains(l, "not yet published") {
+		t.Fatalf("the expiry is said to be unpublished: %s", l)
+	}
+}
+
+// The presence of the absence above: an extension the CISP refuses
+// (503) leaves it holding version 2; at cisp_alarm_after_s the alarm is
+// raised at the extension and it goes out directly. The expiry that
+// follows owes the CISP nothing, yet the receivers hold the extension
+// from the direct path, so the alarm moves to the expiry's version and
+// the end is delivered directly at once; the alarm clears once it is.
+func TestAlarmAtAnExpiryAfterAnUnpublishedExtension(t *testing.T) {
+	var down atomic.Bool
+	h := newHarness(t, func(_ int, r recorded) (int, string) {
+		switch {
+		case down.Load():
+			return 503, "down"
+		case r.Method == "PATCH":
+			return 200, `{"replay":false}`
+		}
+		return 201, `{"replay":false}`
+	})
+	ussp := newReceiver(t, h, func(int, recorded) (int, string) { return 204, "" })
+	authority := newReceiver(t, h, func(int, recorded) (int, string) { return 204, "" })
+	mon := monitorOf(h, Target{"ussp-a", ussp.srv.URL}, Target{"authority", authority.srv.URL})
+	h.repo.addVersion(version(1, "planned"))
+	h.deliver(h.enqueue(1, OpCreate))
+	h.repo.addVersion(version(2, "active"))
+	h.deliver(h.enqueue(2, OpActivate))
+	down.Store(true)
+	extended := testStart.Add(5 * time.Hour)
+	v3 := version(3, "active")
+	v3.EndsAt = extended
+	h.repo.addVersion(v3)
+	h.deliver(h.enqueue(3, OpExtend))
+	if p := h.repo.restrictions[testRID].published; p == nil || *p != 2 {
+		t.Fatalf("published_version %v, want 2", p)
+	}
+	h.clock.Advance(10 * time.Second)
+	rep, err := mon.Tick(context.Background())
+	if err != nil || rep.Raised != 1 || rep.DirectQueued != 2 || h.repo.alarms[0].AnspVersion != 3 {
+		t.Fatalf("the extension is not raised: %+v %v", rep, err)
+	}
+	h.handDirect()
+	jwks := jwksServer(t, h.ring)
+	for _, rc := range []*receiver{ussp, authority} {
+		reqs := rc.requests()
+		if len(reqs) != 1 {
+			t.Fatalf("%s: %d requests", rc.host, len(reqs))
+		}
+		if _, ext := rc.verify(t, h, jwks, reqs[0]); ext.Reason != cispclient.ChangeReasonRestrictionExtended || ext.Version != 3 {
+			t.Fatalf("%s: %+v", rc.host, ext)
+		}
+	}
+	h.clock.Advance(extended.Sub(h.clock.Now()))
+	h.expire(4, extended)
+	rep, err = mon.Tick(context.Background())
+	al := h.repo.alarms[0]
+	if err != nil || rep.Advanced != 1 || rep.DirectQueued != 2 || rep.Cleared != 0 || len(h.repo.alarms) != 1 ||
+		al.AnspVersion != 4 || !strings.Contains(al.Detail, "is ended and the change is not yet published") {
+		t.Fatalf("the expiry is not delivered directly: %+v %v %+v", rep, err, al)
+	}
+	h.handDirect()
+	for _, rc := range []*receiver{ussp, authority} {
+		reqs := rc.requests()
+		if len(reqs) != 2 {
+			t.Fatalf("%s: %d requests", rc.host, len(reqs))
+		}
+		if _, end := rc.verify(t, h, jwks, reqs[1]); end.Reason != cispclient.ChangeReasonRestrictionEnded || end.Version != 4 || len(end.RemovedIds) != 1 {
+			t.Fatalf("%s: %+v", rc.host, end)
+		}
+	}
+	rep, _ = mon.Tick(context.Background())
+	if rep.Cleared != 1 || h.repo.alarms[0].ClearReason != CancelNotActive {
+		t.Fatalf("clear %+v %+v", rep, h.repo.alarms[0])
+	}
+}
+
 // The cis/change/v1 record of every op, and the op of every version.
 func TestBuildChangeAndOps(t *testing.T) {
 	for _, tc := range []struct {

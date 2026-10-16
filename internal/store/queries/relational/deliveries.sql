@@ -139,9 +139,12 @@ RETURNING id, target, ansp_version;
 -- is at an earlier version (their active version went out on the
 -- degraded direct path, so their end goes there too, at once); and
 -- ended or cancelled ones an earlier version of which the CISP holds,
--- whose end is not published to it for longer than after_s (the CISP
--- went down after the activation: every receiver holds the restriction
--- in force until the end reaches it). Each without an open alarm at
+-- whose end is owed to it (a cisp_publish job of the current version
+-- exists) and not published for longer than after_s (the CISP went down
+-- after the activation: every receiver holds the restriction in force
+-- until the end reaches it). An expiry owes the CISP nothing: no job is
+-- queued for it, the CISP expires the restriction at ends_at on its own
+-- clock (internal/deliver PublicationOp). Each without an open alarm at
 -- that version, and without a cleared one or a settled direct delivery
 -- at it: that version has gone out directly already, and raising again
 -- would deliver it again on every tick.
@@ -157,6 +160,8 @@ WHERE COALESCE(r.published_version, 0) < r.ansp_version
                        WHERE a.restriction_id = r.id AND a.kind = 'cisp_not_published' AND a.cleared_at IS NULL
                          AND a.ansp_version < r.ansp_version))
        OR (r.state IN ('ended', 'cancelled') AND COALESCE(r.published_version, 0) > 0
+           AND EXISTS (SELECT 1 FROM deliveries d
+                       WHERE d.kind = 'cisp_publish' AND d.restriction_id = r.id AND d.ansp_version = r.ansp_version)
            AND v.changed_at <= clock_timestamp() - make_interval(secs => sqlc.arg(after_s)::float8)))
   AND NOT EXISTS (SELECT 1 FROM delivery_alarms a
                   WHERE a.restriction_id = r.id AND a.kind = 'cisp_not_published' AND a.cleared_at IS NULL

@@ -320,8 +320,10 @@ func (a Alarm) Open() bool { return a.ClearedAt == nil }
 // Overdue is a restriction whose current version is not published to
 // the CISP and goes out on the degraded direct path: active and older
 // than the alarm threshold, or ended or cancelled after an earlier
-// version went out directly (at once) or reached the CISP (older than
-// the alarm threshold).
+// version went out directly (at once) or reached the CISP with the end
+// owed to it, a cisp_publish job of the end queued (older than the alarm
+// threshold). An expiry owes the CISP nothing (PublicationOp): the CISP
+// expires the restriction at ends_at on its own clock.
 type Overdue struct {
 	RestrictionID string
 	AnspVersion   int64
