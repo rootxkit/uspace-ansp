@@ -388,7 +388,8 @@ func (f *fakeRepo) Overdue(_ context.Context, after time.Duration, limit int) ([
 			continue
 		case r.state != "active" && !terminal:
 			continue
-		case terminal && (open == nil || open.AnspVersion >= cur.Version) && (pub == 0 || cur.ChangedAt.After(now.Add(-after))):
+		case terminal && (open == nil || open.AnspVersion >= cur.Version) &&
+			(pub == 0 || !f.publicationOwed(id, cur.Version) || cur.ChangedAt.After(now.Add(-after))):
 			continue
 		}
 		if open != nil && open.AnspVersion >= cur.Version {
@@ -411,6 +412,17 @@ func (f *fakeRepo) Overdue(_ context.Context, after time.Duration, limit int) ([
 
 // wentOutDirectly is a version of rid whose cisp_not_published alarm
 // is cleared, or a direct delivery of which is settled.
+// publicationOwed is the store's EXISTS on deliveries: a cisp_publish
+// job of the version was queued (none is for an expiry).
+func (f *fakeRepo) publicationOwed(rid string, version int64) bool {
+	for _, d := range f.rows {
+		if d.Kind == KindCISPPublish && d.RestrictionID == rid && d.AnspVersion == version {
+			return true
+		}
+	}
+	return false
+}
+
 func (f *fakeRepo) wentOutDirectly(rid string, version int64) bool {
 	for _, a := range f.alarms {
 		if a.Kind == AlarmCISPNotPublished && a.RestrictionID == rid && a.ClearedAt != nil && a.AnspVersion >= version {

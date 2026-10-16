@@ -100,6 +100,7 @@
   "ansp.delivery.cisp.not_yet_since": "CISP: v{version} ჯერ არ გამოქვეყნებულა {since}-დან",
   "ansp.delivery.cisp.behind": "CISP: აქვს v{published}; v{version} ჯერ არ გამოქვეყნებულა",
   "ansp.delivery.cisp.behind_since": "CISP: აქვს v{published}; v{version} ჯერ არ გამოქვეყნებულა {since}-დან",
+  "ansp.delivery.cisp.expired": "CISP: აქვს v{published}; ვადა იქ ამოიწურა {at}",
   "ansp.delivery.cisp.failed": "CISP: v{version} უარყოფილია (HTTP {code}), {at}; არ მეორდება",
   "ansp.delivery.cisp.abandoned": "CISP: v{version} ვერ მიეწოდა {attempts} ცდის შემდეგ (განმეორების ფანჯარა დასრულდა {at})",
   "ansp.delivery.dss.unknown": "DSS: მდგომარეობა არ არის მოწოდებული",

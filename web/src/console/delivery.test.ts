@@ -35,6 +35,20 @@ describe("the CISP line", () => {
     expect(l.attention).toBe(true);
   });
 
+  it("says the CISP expired it at ends_at for the ticker's expiry, never not yet published", () => {
+    const r = restriction({ state: "ended", ansp_version: 3, published_version: 2, ended_by: "system", ends_at: "2026-10-02T16:00:00.000Z" });
+    const l = cispLine(r, null);
+    expect(l).toEqual({ key: "ansp.delivery.cisp.expired", vars: { published: 2, at: "2026-10-02T16:00:00.000Z" }, attention: false });
+    expect(deliveryLines(r, [])[0]?.key).toBe("ansp.delivery.cisp.expired");
+  });
+
+  it("says behind, not expired, for an end owed to the CISP, an open alarm, or a CISP further behind", () => {
+    const ended = { state: "ended", ansp_version: 3, published_version: 2, ended_by: "system" } as const;
+    expect(cispLine(restriction({ ...ended, ended_by: "watch_supervisor" }), null).key).toBe("ansp.delivery.cisp.behind");
+    expect(cispLine(restriction(ended), alarm({ ansp_version: 3 })).key).toBe("ansp.delivery.cisp.behind_since");
+    expect(cispLine(restriction({ ...ended, ansp_version: 4 }), null).key).toBe("ansp.delivery.cisp.behind");
+  });
+
   it("says not yet published, without alarm, for a fresh planned restriction", () => {
     const l = cispLine(restriction(), null);
     expect(l.key).toBe("ansp.delivery.cisp.not_yet");

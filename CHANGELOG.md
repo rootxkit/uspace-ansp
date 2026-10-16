@@ -71,6 +71,17 @@ complete.
   checked against `GET /v1/auth/me` by the BFF (cookies kept on 2xx,
   cleared otherwise) and by the console before it signs out. A 501 (the
   adapters, not yet served by api) is said in its tile as not served.
+- A natural expiry raised a false `cisp_not_published`: the H-2 branch
+  took every ended restriction the CISP held at an earlier version,
+  including one the ticker expired at `ends_at`, for which no
+  `cisp_publish` is queued (the CISP expires it on its own clock). About
+  10 s after every expiry the alarm was raised and the end delivered on
+  the degraded direct path, then cleared as `restriction_not_active`.
+  The branch now requires that the end was owed to the CISP (a
+  `cisp_publish` job of the current version exists); an expiry after a
+  version that went out directly still goes out directly. The console
+  says "CISP: holds vN; expired there at T" for an expiry instead of "not
+  yet published".
 - H-2 review: an end was delivered directly only when an alarm was
   already open at an earlier version. When the activation reached the
   CISP and the CISP then went down, the end was neither published nor
